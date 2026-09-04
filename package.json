@@ -1,0 +1,30 @@
+{
+  "name": "ai-backend",
+  "version": "1.0.0",
+  "description": "Learning project for building AI backends from scratch, following ai-backend-roadmap.md",
+  "main": "index.js",
+  "scripts": {
+    "step1": "ts-node src/step1-embeddings.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sh1v-max/AI-Backend.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/sh1v-max/AI-Backend/issues"
+  },
+  "homepage": "https://github.com/sh1v-max/AI-Backend#readme",
+  "dependencies": {
+    "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^7.0.2"
+  }
+}
