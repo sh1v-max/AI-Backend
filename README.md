@@ -9,12 +9,8 @@ Building **DocMind**: upload a PDF, chat with it, generate a quiz from it. Nothi
 1. `npm install`
 2. Copy `.env.example` to `.env`, get a free key at [Google AI Studio](https://aistudio.google.com/), add it as `GEMINI_API_KEY`
 
-## Progress
+## Learning
 
-- [x] **Step 1.1** — Embeddings & cosine similarity: `npm run step1` ([src/step1-embeddings.ts](src/step1-embeddings.ts))
-- [ ] Step 1.2 — Postgres + pgvector
-- [ ] Step 1.3 — Repository functions
-- [ ] Phase 2 — RAG
-- [ ] Phase 3 — Streaming
-- [ ] Phase 4 — Quiz generation
-- [ ] Phase 5 — Tie it together
+- [PROGRESS.md](PROGRESS.md) — the tracker, always check this for what to do next
+- [topics/README.md](topics/README.md) — how the notes folder is organized
+- [topics/OVERVIEW.md](topics/OVERVIEW.md) — the stack and what each concept teaches
