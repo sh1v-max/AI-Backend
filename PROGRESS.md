@@ -31,7 +31,7 @@ Advanced topics are listed **right after the basic topic they relate to** so you
 
 ## Part 2.5 — production web-layer gaps (do these once, before or during interview prep)
 
-Added after comparing this plan against a real production AI backend (a friend's company, Learnyst). The AI-specific concepts above already matched their repo closely — these three fill the remaining gaps: DocMind is REST-only with no auth and no multi-tenancy, but a real job will expect you to at least understand these.
+Added after comparing this plan against a real production AI backend. The AI-specific concepts above already matched that repo closely — these three fill the remaining gaps: DocMind is REST-only with no auth and no multi-tenancy, but a real job will expect you to at least understand these.
 
 | # | Topic | Notes |
 |---|---|---|

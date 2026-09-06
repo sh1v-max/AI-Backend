@@ -1,6 +1,6 @@
 # 14 — GraphQL + Subscriptions
 
-Added after reviewing a real production AI backend (Learnyst's proximity-ai-ng) — their chat front door is GraphQL over SSE, not plain REST. Not in the base roadmap, which uses simple REST endpoints.
+Added after reviewing a real production AI backend — its chat front door is GraphQL over SSE, not plain REST. Not in the base roadmap, which uses simple REST endpoints.
 
 ## What is it?
 
