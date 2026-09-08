@@ -1,3 +1,8 @@
 node_modules/
 dist/
 .env
+
+# VS Code "Local History" extension — snapshots every saved file,
+# including .env, so it must never be tracked (caused a real secret leak,
+# see re-do.md).
+.history

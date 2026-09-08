@@ -9,9 +9,9 @@ The foundation everything else in this project sits on. Skip this and RAG, vecto
 An embedding is a piece of text turned into a list of numbers — a **vector** — in such a way that texts with similar *meaning* end up with similar numbers.
 
 ```
-"The cat sat on the mat"        → [0.12, -0.44, 0.81, ..., 0.09]   (768 numbers)
-"A kitten was resting on the rug" → [0.14, -0.41, 0.79, ..., 0.11]   (768 numbers, close to the first)
-"The stock market crashed"      → [-0.63, 0.22, -0.05, ..., 0.87]  (768 numbers, far from both above)
+"The cat sat on the mat"        → [0.12, -0.44, 0.81, ..., 0.09]   (3072 numbers)
+"A kitten was resting on the rug" → [0.14, -0.41, 0.79, ..., 0.11]   (3072 numbers, close to the first)
+"The stock market crashed"      → [-0.63, 0.22, -0.05, ..., 0.87]  (3072 numbers, farther from both above)
 ```
 
 That's the entire concept. Everything else — RAG, semantic search, intent routing, recommendation systems — is built on top of this one fact: **you can turn "meaning" into "distance between numbers."**
@@ -32,7 +32,7 @@ You're not writing a smarter keyword search. You're changing what "search" means
 An embedding model (a smaller, specialized neural network — not the same as a chat model like Gemini/Claude) reads text and outputs a fixed-length vector. You don't design this vector or know what each number "means" individually — the model learned, from huge amounts of text, to place similar meanings near each other in this number-space during its training.
 
 Key facts to actually internalize:
-- The vector length is fixed per model (e.g. Gemini's `text-embedding-004` outputs 768 numbers, always — a one-word input and a full paragraph both come back as 768 numbers)
+- The vector length is fixed per model (e.g. Gemini's `gemini-embedding-001` outputs 3072 numbers, always — a one-word input and a full paragraph both come back as 3072 numbers)
 - Embedding a short sentence and a long paragraph costs about the same — it's one API call either way
 - The model is deterministic-ish: the same text embedded twice gives you (approximately) the same vector
 - You cannot reverse an embedding back into the original text — it's one-way
@@ -70,10 +70,10 @@ Every one of those is the same cosine-similarity idea, applied to a bigger datas
 ## What you need to learn
 
 - [ ] **The one-sentence definition** — text → numbers, similar meaning → similar numbers. Be able to say this without looking it up.
-- [ ] **What "768 numbers" actually represents** — not individually meaningful, but their *relative position* to other vectors is
+- [ ] **What "3072 numbers" actually represents** — not individually meaningful, but their *relative position* to other vectors is
 - [ ] **The cosine similarity formula** — know what dot product and magnitude mean, not just that a function exists
 - [ ] **Why cosine, not raw distance** — direction vs magnitude
-- [ ] **The idea that embedding ≠ generation** — a dedicated embedding model (`text-embedding-004`) is a different, smaller, cheaper model than a chat model (Gemini/Claude) — you'll use both in this project, for different jobs
+- [ ] **The idea that embedding ≠ generation** — a dedicated embedding model (`gemini-embedding-001`) is a different, smaller, cheaper model than a chat model (Gemini/Claude) — you'll use both in this project, for different jobs
 - [ ] **Embeddings are one-way** — you can't decode a vector back to text
 
 ## What to build (Step 1.1 of the roadmap)

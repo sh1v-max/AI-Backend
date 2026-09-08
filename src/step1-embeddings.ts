@@ -6,7 +6,7 @@ import 'dotenv/config'
 
 const API_KEY = process.env.GEMINI_API_KEY
 const EMBED_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent'
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent'
 
 async function getEmbedding(text: string): Promise<number[]> {
   const res = await fetch(`${EMBED_URL}?key=${API_KEY}`, {
