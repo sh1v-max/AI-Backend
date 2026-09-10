@@ -50,6 +50,12 @@ async function main() {
     'A kitten was resting on the rug.',
     'The stock market crashed on Tuesday.',
     'Investors panicked as share prices fell.',
+    'Web development is fun.',
+    'Building websites and applications can be rewarding.',
+    'Coding is a creative problem-solving process.',
+    'Problem-solving is a fundamental skill for software developers.',
+    'The chef prepared a delicious three-course meal.',
+    'Recipes often call for fresh herbs and spices.',
   ]
 
   console.log('Embedding and inserting sentences...')
@@ -57,8 +63,9 @@ async function main() {
     const embedding = await getEmbedding(content)
     await pool.query(
       'INSERT INTO chunks (content, embedding) VALUES ($1, $2)',
-      [content, toVectorLiteral(embedding)]
+      [content, toVectorLiteral(embedding)],
     )
+    // VALUES ($1, $2) are parameterized queries, which help prevent SQL injection attacks. The $1 and $2 are placeholders for the actual values provided in the array that follows.
   }
 
   console.log('\nQuerying: what\'s closest to "a cat napping on a blanket"?\n')
@@ -68,15 +75,17 @@ async function main() {
      FROM chunks
      ORDER BY embedding <=> $1
      LIMIT 2`,
-    [toVectorLiteral(queryEmbedding)]
+    [toVectorLiteral(queryEmbedding)],
   )
 
   for (const row of result.rows) {
-    console.log(`  distance ${Number(row.distance).toFixed(4)} — "${row.content}"`)
+    console.log(
+      `  distance ${Number(row.distance).toFixed(4)} — "${row.content}"`,
+    )
   }
 
   console.log(
-    '\n✅ If the two cat-related sentences came back first (lowest distance), the DB is doing the same cosine math as step1 — just at scale.'
+    '\n✅ If the two cat-related sentences came back first (lowest distance), the DB is doing the same cosine math as step1 — just at scale.',
   )
 
   await pool.end()

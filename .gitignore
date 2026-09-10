@@ -2,6 +2,9 @@ node_modules/
 dist/
 .env
 
+# personal notes for drafting social posts — not part of the project
+social posts/
+
 # VS Code "Local History" extension — snapshots every saved file,
 # including .env, so it must never be tracked (caused a real secret leak,
 # see re-do.md).
