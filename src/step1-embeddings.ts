@@ -22,11 +22,13 @@ async function getEmbedding(text: string): Promise<number[]> {
   }
 
   const data = await res.json()
+  // console.log(data.embedding.values)
   return data.embedding.values
 }
 
-// Written by hand on purpose — this is the one formula worth typing yourself.
+// cosine similarity formula, it's a measure of how similar two vectors are, ranging from -1 (opposite) to 1 (identical)
 // cosine_similarity(a, b) = dot(a, b) / (|a| * |b|)
+// cosine_similarity(a, b) = (a1*b1 + a2*b2 + ... + an*bn) / (sqrt(a1^2 + a2^2 + ... + an^2) * sqrt(b1^2 + b2^2 + ... + bn^2))
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0
   let magA = 0
