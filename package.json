@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "step1": "ts-node src/step1-embeddings.ts",
+    "step2": "ts-node src/step2-pgvector.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -20,10 +21,12 @@
   },
   "homepage": "https://github.com/sh1v-max/AI-Backend#readme",
   "dependencies": {
-    "dotenv": "^17.4.2"
+    "dotenv": "^17.4.2",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",
+    "@types/pg": "^8.23.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }
