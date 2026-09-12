@@ -1,0 +1,127 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+:root {
+  --color-primary: #3f3f46;
+  --color-on-primary: #ffffff;
+  --color-secondary: #71717a;
+  --color-accent: #16a34a;
+  --color-accent-hover: #15803d;
+  --color-accent-bg: #f0fdf4;
+  --color-background: #f7f8f7;
+  --color-surface: #ffffff;
+  --color-foreground: #18181b;
+  --color-muted: #71717a;
+  --color-muted-bg: #f1f2f1;
+  --color-border: #e2e8e3;
+  --color-destructive: #dc2626;
+  --color-destructive-bg: #fef2f2;
+  --color-ring: #16a34a;
+
+  --font-heading: 'Space Grotesk', system-ui, sans-serif;
+  --font-body: 'DM Sans', system-ui, sans-serif;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --color-primary: #d4d4d8;
+    --color-on-primary: #18181b;
+    --color-secondary: #a1a1aa;
+    --color-accent: #4ade80;
+    --color-accent-hover: #22c55e;
+    --color-accent-bg: rgba(74, 222, 128, 0.12);
+    --color-background: #17191a;
+    --color-surface: #202323;
+    --color-foreground: #f4f4f5;
+    --color-muted: #a1a1aa;
+    --color-muted-bg: #26292a;
+    --color-border: #33383a;
+    --color-destructive: #f87171;
+    --color-destructive-bg: rgba(248, 113, 113, 0.12);
+    --color-ring: #4ade80;
+  }
+}
+
+:root[data-theme='dark'] {
+  --color-primary: #d4d4d8;
+  --color-on-primary: #18181b;
+  --color-secondary: #a1a1aa;
+  --color-accent: #4ade80;
+  --color-accent-hover: #22c55e;
+  --color-accent-bg: rgba(74, 222, 128, 0.12);
+  --color-background: #17191a;
+  --color-surface: #202323;
+  --color-foreground: #f4f4f5;
+  --color-muted: #a1a1aa;
+  --color-muted-bg: #26292a;
+  --color-border: #33383a;
+  --color-destructive: #f87171;
+  --color-destructive-bg: rgba(248, 113, 113, 0.12);
+  --color-ring: #4ade80;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0;
+  color: var(--color-foreground);
+}
+
+button {
+  font-family: var(--font-body);
+}
+
+*:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

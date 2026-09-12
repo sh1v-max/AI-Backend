@@ -4,6 +4,8 @@ The actual build order, phase by phase, step by step. This is the "what do I phy
 
 Building **DocMind**: upload a PDF → chat with it (with memory) → stream the reply → generate a quiz from it. Five endpoints, nothing more, until it's genuinely understood.
 
+**Frontend, built alongside the backend:** starting from Phase 2, every endpoint also gets a minimal React UI, built in the same step as the endpoint itself — not bolted on at the end. The point isn't a polished product; it's testing each endpoint the way a real client actually would (form submissions, `fetch`/`EventSource` calls, rendered responses) instead of only through Postman. Frontend steps are marked with an **F** (e.g. Step 2.1F) so they're easy to distinguish from the backend step they pair with. Lives in a separate `frontend/` folder (Vite + React), talking to the Express API over HTTP — kept deliberately simple, no state library, no routing beyond what's needed to exercise each endpoint.
+
 ---
 
 ## Phase 1 — Embeddings & Vector Search
@@ -40,12 +42,21 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 - Add a Multer upload endpoint that accepts a `.pdf`, reads it into a buffer
 - Run `pdf-parse` on it, log the extracted text length
 - Test on 2-3 different real PDFs (typed/exported, not scanned — `pdf-parse` needs a real text layer)
-- Output: PDF in, plain text out — nothing else yet
+- Output: PDF in, plain text out — nothing else yet *(done — tested via Postman before the frontend existed)*
+
+**Step 2.1F — Frontend scaffold + upload UI**
+- Scaffold a React app with Vite in `frontend/`
+- Build one page: a file input + submit button that POSTs to `/upload` as `multipart/form-data`, renders the JSON response (filename, text length, preview)
+- Output: the first real client talking to the API — proves `/upload` works the way an actual browser would call it, not just `curl`/Postman
 
 **Step 2.2 — `POST /upload`, the full pipeline**
 - Chunk the extracted text (paragraph or ~500 words — don't overthink it)
 - Embed each chunk, store via `insertChunk`, tagged with a `documentId`
 - Output: a working `/upload` endpoint; a document becomes searchable chunks
+
+**Step 2.2F — Frontend: show ingestion result**
+- Update the upload UI to display the returned `documentId` and chunk count, and keep it visible/selectable for the next steps (chat needs a `documentId` to target)
+- Output: the frontend now carries state from upload → chat, the way a real app would
 
 **Step 2.3 — `POST /chat`, single-turn**
 - Endpoint takes `documentId` + `message`
@@ -53,13 +64,17 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 - Stuff into a prompt: `Answer using only this context: {chunks}\nQuestion: {message}` → call the LLM → return JSON
 - Output: a chatbot that answers from the PDF, but forgets everything after each request
 
+**Step 2.3F — Frontend: chat UI**
+- A simple message list + input box, POSTs each message to `/chat` with the selected `documentId`, appends the reply to the list
+- Output: DocMind now has a real, clickable chat interface, even though it's still single-turn underneath
+
 **Step 2.4 — Give it memory**
 - Add a `chat_messages` table (`id, sessionId, documentId, role, content, createdAt`)
 - On each `/chat` call: save the user message, pull the last 6-10 messages for that session, build the prompt as `[system: RAG context] + [history] + [new message]`, save the assistant's reply too
 - Test with a vague follow-up ("what about the next part?") and confirm it resolves correctly
 - Output: `/chat` now feels like a conversation, not a search box
 
-**Milestone:** upload a PDF, ask it questions across multiple turns, get grounded answers that remember context.
+**Milestone:** upload a PDF through the browser, ask it questions across multiple turns in a real chat UI, get grounded answers that remember context.
 
 ---
 
@@ -78,7 +93,11 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 - Still save the complete reply to `chat_messages` once the stream finishes
 - Output: open the URL in a browser tab, watch words appear one at a time
 
-**Milestone:** the chat reply streams instead of arriving all at once, and history still works on the next turn.
+**Step 3.2F — Frontend: streaming chat**
+- Swap the chat UI's `fetch` call for an `EventSource` connection to `/chat-stream`, appending each streamed chunk to the in-progress reply as it arrives
+- Output: the chat UI now shows the reply typing out word by word, the actual DocMind experience
+
+**Milestone:** the chat reply streams instead of arriving all at once, visibly in the browser, and history still works on the next turn.
 
 ---
 
@@ -98,11 +117,19 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 - Add one retry: if `Quiz.parse()` throws, retry the LLM call once before failing
 - Output: a working quiz-generation endpoint with a real production habit (validate → retry) built in
 
+**Step 4.2F — Frontend: quiz UI**
+- A "Generate Quiz" button (per selected document) that POSTs to `/quiz`, renders each question with its 4 options as selectable radio buttons
+- Output: quizzes are visible and answerable, not just JSON in a response
+
 **Step 4.3 — `POST /quiz/check`** *(optional, closes the loop)*
 - Takes `{questionIndex, chosenIndex}` against a generated quiz, returns correct/incorrect
 - Output: the quiz feature feels complete end to end
 
-**Milestone:** DocMind can generate a quiz from the PDF and grade an answer against it.
+**Step 4.3F — Frontend: answer checking**
+- Wire the quiz UI's option selection to `/quiz/check`, show correct/incorrect feedback per question
+- Output: DocMind's full loop — upload, chat, quiz, check — all usable end to end in the browser
+
+**Milestone:** DocMind can generate a quiz from the PDF and grade an answer against it, all through the React UI.
 
 ---
 
@@ -113,8 +140,8 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 - If any answer feels shaky, that's the concept to revisit
 
 **Step 5.2 — Push a clean README**
-- One paragraph on the 5 endpoints, an ASCII diagram of both data flows, how to run it locally
-- Output: a presentable, explainable project
+- One paragraph on the 5 endpoints, an ASCII diagram of both data flows, how to run it locally (backend + frontend)
+- Output: a presentable, explainable project — one you can actually click through in a browser, not just curl
 
 **Milestone: you're job-ready here.** Everything below is deeper — go apply/interview before continuing.
 
@@ -247,4 +274,5 @@ Retraces the same path one level deeper: prompt engineering, chunking strategy t
 
 - Each step names its output — don't move to the next step until that output actually exists and runs.
 - Each phase names its topic folder — read the topic's `README.md` *before* building that phase, fill in its `NOTES.md` *after*.
+- Steps marked **F** are frontend — build them right after their paired backend step, using the same endpoint you just finished. There's no separate `topics/` entry for these — the frontend isn't a new AI-backend concept, just the client exercising what you already built.
 - For "what do I do right now," check [PROGRESS.md](PROGRESS.md) — it's the single tracker; this file is the reference you come back to for the details of each step.
