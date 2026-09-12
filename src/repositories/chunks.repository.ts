@@ -20,10 +20,9 @@ export async function searchSimilar(
   limit: number,
 ): Promise<{ content: string; distance: number }[]> {
   // searchSimilar is a function that takes in a queryEmbedding array of numbers and a limit number, and returns an array of objects containing the content and distance of the most similar chunks to the queryEmbedding
-  const distance = cosineDistance(chunks.embedding, queryEmbedding).mapWith(
-    Number,
-  )
+  const distance = cosineDistance(chunks.embedding, queryEmbedding).mapWith(Number)
   // cosineDistance(chunks.embedding, queryEmbedding) — builds the same <=> SQL expression as a reusable TypeScript value
+  // mapWith(Number) — ensures that the distance values are returned as numbers instead of strings, which is important for accurate sorting and comparison
 
   return db
     .select({ content: chunks.content, distance })

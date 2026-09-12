@@ -36,6 +36,12 @@ async function main() {
     'A kitten was resting on the rug.',
     'The stock market crashed on Tuesday.',
     'Investors panicked as share prices fell.',
+    'Web development is fun.',
+    'Building websites and applications can be rewarding.',
+    'Coding is a creative problem-solving process.',
+    'Problem-solving is a fundamental skill for software developers.',
+    'The chef prepared a delicious three-course meal.',
+    'Recipes often call for fresh herbs and spices.',
   ]
 
   console.log('Embedding and inserting via insertChunk()...')
