@@ -20,24 +20,30 @@ app.use(
 )
 
 app.get('/', (_req, res) => {
-  res.json({ status: 'ok', message: 'DocMind API - POST a PDF to /upload' })
+  res.json({
+    status: 'ok',
+    message: 'DocMind API - POST a PDF to /upload',
+  })
 })
 
 app.post('/upload', upload.single('file'), async (req, res) => {
   if (!req.file) {
-    return res
-      .status(400)
-      .json({ error: 'No file uploaded (expected form field "file")' })
+    return res.status(400).json({
+      error: 'No file uploaded (expected form field "file")',
+    })
   }
 
   if (req.file.mimetype !== 'application/pdf') {
     return res.status(400).json({ error: 'Only PDF files are supported' })
   }
 
+  // passing the buffer directly to PDFParse, which will handle it in memory
   const parser = new PDFParse({ data: req.file.buffer })
+  console.log(`Parsing PDF "${req.file.originalname}" (${req.file.size} bytes)`)
 
   try {
     const result = await parser.getText()
+    // this is the raw text extracted from the PDF, which we can then chunk and embed later
 
     console.log(
       `Extracted ${result.text.length} characters from "${req.file.originalname}"`,
