@@ -13,6 +13,12 @@ Roadmap: Phase 2, Step 2.1 · Guide: [README.md](README.md) · Code: [src/index.
   ```
 - **Only works on PDFs with a real text layer** — typed docs, exported PDFs. Scanned/image PDFs return almost nothing.
 
+```
+- multer gets the file to node.js app
+- pdf-parser understands the PDF and extract the content
+- buffer holds the raw file bytes in the memory
+```
+
 ## Tested on 3 real PDFs — real results, not hypothetical
 
 | File | Extracted length | Result |

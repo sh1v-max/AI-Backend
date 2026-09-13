@@ -13,15 +13,21 @@ const upload = multer({ storage: multer.memoryStorage() })
 // The frontend (Vite dev server, localhost:5173) and this API (localhost:3000)
 // are different origins even both on localhost — browsers block cross-origin
 // requests by default unless the server explicitly allows them.
-app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:5173' }))
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  }),
+)
 
 app.get('/', (_req, res) => {
-  res.json({ status: 'ok', message: 'DocMind API — POST a PDF to /upload' })
+  res.json({ status: 'ok', message: 'DocMind API - POST a PDF to /upload' })
 })
 
 app.post('/upload', upload.single('file'), async (req, res) => {
   if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded (expected form field "file")' })
+    return res
+      .status(400)
+      .json({ error: 'No file uploaded (expected form field "file")' })
   }
 
   if (req.file.mimetype !== 'application/pdf') {
@@ -33,7 +39,9 @@ app.post('/upload', upload.single('file'), async (req, res) => {
   try {
     const result = await parser.getText()
 
-    console.log(`Extracted ${result.text.length} characters from "${req.file.originalname}"`)
+    console.log(
+      `Extracted ${result.text.length} characters from "${req.file.originalname}"`,
+    )
     console.log('First 300 characters:\n', result.text.slice(0, 300))
 
     res.json({
