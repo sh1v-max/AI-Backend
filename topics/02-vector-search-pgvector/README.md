@@ -59,6 +59,8 @@ For a handful of rows, Postgres just checks every row's distance (a "sequential 
 
 You don't need this for DocMind's scale. Know the names, know *why* they'd matter later (approximate nearest-neighbor search instead of exact), and move on — this is a "come back later" detail, not a Step 1.2 blocker.
 
+**One real wrinkle worth knowing about now, even though it doesn't block anything today:** our embedding model (`gemini-embedding-001`) outputs 3072-dimensional vectors, but pgvector's HNSW and IVFFlat indexes cap out at 2000 dimensions on the standard `vector` type — meaning neither index type could even be built on our `chunks.embedding` column as-is, if it ever came to that. Full details, why it doesn't matter yet, and the actual fixes if it ever did: [INDEXING-AT-SCALE.md](INDEXING-AT-SCALE.md).
+
 ## Where to run Postgres
 
 Two free options with `pgvector` built in, no local install pain:
