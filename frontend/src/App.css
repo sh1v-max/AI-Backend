@@ -177,3 +177,8 @@
   font-size: 13px;
   color: var(--color-muted);
 }
+
+.doc-card-meta--muted {
+  font-size: 12px;
+  opacity: 0.75;
+}

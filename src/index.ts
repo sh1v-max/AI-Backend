@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto'
 import { PDFParse } from 'pdf-parse'
 import { getEmbedding } from './services/embeddings.service'
 import { insertChunk } from './repositories/chunks.repository'
+import { insertDocument, listDocuments } from './repositories/documents.repository'
 
 // Step 2.1 — PDF in, plain text out.
 // Step 2.2 — chunk that text, embed each chunk, store it — a document
@@ -43,6 +44,11 @@ app.get('/', (_req, res) => {
   })
 })
 
+app.get('/documents', async (_req, res) => {
+  const docs = await listDocuments()
+  res.json(docs)
+})
+
 app.post('/upload', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({
@@ -75,13 +81,23 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       await insertChunk(chunk, embedding, documentId)
     }
 
+    const document = await insertDocument(
+      documentId,
+      req.file.originalname,
+      req.file.size,
+      result.text.length,
+      textChunks.length,
+    )
+
     console.log(`Stored ${textChunks.length} chunks under documentId ${documentId}`)
 
     res.json({
       documentId,
       filename: req.file.originalname,
+      fileSizeBytes: req.file.size,
       textLength: result.text.length,
       chunkCount: textChunks.length,
+      createdAt: document.createdAt,
     })
   } finally {
     await parser.destroy()

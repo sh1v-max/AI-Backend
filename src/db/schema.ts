@@ -1,4 +1,16 @@
-import { pgTable, serial, text, vector } from 'drizzle-orm/pg-core'
+import { integer, pgTable, serial, text, timestamp, vector } from 'drizzle-orm/pg-core'
+
+// One row per uploaded PDF — tracks metadata so the frontend (or Postman,
+// or any other client) can list "what documents exist" without deriving it
+// from chunk rows, and without depending on whoever uploaded it.
+export const documents = pgTable('documents', {
+  id: text('id').primaryKey(), // same UUID used as chunks.document_id
+  filename: text('filename').notNull(),
+  fileSizeBytes: integer('file_size_bytes').notNull(),
+  textLength: integer('text_length').notNull(),
+  chunkCount: integer('chunk_count').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+})
 
 // defined the table as typescript type
 export const chunks = pgTable('chunks', {
