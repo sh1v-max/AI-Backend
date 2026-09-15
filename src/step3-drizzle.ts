@@ -2,30 +2,16 @@ import 'dotenv/config'
 import { sql } from 'drizzle-orm'
 import { db } from './db/client'
 import { insertChunk, searchSimilar } from './repositories/chunks.repository'
+import { getEmbedding } from './services/embeddings.service'
 
 // Step 1.3 — same result as step2-pgvector.ts, but through typed repository
 // functions instead of raw SQL strings. Reuses the `chunks` table already
 // created in step2 (same VECTOR(3072) shape) — Drizzle doesn't need to
 // recreate it, just needs its schema definition to match.
+// getEmbedding now lives in one shared file (services/embeddings.service.ts)
+// instead of being copy-pasted in every step file.
 
-const API_KEY = process.env.GEMINI_API_KEY
-const EMBED_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent'
-
-async function getEmbedding(text: string): Promise<number[]> {
-  const res = await fetch(`${EMBED_URL}?key=${API_KEY}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: { parts: [{ text }] } }),
-  })
-
-  if (!res.ok) {
-    throw new Error(`Gemini API error: ${res.status} ${await res.text()}`)
-  }
-
-  const data = await res.json()
-  return data.embedding.values
-}
+const TEST_DOCUMENT_ID = 'step3-test'
 
 async function main() {
   console.log('Clearing table...')
@@ -47,12 +33,12 @@ async function main() {
   console.log('Embedding and inserting via insertChunk()...')
   for (const content of sentences) {
     const embedding = await getEmbedding(content)
-    await insertChunk(content, embedding)
+    await insertChunk(content, embedding, TEST_DOCUMENT_ID)
   }
 
   console.log('\nSearching via searchSimilar()...\n')
   const queryEmbedding = await getEmbedding('a cat napping on a blanket')
-  const results = await searchSimilar(queryEmbedding, 2)
+  const results = await searchSimilar(queryEmbedding, 2, TEST_DOCUMENT_ID)
 
   for (const row of results) {
     console.log(`  distance ${row.distance.toFixed(4)} — "${row.content}"`)
