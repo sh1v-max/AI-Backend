@@ -5,23 +5,26 @@ import {
   CheckCircle,
   XCircle,
   Spinner,
+  Stack,
 } from '@phosphor-icons/react'
 import './App.css'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
 
-interface UploadResult {
+interface UploadedDocument {
+  documentId: string
   filename: string
   textLength: number
-  preview: string
+  chunkCount: number
 }
 
-type Status = 'idle' | 'uploading' | 'success' | 'error'
+type Status = 'idle' | 'uploading' | 'error'
 
 function App() {
   const [status, setStatus] = useState<Status>('idle')
   const [isDragging, setIsDragging] = useState(false)
-  const [result, setResult] = useState<UploadResult | null>(null)
+  const [documents, setDocuments] = useState<UploadedDocument[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -34,7 +37,6 @@ function App() {
 
     setStatus('uploading')
     setError(null)
-    setResult(null)
 
     const formData = new FormData()
     formData.append('file', file)
@@ -51,8 +53,16 @@ function App() {
         throw new Error(data.error || 'Upload failed')
       }
 
-      setResult(data)
-      setStatus('success')
+      const doc: UploadedDocument = {
+        documentId: data.documentId,
+        filename: data.filename,
+        textLength: data.textLength,
+        chunkCount: data.chunkCount,
+      }
+
+      setDocuments((prev) => [doc, ...prev])
+      setSelectedId(doc.documentId)
+      setStatus('idle')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
       setStatus('error')
@@ -70,7 +80,7 @@ function App() {
     <div className="app">
       <header className="app-header">
         <h1>DocMind</h1>
-        <p className="subtitle">Upload a PDF and extract its text — Step 2.1</p>
+        <p className="subtitle">Upload a PDF, then chat with it</p>
       </header>
 
       <div
@@ -124,17 +134,45 @@ function App() {
         </div>
       )}
 
-      {status === 'success' && result && (
-        <div className="result-card">
-          <div className="result-header">
-            <FileText size={20} weight="regular" aria-hidden />
-            <span className="result-filename">{result.filename}</span>
-            <span className="badge">
-              <CheckCircle size={14} weight="fill" aria-hidden />
-              {result.textLength.toLocaleString()} chars
-            </span>
-          </div>
-          <pre className="result-preview">{result.preview}</pre>
+      {documents.length > 0 && (
+        <div className="doc-list" role="radiogroup" aria-label="Uploaded documents">
+          <h2 className="doc-list-title">
+            <Stack size={16} weight="bold" aria-hidden />
+            Documents
+          </h2>
+
+          {documents.map((doc) => {
+            const isSelected = doc.documentId === selectedId
+            return (
+              <button
+                key={doc.documentId}
+                type="button"
+                role="radio"
+                aria-checked={isSelected}
+                className={`doc-card ${isSelected ? 'doc-card--selected' : ''}`}
+                onClick={() => setSelectedId(doc.documentId)}
+              >
+                <div className="doc-card-icon" aria-hidden>
+                  {isSelected ? (
+                    <CheckCircle size={20} weight="fill" />
+                  ) : (
+                    <FileText size={20} weight="regular" />
+                  )}
+                </div>
+
+                <div className="doc-card-body">
+                  <span className="doc-card-filename">{doc.filename}</span>
+                  <span className="doc-card-meta">
+                    {doc.chunkCount.toLocaleString()} chunk
+                    {doc.chunkCount === 1 ? '' : 's'} ·{' '}
+                    {doc.textLength.toLocaleString()} chars
+                  </span>
+                </div>
+
+                {isSelected && <span className="badge">Active</span>}
+              </button>
+            )
+          })}
         </div>
       )}
     </div>

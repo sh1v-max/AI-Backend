@@ -8,22 +8,22 @@ Advanced topics are listed **right after the basic topic they relate to** so you
 
 ## Part 1 + 2 — do this first, straight through (job-ready track)
 
-| # | Topic | Notes | Related advanced topic (do later, not now) |
-|---|---|---|---|
-| 01 | Embeddings | [topics/01-embeddings](topics/01-embeddings/NOTES.md) | — |
-| 02 | Vector search (pgvector) | [topics/02-vector-search-pgvector](topics/02-vector-search-pgvector/NOTES.md) | — |
-| 03 | Repository pattern (Drizzle) | [topics/03-repository-pattern-drizzle](topics/03-repository-pattern-drizzle/NOTES.md) | — |
-| 04 | PDF parsing | [topics/04-pdf-parsing](topics/04-pdf-parsing/NOTES.md) | `advanced/02` Chunking strategy |
-| 05 | RAG | [topics/05-rag](topics/05-rag/NOTES.md) | `advanced/06` LLM security (prompt injection) |
-| 06 | Conversation memory | [topics/06-conversation-memory](topics/06-conversation-memory/NOTES.md) | `advanced/03` Token counting & cost |
-| 07 | Streaming (SSE) | [topics/07-streaming-sse](topics/07-streaming-sse/NOTES.md) | — |
-| 08 | Structured output (Zod) | [topics/08-structured-output-zod](topics/08-structured-output-zod/NOTES.md) | `advanced/01` Prompt engineering |
-| — | **Phase 5: tie it together, write it up** | see [ai-backend-roadmap.md](ai-backend-roadmap.md) Phase 5 | — |
-| 09 | Background jobs (BullMQ) | [topics/09-background-jobs-bullmq](topics/09-background-jobs-bullmq/NOTES.md) | `advanced/05` Rate limiting & retries |
-| 10 | Agents & tool calling | [topics/10-agents-tool-calling](topics/10-agents-tool-calling/NOTES.md) | `advanced/07` Vendor abstraction |
-| 11 | Workflows (suspend/resume) | [topics/11-workflows-suspend-resume](topics/11-workflows-suspend-resume/NOTES.md) | — |
-| 12 | Testing & observability | [topics/12-testing-observability](topics/12-testing-observability/NOTES.md) | `advanced/04` Evaluation |
-| 13 | Deployment | [topics/13-deployment](topics/13-deployment/NOTES.md) | — |
+| # | Status | Topic | Notes | Related advanced topic (do later, not now) |
+|---|---|---|---|---|
+| 01 | ✅ | Embeddings | [topics/01-embeddings](topics/01-embeddings/NOTES.md) | — |
+| 02 | ✅ | Vector search (pgvector) | [topics/02-vector-search-pgvector](topics/02-vector-search-pgvector/NOTES.md) | — |
+| 03 | ✅ | Repository pattern (Drizzle) | [topics/03-repository-pattern-drizzle](topics/03-repository-pattern-drizzle/NOTES.md) | — |
+| 04 | ✅ | PDF parsing | [topics/04-pdf-parsing](topics/04-pdf-parsing/NOTES.md) | `advanced/02` Chunking strategy |
+| 05 | 🟡 in progress | RAG | [topics/05-rag](topics/05-rag/NOTES.md) — `POST /upload` (Step 2.2) done incl. chunk+embed+store; frontend (Step 2.2F) needs to sync to the real response shape (`documentId`, `chunkCount`) and carry `documentId` forward; `POST /chat` (Step 2.3) not started | `advanced/06` LLM security (prompt injection) |
+| 06 | ⬜ | Conversation memory | [topics/06-conversation-memory](topics/06-conversation-memory/NOTES.md) | `advanced/03` Token counting & cost |
+| 07 | ⬜ | Streaming (SSE) | [topics/07-streaming-sse](topics/07-streaming-sse/NOTES.md) | — |
+| 08 | ⬜ | Structured output (Zod) | [topics/08-structured-output-zod](topics/08-structured-output-zod/NOTES.md) | `advanced/01` Prompt engineering |
+| — | ⬜ | **Phase 5: tie it together, write it up** | see [ai-backend-roadmap.md](ai-backend-roadmap.md) Phase 5 | — |
+| 09 | ⬜ | Background jobs (BullMQ) | [topics/09-background-jobs-bullmq](topics/09-background-jobs-bullmq/NOTES.md) | `advanced/05` Rate limiting & retries |
+| 10 | ⬜ | Agents & tool calling | [topics/10-agents-tool-calling](topics/10-agents-tool-calling/NOTES.md) | `advanced/07` Vendor abstraction |
+| 11 | ⬜ | Workflows (suspend/resume) | [topics/11-workflows-suspend-resume](topics/11-workflows-suspend-resume/NOTES.md) | — |
+| 12 | ⬜ | Testing & observability | [topics/12-testing-observability](topics/12-testing-observability/NOTES.md) | `advanced/04` Evaluation |
+| 13 | ⬜ | Deployment | [topics/13-deployment](topics/13-deployment/NOTES.md) | — |
 
 **Milestone: you're job-ready here.** DocMind works end to end, deployed, and you can explain every concept above out loud without notes. Go apply / interview. The advanced pass below is for after that, not instead of it.
 
