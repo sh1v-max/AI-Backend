@@ -2,13 +2,30 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import multer from 'multer'
+import { randomUUID } from 'crypto'
 import { PDFParse } from 'pdf-parse'
+import { getEmbedding } from './services/embeddings.service'
+import { insertChunk } from './repositories/chunks.repository'
 
-// Step 2.1 — PDF in, plain text out. Nothing else yet: no chunking, no
-// embedding, no database writes. Just proving extraction works.
+// Step 2.1 — PDF in, plain text out.
+// Step 2.2 — chunk that text, embed each chunk, store it — a document
+// becomes a set of searchable chunks, tagged with a documentId.
 
 const app = express()
 const upload = multer({ storage: multer.memoryStorage() })
+
+// Split text into ~500-word chunks. Deliberately simple — chunking strategy
+// tradeoffs (semantic boundaries, overlap) are a later, deeper topic.
+function chunkText(text: string, wordsPerChunk = 500): string[] {
+  const words = text.split(/\s+/).filter(Boolean)
+  const chunks: string[] = []
+
+  for (let i = 0; i < words.length; i += wordsPerChunk) {
+    chunks.push(words.slice(i, i + wordsPerChunk).join(' '))
+  }
+
+  return chunks
+}
 
 // The frontend (Vite dev server, localhost:5173) and this API (localhost:3000)
 // are different origins even both on localhost — browsers block cross-origin
@@ -43,17 +60,28 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
   try {
     const result = await parser.getText()
-    // this is the raw text extracted from the PDF, which we can then chunk and embed later
 
     console.log(
       `Extracted ${result.text.length} characters from "${req.file.originalname}"`,
     )
-    console.log('First 300 characters:\n', result.text.slice(0, 300))
+
+    const textChunks = chunkText(result.text)
+    const documentId = randomUUID()
+
+    console.log(`Split into ${textChunks.length} chunks, embedding each...`)
+
+    for (const chunk of textChunks) {
+      const embedding = await getEmbedding(chunk)
+      await insertChunk(chunk, embedding, documentId)
+    }
+
+    console.log(`Stored ${textChunks.length} chunks under documentId ${documentId}`)
 
     res.json({
+      documentId,
       filename: req.file.originalname,
       textLength: result.text.length,
-      preview: result.text.slice(0, 300),
+      chunkCount: textChunks.length,
     })
   } finally {
     await parser.destroy()
