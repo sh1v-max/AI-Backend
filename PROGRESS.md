@@ -14,7 +14,7 @@ Advanced topics are listed **right after the basic topic they relate to** so you
 | 02 | ✅ | Vector search (pgvector) | [topics/02-vector-search-pgvector](topics/02-vector-search-pgvector/NOTES.md) | — |
 | 03 | ✅ | Repository pattern (Drizzle) | [topics/03-repository-pattern-drizzle](topics/03-repository-pattern-drizzle/NOTES.md) | — |
 | 04 | ✅ | PDF parsing | [topics/04-pdf-parsing](topics/04-pdf-parsing/NOTES.md) | `advanced/02` Chunking strategy |
-| 05 | 🟡 in progress | RAG | [topics/05-rag](topics/05-rag/NOTES.md) — `POST /upload` (Step 2.2) done incl. chunk+embed+store; frontend (Step 2.2F) needs to sync to the real response shape (`documentId`, `chunkCount`) and carry `documentId` forward; `POST /chat` (Step 2.3) not started | `advanced/06` LLM security (prompt injection) |
+| 05 | 🟡 code done, notes pending | RAG | [topics/05-rag](topics/05-rag/NOTES.md) — `POST /upload` (Step 2.2) done incl. chunk+embed+store+`documents` table+`GET /documents`; frontend (Step 2.2F) synced; `POST /chat` (Step 2.3) done — embed question, `searchSimilar()` scoped to documentId, grounded generation via `generateAnswer()`, verified end to end on real PDFs. **Fill NOTES.md to mark ✅.** | `advanced/06` LLM security (prompt injection) |
 | 06 | ⬜ | Conversation memory | [topics/06-conversation-memory](topics/06-conversation-memory/NOTES.md) | `advanced/03` Token counting & cost |
 | 07 | ⬜ | Streaming (SSE) | [topics/07-streaming-sse](topics/07-streaming-sse/NOTES.md) | — |
 | 08 | ⬜ | Structured output (Zod) | [topics/08-structured-output-zod](topics/08-structured-output-zod/NOTES.md) | `advanced/01` Prompt engineering |
