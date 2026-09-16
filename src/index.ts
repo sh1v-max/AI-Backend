@@ -5,15 +5,23 @@ import multer from 'multer'
 import { randomUUID } from 'crypto'
 import { PDFParse } from 'pdf-parse'
 import { getEmbedding } from './services/embeddings.service'
-import { insertChunk } from './repositories/chunks.repository'
+import { generateAnswer } from './services/llm.service'
+import { insertChunk, searchSimilar } from './repositories/chunks.repository'
 import { insertDocument, listDocuments } from './repositories/documents.repository'
 
 // Step 2.1 — PDF in, plain text out.
 // Step 2.2 — chunk that text, embed each chunk, store it — a document
 // becomes a set of searchable chunks, tagged with a documentId.
+// Step 2.3 — POST /chat: embed the question, search stored chunks for this
+// document, hand the relevant ones to the LLM, return a grounded answer.
 
 const app = express()
 const upload = multer({ storage: multer.memoryStorage() })
+
+// Only affects requests with Content-Type: application/json — /upload's
+// multipart/form-data requests are handled separately by Multer, so the two
+// don't conflict.
+app.use(express.json())
 
 // Split text into ~500-word chunks. Deliberately simple — chunking strategy
 // tradeoffs (semantic boundaries, overlap) are a later, deeper topic.
@@ -47,6 +55,39 @@ app.get('/', (_req, res) => {
 app.get('/documents', async (_req, res) => {
   const docs = await listDocuments()
   res.json(docs)
+})
+
+app.post('/chat', async (req, res) => {
+  const { documentId, message } = req.body
+
+  if (!documentId || typeof documentId !== 'string') {
+    return res.status(400).json({ error: 'documentId (string) is required' })
+  }
+
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ error: 'message (string) is required' })
+  }
+
+  console.log(`Chat request for document ${documentId}: "${message}"`)
+
+  const questionEmbedding = await getEmbedding(message)
+  const relevantChunks = await searchSimilar(questionEmbedding, 3, documentId)
+
+  if (relevantChunks.length === 0) {
+    return res.status(404).json({ error: 'No document found with that documentId' })
+  }
+
+  const context = relevantChunks.map((c) => c.content).join('\n\n')
+  const prompt = `Answer using only this context:\n${context}\n\nQuestion: ${message}`
+
+  const answer = await generateAnswer(prompt)
+
+  console.log(`Answered using ${relevantChunks.length} chunks`)
+
+  res.json({
+    answer,
+    sources: relevantChunks.map((c) => ({ content: c.content, distance: c.distance })),
+  })
 })
 
 app.post('/upload', upload.single('file'), async (req, res) => {
