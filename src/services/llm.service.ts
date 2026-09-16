@@ -10,11 +10,11 @@ export async function generateAnswer(prompt: string): Promise<string> {
       contents: [{ parts: [{ text: prompt }] }],
     }),
   })
-
+  
   if (!res.ok) {
     throw new Error(`Gemini API error: ${res.status} ${await res.text()}`)
   }
-
+  
   const data = await res.json()
   return data.candidates[0].content.parts[0].text
 }
