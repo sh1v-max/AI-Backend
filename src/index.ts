@@ -8,6 +8,16 @@ import { getEmbedding } from './services/embeddings.service'
 import { generateAnswer } from './services/llm.service'
 import { insertChunk, searchSimilar } from './repositories/chunks.repository'
 import { insertDocument, listDocuments } from './repositories/documents.repository'
+import {
+  pipelineStart,
+  pipelineEnd,
+  step,
+  detail,
+  timing,
+  preview,
+  rejected,
+  notFound,
+} from './utils/pipelineLogger'
 
 // Step 2.1 — PDF in, plain text out.
 // Step 2.2 — chunk that text, embed each chunk, store it — a document
@@ -58,31 +68,56 @@ app.get('/documents', async (_req, res) => {
 })
 
 app.post('/chat', async (req, res) => {
+  const t0 = Date.now()
   const { documentId, message } = req.body
 
+  pipelineStart('chat', 'POST /chat')
+
   if (!documentId || typeof documentId !== 'string') {
+    rejected('missing/invalid documentId')
     return res.status(400).json({ error: 'documentId (string) is required' })
   }
 
   if (!message || typeof message !== 'string') {
+    rejected('missing/invalid message')
     return res.status(400).json({ error: 'message (string) is required' })
   }
 
-  console.log(`Chat request for document ${documentId}: "${message}"`)
+  step('chat', 1, 5, 'Request received')
+  detail(`documentId: ${documentId}`)
+  detail(`message:    "${message}"`)
 
+  step('chat', 2, 5, 'Embedding the question...')
+  const embedStart = Date.now()
   const questionEmbedding = await getEmbedding(message)
+  timing(Date.now() - embedStart, `vector has ${questionEmbedding.length} dimensions`)
+
+  step('chat', 3, 5, 'Searching stored chunks (scoped to this documentId, top 3 by cosine distance)...')
+  const searchStart = Date.now()
   const relevantChunks = await searchSimilar(questionEmbedding, 3, documentId)
+  timing(Date.now() - searchStart, `found ${relevantChunks.length} chunk(s)`)
 
   if (relevantChunks.length === 0) {
+    notFound('No chunks found for this documentId — does it exist?')
+    pipelineEnd('chat', Date.now() - t0)
     return res.status(404).json({ error: 'No document found with that documentId' })
   }
 
+  relevantChunks.forEach((c, i) => {
+    preview(`#${i + 1} distance=${c.distance.toFixed(4)}`, c.content)
+  })
+
   const context = relevantChunks.map((c) => c.content).join('\n\n')
   const prompt = `Answer using only this context:\n${context}\n\nQuestion: ${message}`
+  step('chat', 4, 5, `Built prompt — ${prompt.length} characters (${context.length} of which is retrieved context)`)
 
+  step('chat', 5, 5, 'Calling the LLM to generate an answer...')
+  const genStart = Date.now()
   const answer = await generateAnswer(prompt)
+  timing(Date.now() - genStart)
+  preview('answer', answer, 150)
 
-  console.log(`Answered using ${relevantChunks.length} chunks`)
+  pipelineEnd('chat', Date.now() - t0)
 
   res.json({
     answer,
@@ -91,35 +126,47 @@ app.post('/chat', async (req, res) => {
 })
 
 app.post('/upload', upload.single('file'), async (req, res) => {
+  const t0 = Date.now()
+  pipelineStart('upload', 'POST /upload')
+
   if (!req.file) {
+    rejected('no file in request (expected form field "file")')
     return res.status(400).json({
       error: 'No file uploaded (expected form field "file")',
     })
   }
 
   if (req.file.mimetype !== 'application/pdf') {
+    rejected(`wrong mimetype (${req.file.mimetype})`)
     return res.status(400).json({ error: 'Only PDF files are supported' })
   }
 
+  step('upload', 1, 5, `File received: "${req.file.originalname}" (${req.file.size} bytes)`)
+
   // passing the buffer directly to PDFParse, which will handle it in memory
   const parser = new PDFParse({ data: req.file.buffer })
-  console.log(`Parsing PDF "${req.file.originalname}" (${req.file.size} bytes)`)
 
   try {
+    step('upload', 2, 5, 'Extracting text from PDF...')
+    const extractStart = Date.now()
     const result = await parser.getText()
-
-    console.log(
-      `Extracted ${result.text.length} characters from "${req.file.originalname}"`,
-    )
+    timing(Date.now() - extractStart, `extracted ${result.text.length} characters`)
 
     const textChunks = chunkText(result.text)
     const documentId = randomUUID()
 
-    console.log(`Split into ${textChunks.length} chunks, embedding each...`)
+    step('upload', 3, 5, `Split into ${textChunks.length} chunk(s) — documentId: ${documentId}`)
 
-    for (const chunk of textChunks) {
+    step('upload', 4, 5, 'Embedding + storing each chunk...')
+    for (let i = 0; i < textChunks.length; i++) {
+      const chunk = textChunks[i]
+      const chunkStart = Date.now()
       const embedding = await getEmbedding(chunk)
       await insertChunk(chunk, embedding, documentId)
+      detail(
+        `chunk ${i + 1}/${textChunks.length}: ${chunk.length} chars → ${embedding.length}-dim vector, stored in ${Date.now() - chunkStart}ms`,
+      )
+      preview('preview', chunk)
     }
 
     const document = await insertDocument(
@@ -130,7 +177,8 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       textChunks.length,
     )
 
-    console.log(`Stored ${textChunks.length} chunks under documentId ${documentId}`)
+    step('upload', 5, 5, 'Document metadata saved')
+    pipelineEnd('upload', Date.now() - t0)
 
     res.json({
       documentId,
