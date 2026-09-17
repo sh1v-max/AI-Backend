@@ -1,6 +1,16 @@
-import { desc, eq } from 'drizzle-orm'
+import { asc, desc, eq } from 'drizzle-orm'
 import { db } from '../db/client'
-import { chatMessages } from '../db/schema'
+import { chatMessages, documents } from '../db/schema'
+
+export interface SessionSummary {
+  sessionId: string
+  documentId: string
+  filename: string | null
+  title: string
+  lastMessage: string
+  lastMessageAt: Date
+  messageCount: number
+}
 
 // this function inserts a new chat message into the chatMessages table in the db. it takes the sessionId, documentId, role, and content of the message as parameters and returns a Promise that resolves when the insertion is complete. it uses the db.insert method provided by Drizzle ORM to perform the insertion in a type-safe manner.
 export async function insertMessage(
@@ -35,3 +45,69 @@ export async function getRecentMessages(
 // WHERE session_id = $1
 // ORDER BY created_at DESC
 // LIMIT $2
+
+// Full transcript for one session, oldest first — what the frontend renders
+// when a history item is opened.
+export async function getMessagesForSession(
+  sessionId: string,
+): Promise<{ role: string; content: string; createdAt: Date }[]> {
+  return db
+    .select({
+      role: chatMessages.role,
+      content: chatMessages.content,
+      createdAt: chatMessages.createdAt,
+    })
+    .from(chatMessages)
+    .where(eq(chatMessages.sessionId, sessionId))
+    .orderBy(asc(chatMessages.createdAt))
+}
+
+// One row per session (conversation), newest activity first — the sidebar's
+// history list. Sessions aren't a table of their own; they're derived by
+// grouping chat_messages by session_id, so this reduces the full message
+// log down to one summary per session rather than adding a new table.
+// this fetches the summary of all sessions, newest first
+export async function listSessions(): Promise<SessionSummary[]> {
+  const rows = await db
+    .select({
+      sessionId: chatMessages.sessionId,
+      documentId: chatMessages.documentId,
+      role: chatMessages.role,
+      content: chatMessages.content,
+      createdAt: chatMessages.createdAt,
+    })
+    .from(chatMessages)
+    .orderBy(asc(chatMessages.createdAt))
+
+  const docRows = await db.select({ id: documents.id, filename: documents.filename }).from(documents)
+  const filenameByDocumentId = new Map(docRows.map((d) => [d.id, d.filename]))
+
+  const bySession = new Map<string, SessionSummary>()
+
+  for (const row of rows) {
+    const existing = bySession.get(row.sessionId)
+
+    if (!existing) {
+      bySession.set(row.sessionId, {
+        sessionId: row.sessionId,
+        documentId: row.documentId,
+        filename: filenameByDocumentId.get(row.documentId) ?? null,
+        // First user message doubles as the conversation's title — the same
+        // idea ChatGPT uses for naming a thread from its opening message.
+        title: row.role === 'user' ? row.content : 'New conversation',
+        lastMessage: row.content,
+        lastMessageAt: row.createdAt,
+        messageCount: 1,
+      })
+      continue
+    }
+
+    existing.lastMessage = row.content
+    existing.lastMessageAt = row.createdAt
+    existing.messageCount += 1
+  }
+
+  return [...bySession.values()].sort(
+    (a, b) => b.lastMessageAt.getTime() - a.lastMessageAt.getTime(),
+  )
+}

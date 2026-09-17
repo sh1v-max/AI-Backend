@@ -8,7 +8,12 @@ import { getEmbedding } from './services/embeddings.service'
 import { generateAnswer } from './services/llm.service'
 import { insertChunk, searchSimilar } from './repositories/chunks.repository'
 import { insertDocument, listDocuments } from './repositories/documents.repository'
-import { insertMessage, getRecentMessages } from './repositories/chatMessages.repository'
+import {
+  insertMessage,
+  getRecentMessages,
+  getMessagesForSession,
+  listSessions,
+} from './repositories/chatMessages.repository'
 import {
   pipelineStart,
   pipelineEnd,
@@ -71,6 +76,16 @@ app.get('/', (_req, res) => {
 app.get('/documents', async (_req, res) => {
   const docs = await listDocuments()
   res.json(docs)
+})
+
+app.get('/sessions', async (_req, res) => {
+  const sessions = await listSessions()
+  res.json(sessions)
+})
+
+app.get('/sessions/:sessionId/messages', async (req, res) => {
+  const messages = await getMessagesForSession(req.params.sessionId)
+  res.json(messages)
 })
 
 app.post('/chat', async (req, res) => {
