@@ -1,5 +1,15 @@
-import { integer, pgTable, serial, text, timestamp, vector } from 'drizzle-orm/pg-core'
+import {
+  integer,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+  vector,
+} from 'drizzle-orm/pg-core'
 
+// schema for the database tables used in this project, defined using Drizzle ORM's pgTable function. Each table is represented as a TypeScript constant, allowing for type-safe access to the table's columns and their types. The schema includes three tables: documents, chunks, and chatMessages, each with its own set of columns and constraints.
+
+// the documents table schema
 // One row per uploaded PDF — tracks metadata so the frontend (or Postman,
 // or any other client) can list "what documents exist" without deriving it
 // from chunk rows, and without depending on whoever uploaded it.
@@ -12,6 +22,7 @@ export const documents = pgTable('documents', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 })
 
+// the chunks table schema
 // defined the table as typescript type
 export const chunks = pgTable('chunks', {
   // The 'id' column is defined as a serial type and is the primary key of the table, always incremented by 1 for each new row
@@ -26,3 +37,18 @@ export const chunks = pgTable('chunks', {
 
 // every other file will import this file (chunks) and use it to access the table and its columns in a type-safe manner
 // this allows for better code completion and type checking when working with the database schema in TypeScript
+
+// the chatMessages table
+// Step 2.4 — one row per message in a conversation. sessionId groups
+// messages into one conversation thread; documentId is stored too so a
+// session's history is always tied back to which document it's about.
+export const chatMessages = pgTable('chat_messages', {
+  id: serial('id').primaryKey(),
+  sessionId: text('session_id').notNull(),
+  // documentId keeps track of which document the message belongs to
+  documentId: text('document_id').notNull(),
+  // 
+  role: text('role').notNull(), // 'user' | 'assistant'
+  content: text('content').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+})
