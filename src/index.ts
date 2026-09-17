@@ -8,6 +8,7 @@ import { getEmbedding } from './services/embeddings.service'
 import { generateAnswer } from './services/llm.service'
 import { insertChunk, searchSimilar } from './repositories/chunks.repository'
 import { insertDocument, listDocuments } from './repositories/documents.repository'
+import { insertMessage, getRecentMessages } from './repositories/chatMessages.repository'
 import {
   pipelineStart,
   pipelineEnd,
@@ -24,6 +25,11 @@ import {
 // becomes a set of searchable chunks, tagged with a documentId.
 // Step 2.3 — POST /chat: embed the question, search stored chunks for this
 // document, hand the relevant ones to the LLM, return a grounded answer.
+// Step 2.4 — give /chat memory: a sessionId groups messages into one
+// conversation, recent history gets replayed into every prompt so follow-up
+// questions ("what about the second one?") actually resolve correctly.
+
+const HISTORY_LIMIT = 8
 
 const app = express()
 const upload = multer({ storage: multer.memoryStorage() })
@@ -70,6 +76,7 @@ app.get('/documents', async (_req, res) => {
 app.post('/chat', async (req, res) => {
   const t0 = Date.now()
   const { documentId, message } = req.body
+  const sessionId: string = req.body.sessionId || randomUUID()
 
   pipelineStart('chat', 'POST /chat')
 
@@ -83,16 +90,17 @@ app.post('/chat', async (req, res) => {
     return res.status(400).json({ error: 'message (string) is required' })
   }
 
-  step('chat', 1, 5, 'Request received')
+  step('chat', 1, 7, 'Request received')
+  detail(`sessionId:  ${sessionId}`)
   detail(`documentId: ${documentId}`)
   detail(`message:    "${message}"`)
 
-  step('chat', 2, 5, 'Embedding the question...')
+  step('chat', 2, 7, 'Embedding the question...')
   const embedStart = Date.now()
   const questionEmbedding = await getEmbedding(message)
   timing(Date.now() - embedStart, `vector has ${questionEmbedding.length} dimensions`)
 
-  step('chat', 3, 5, 'Searching stored chunks (scoped to this documentId, top 3 by cosine distance)...')
+  step('chat', 3, 7, 'Searching stored chunks (scoped to this documentId, top 3 by cosine distance)...')
   const searchStart = Date.now()
   const relevantChunks = await searchSimilar(questionEmbedding, 3, documentId)
   timing(Date.now() - searchStart, `found ${relevantChunks.length} chunk(s)`)
@@ -107,28 +115,48 @@ app.post('/chat', async (req, res) => {
     preview(`#${i + 1} distance=${c.distance.toFixed(4)}`, c.content)
   })
 
+  step('chat', 4, 7, `Loading conversation history (last ${HISTORY_LIMIT} messages)...`)
+  const history = await getRecentMessages(sessionId, HISTORY_LIMIT)
+  detail(`${history.length} prior message(s) in this session`)
+
+  // Saved *before* generating, so history for the *next* turn already
+  // includes this one — but built into *this* turn's prompt from the
+  // `history` pulled a moment ago, not including the message being answered.
+  await insertMessage(sessionId, documentId, 'user', message)
+
   const context = relevantChunks.map((c) => c.content).join('\n\n')
+  const historyBlock =
+    history.length > 0
+      ? `\n\nConversation so far:\n${history.map((m) => `${m.role}: ${m.content}`).join('\n')}`
+      : ''
+
   const prompt = `You are answering questions about a specific document. Use only the context below to answer — don't rely on outside knowledge, and don't guess.
 
 Answer directly and naturally, like you're explaining it to someone, not like you're quoting a source. Don't start every reply with phrases like "Based on the provided context" — just answer the question. Only mention the document explicitly if it's genuinely relevant to say so (for example, if the answer isn't in it).
 
 If the context doesn't contain the answer, say so plainly and briefly — don't pad it with an apology or a long explanation.
 
+If there's conversation history below, use it to understand what the new question is referring to (e.g. "the first one", "what about that").
+
 Context:
-${context}
+${context}${historyBlock}
 
-Question: ${message}`
-  step('chat', 4, 5, `Built prompt — ${prompt.length} characters (${context.length} of which is retrieved context)`)
+New question: ${message}`
+  step('chat', 5, 7, `Built prompt — ${prompt.length} characters (${context.length} context, ${historyBlock.length} history)`)
 
-  step('chat', 5, 5, 'Calling the LLM to generate an answer...')
+  step('chat', 6, 7, 'Calling the LLM to generate an answer...')
   const genStart = Date.now()
   const answer = await generateAnswer(prompt)
   timing(Date.now() - genStart)
   preview('answer', answer, 150)
 
+  step('chat', 7, 7, 'Saving assistant reply to history')
+  await insertMessage(sessionId, documentId, 'assistant', answer)
+
   pipelineEnd('chat', Date.now() - t0)
 
   res.json({
+    sessionId,
     answer,
     sources: relevantChunks.map((c) => ({ content: c.content, distance: c.distance })),
   })
