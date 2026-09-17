@@ -108,7 +108,16 @@ app.post('/chat', async (req, res) => {
   })
 
   const context = relevantChunks.map((c) => c.content).join('\n\n')
-  const prompt = `Answer using only this context:\n${context}\n\nQuestion: ${message}`
+  const prompt = `You are answering questions about a specific document. Use only the context below to answer — don't rely on outside knowledge, and don't guess.
+
+Answer directly and naturally, like you're explaining it to someone, not like you're quoting a source. Don't start every reply with phrases like "Based on the provided context" — just answer the question. Only mention the document explicitly if it's genuinely relevant to say so (for example, if the answer isn't in it).
+
+If the context doesn't contain the answer, say so plainly and briefly — don't pad it with an apology or a long explanation.
+
+Context:
+${context}
+
+Question: ${message}`
   step('chat', 4, 5, `Built prompt — ${prompt.length} characters (${context.length} of which is retrieved context)`)
 
   step('chat', 5, 5, 'Calling the LLM to generate an answer...')
