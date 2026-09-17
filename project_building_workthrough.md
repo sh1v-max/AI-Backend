@@ -76,9 +76,40 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 
 **Step 2.4F — Frontend: session tracking** *(done)*
 - Frontend generates one `sessionId` per document (`crypto.randomUUID()`, on first message), reused for every message in that document's thread, sent along with every `/chat` request
-- **Known gap, not yet fixed:** `sessionId` and visible messages only live in React state — refreshing the tab starts a brand-new session, orphaning the old conversation (data survives in Postgres, just unreachable from the UI). Fix later: persist `sessionsByDocument` to `localStorage` + add a history-fetch endpoint so a refresh can rehydrate the same session.
+- **Known gap at the time, since fixed in Step 2.5 below:** `sessionId` and visible messages only lived in React state — refreshing the tab started a brand-new session, orphaning the old conversation (data survived in Postgres, just unreachable from the UI).
 
 **Milestone:** upload a PDF through the browser, ask it questions across multiple turns in a real chat UI, get grounded answers that remember context — confirmed working end to end.
+
+---
+
+**Step 2.5 — Backend: expose + delete session/document history** *(done)*
+- No new table — a "session" is just a `sessionId` value shared by a group of `chat_messages` rows, so history is *derived*, not stored separately
+- `GET /sessions` — `listSessions()` in `chatMessages.repository.ts` groups all `chat_messages` by `sessionId` and reduces each group to one summary: `{ sessionId, documentId, filename, title, lastMessage, lastMessageAt, messageCount }`. `title` is the session's first user message — same trick ChatGPT uses to name a thread from what you first typed. Sorted newest-activity-first.
+- `GET /sessions/:sessionId/messages` — `getMessagesForSession()`, the full transcript for one session, oldest-first
+- `DELETE /documents/:documentId` — deletes the document's chunks, every chat message tied to it (across all its sessions), then the document row itself — no orphaned rows left pointing at a dead `documentId`
+- `DELETE /sessions/:sessionId` — deletes just that conversation's messages, document untouched
+- Output: the persistence gap from Step 2.4F is closed, and documents/conversations can be removed on request instead of only accumulating
+
+**Step 2.5F — Frontend: rebuilt around real chat history + a proper folder structure** *(done)*
+- Redesigned the UI into a ChatGPT-style layout: a collapsible left sidebar with a "New chat" button and a history list (grouped Today / Yesterday / Previous 7 days / Older), and a "continue with a document you've uploaded before" chip row on the New Chat screen — replacing the earlier three-pane layout that showed uploaded PDFs as the "history"
+- **Persistence, for real this time:** only the active `sessionId` is written to `localStorage` (`docmind:activeSessionId`) — never the messages themselves. On load, that id is cross-checked against `GET /sessions` (to recover which document it belongs to) and `GET /sessions/:id/messages` is used to rehydrate the transcript. A refresh now resumes the exact same conversation instead of losing it.
+- Delete buttons (hover-revealed trash icon) on history items and document chips, calling the new `DELETE` endpoints, with a native `confirm()` before anything destructive happens; deleting the currently-open document/session resets the view back to New Chat instead of showing a dead conversation
+- Split the old single `App.tsx` (500+ lines) into a real structure:
+  ```
+  frontend/src/
+    api/            client.ts, documents.ts, chat.ts, sessions.ts   — all fetch calls
+    types/          document.ts, chat.ts                             — shared interfaces
+    hooks/          useDocuments.ts, useSessions.ts, useChat.ts       — state + async logic
+    utils/          format.ts, logger.ts
+    components/
+      common/       IconButton.tsx
+      sidebar/      Sidebar.tsx, HistoryList.tsx
+      chat/         ChatView.tsx, ChatPanel.tsx, ChatTurn.tsx, ChatSources.tsx, ChatInputForm.tsx, NewChatScreen.tsx
+      documents/    UploadDropzone.tsx
+    App.tsx         thin orchestrator — wires hooks to components
+  ```
+- Added a tagged console logger (`utils/logger.ts`) — every API call and every hook action logs as `[DocMind:<scope>] ...` (color-coded info/warn/error), so the whole upload → chat → session flow can be traced live in devtools instead of guessing where something broke
+- Output: DocMind now looks and behaves like a real chat app — new conversations, browsable/persisted history, and cleanup — on a frontend codebase organized the way a real project would be, not one giant component file
 
 ---
 
@@ -100,6 +131,12 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 **Step 3.2F — Frontend: streaming chat**
 - Swap the chat UI's `fetch` call for an `EventSource` connection to `/chat-stream`, appending each streamed chunk to the in-progress reply as it arrives
 - Output: the chat UI now shows the reply typing out word by word, the actual DocMind experience
+
+**Step 3.3 — Multi-document chat: "all PDFs" by default, one PDF as the override** *(planned, not built yet — see [ai-backend-roadmap.md](ai-backend-roadmap.md) Step 3.3 for the full breakdown)*
+- Make `searchSimilar(embedding, limit, documentId)`'s `documentId` optional — omit it to scan chunks across every document instead of one
+- `/chat` accepts `documentId: string | undefined` (`undefined`/`'all'` = search everything); sources carry `documentId` + filename so answers can cite which PDF they came from
+- Frontend: a toggle in the chat header ("All documents" default vs. picking one) rather than a separate screen
+- Do this right after 3.1/3.2, before moving on to Phase 4
 
 **Milestone:** the chat reply streams instead of arriving all at once, visibly in the browser, and history still works on the next turn.
 

@@ -70,7 +70,7 @@ No auth, no queues, no multi-step agents, no deployment pressure. Just enough to
   → calls the LLM → returns the answer as JSON.
 - **This is the whole idea of RAG.** Once this works, say it back to yourself in one sentence: "instead of the model guessing from memory, I hand it the relevant text right before asking." That sentence is worth more than any framework. It's still single-turn at this point — no memory of earlier messages yet, that's the next step.
 
-**Step 2.4 — Give it memory: real conversation (4h)** ✅ *done — see `project_building_workthrough.md` for exact implementation + a known gap (session doesn't survive a page refresh yet)*
+**Step 2.4 — Give it memory: real conversation (4h)** ✅ *done — see `project_building_workthrough.md` for exact implementation*
 - The thing that makes something feel like a "chatbot" instead of a search box is that it remembers what you just said. Right now if you ask "summarize chapter 2" then follow up with "what about chapter 3?", the model has no idea what "what about" refers to.
 - Build: a `chat_messages` table (`id, sessionId, documentId, role, content, createdAt`). On every `/chat` call:
   1. Save the incoming user message
@@ -79,6 +79,14 @@ No auth, no queues, no multi-step agents, no deployment pressure. Just enough to
   4. Call the LLM, save its reply as an `assistant` message too, return it
 - Test it by asking a question, then a vague follow-up ("what about the next part?") — confirm the model actually understands the follow-up now because it can see the earlier turn.
 - One gotcha worth knowing: as conversations get long, you can't keep sending the *entire* history forever (cost + context limits) — for this simple project just cap it at the last N messages. Real systems summarize older messages instead of dropping them, but that's beyond what you need right now.
+- **Known gap this step shipped with, since closed by Step 2.5 below:** `sessionId` only lived in React state, so a page refresh started a brand-new session and orphaned the old conversation (data survived in Postgres, just unreachable from the UI).
+
+**Step 2.5 — Expose + delete session/document history (done, added after 2.4)**
+- There's no `sessions` table — a session is just a `sessionId` shared by a group of `chat_messages` rows, so history is *derived*, not stored separately.
+- Build: `GET /sessions` (`listSessions()` groups `chat_messages` by `sessionId`, returns one summary each — `sessionId, documentId, filename, title, lastMessage, lastMessageAt, messageCount`, newest-first; `title` is the session's first user message) and `GET /sessions/:sessionId/messages` (full transcript, oldest-first).
+- Build: `DELETE /documents/:documentId` (deletes its chunks + every chat message tied to it, then the document row — no orphaned rows) and `DELETE /sessions/:sessionId` (deletes just that conversation).
+- Frontend: only the active `sessionId` goes in `localStorage`, never the messages — on load it's cross-checked against `/sessions` and the transcript is re-fetched from Postgres. A refresh now resumes the same conversation instead of losing it. Delete buttons (hover-revealed trash icon) on history items and document chips, with a `confirm()` before anything destructive.
+- Frontend was also redesigned into a ChatGPT-style layout (collapsible sidebar, "New chat" + grouped history list, a document-chip picker on the New Chat screen) and restructured from one 500+ line `App.tsx` into `api/`, `types/`, `hooks/`, `utils/`, `components/` — plus a tagged console logger (`utils/logger.ts`) so the whole upload → chat → session flow can be traced in devtools.
 
 ---
 
