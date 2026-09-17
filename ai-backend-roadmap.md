@@ -93,6 +93,17 @@ No auth, no queues, no multi-step agents, no deployment pressure. Just enough to
 - Build: `GET /chat-stream?sessionId=...&documentId=...&message=...` — same logic as `/chat` (including pulling history), but instead of waiting for the full reply, write each streamed piece to the response as it arrives using the SSE format you just learned. Still save the complete reply to `chat_messages` once the stream finishes, so history stays intact for the next turn.
 - Test it by opening the URL directly in a browser tab and watching the words appear.
 
+**Step 3.3 — Multi-document chat: "all PDFs" as the default, single-PDF as the override (~3h)** *(planned — build right after 3.1/3.2 are done)*
+- Problem: right now every chat session is pinned to exactly one `documentId`. The goal is to default to searching across *every* uploaded document, while still allowing a chat scoped to just one.
+- Why it's a small change, not a new phase: `searchSimilar(embedding, limit, documentId)` in `chunks.repository.ts` already does a cosine-distance scan filtered by `documentId` — no schema migration needed, just make that filter optional.
+  - `searchSimilar(embedding, limit, documentId?: string)` — omit `documentId` to scan all chunks.
+  - `/chat` accepts `documentId: string | undefined` (undefined/`'all'` = search everything).
+  - Return `documentId` (+ filename) alongside each source chunk so the frontend/LLM can cite *which* PDF an answer came from — the sources array already returns `content`/`distance`, just add `documentId`.
+  - Prompt template gets one added instruction: when context includes chunks from multiple documents, cite the source document by name in the answer.
+- The one real tradeoff: searching everything dilutes relevance if you have many unrelated PDFs — top-K might span 3 documents instead of the one you meant. Citing sources per-chunk is the mitigation, not a full fix; if it's not good enough in practice, revisit with a query-classification/routing step (this is exactly what Phase B's "vector-based intent routing" already teaches, just applied to document selection instead of intent).
+- Schema note: `chatMessages.documentId` is `NOT NULL` today — an "all documents" session needs that to become nullable (or use a sentinel like `'all'`), since a session is no longer guaranteed to be about one document.
+- Frontend: a toggle in the chat header — "All documents" (default) vs. picking one specific document — rather than a separate screen/flow.
+
 ---
 
 ## Phase 4 — Quiz Generation (1-2 days, ~7 hrs)

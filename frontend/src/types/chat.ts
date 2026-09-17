@@ -9,3 +9,13 @@ export interface ChatMessage {
   isError?: boolean
   sources?: ChatSource[]
 }
+
+export interface SessionSummary {
+  sessionId: string
+  documentId: string
+  filename: string | null
+  title: string
+  lastMessage: string
+  lastMessageAt: string
+  messageCount: number
+}

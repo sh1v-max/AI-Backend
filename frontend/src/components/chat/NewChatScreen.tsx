@@ -1,0 +1,56 @@
+import { FileText, XCircle } from '@phosphor-icons/react'
+import { UploadDropzone } from '../documents/UploadDropzone'
+import type { UploadedDocument, UploadStatus } from '../../types/document'
+
+interface NewChatScreenProps {
+  documents: UploadedDocument[]
+  uploadStatus: UploadStatus
+  uploadError: string | null
+  onUpload: (file: File) => void
+  onPickDocument: (doc: UploadedDocument) => void
+}
+
+export function NewChatScreen({
+  documents,
+  uploadStatus,
+  uploadError,
+  onUpload,
+  onPickDocument,
+}: NewChatScreenProps) {
+  return (
+    <div className="new-chat-screen">
+      <div className="new-chat-intro">
+        <h1>Chat with a document</h1>
+        <p>Upload a PDF and ask it anything — DocMind reads it so you don't have to.</p>
+      </div>
+
+      <UploadDropzone status={uploadStatus} onFileSelected={onUpload} />
+
+      {uploadStatus === 'error' && uploadError && (
+        <div className="banner banner--error" role="alert">
+          <XCircle size={20} weight="fill" aria-hidden />
+          <span>{uploadError}</span>
+        </div>
+      )}
+
+      {documents.length > 0 && (
+        <div className="new-chat-recent">
+          <span className="new-chat-recent-label">Or continue with a document you've uploaded before</span>
+          <div className="doc-chip-row">
+            {documents.map((doc) => (
+              <button
+                key={doc.documentId}
+                type="button"
+                className="doc-chip"
+                onClick={() => onPickDocument(doc)}
+              >
+                <FileText size={14} weight="regular" aria-hidden />
+                {doc.filename}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

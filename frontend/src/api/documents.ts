@@ -1,4 +1,5 @@
 import { API_URL, parseJsonOrThrow } from './client'
+import { log } from '../utils/logger'
 import type { UploadedDocument } from '../types/document'
 
 interface DocumentRecord {
@@ -11,8 +12,10 @@ interface DocumentRecord {
 }
 
 export async function fetchDocuments(): Promise<UploadedDocument[]> {
+  log.info('api:documents', 'GET /documents')
   const res = await fetch(`${API_URL}/documents`)
   const docs: DocumentRecord[] = await res.json()
+  log.info('api:documents', `received ${docs.length} document(s)`, docs)
 
   return docs.map((d) => ({
     documentId: d.id,
@@ -25,6 +28,8 @@ export async function fetchDocuments(): Promise<UploadedDocument[]> {
 }
 
 export async function uploadDocument(file: File): Promise<UploadedDocument> {
+  log.info('api:documents', `POST /upload — "${file.name}" (${file.size} bytes)`)
+
   const formData = new FormData()
   formData.append('file', file)
 
@@ -34,6 +39,7 @@ export async function uploadDocument(file: File): Promise<UploadedDocument> {
   })
 
   const data = await parseJsonOrThrow(res)
+  log.info('api:documents', 'upload complete', data)
 
   return {
     documentId: data.documentId,

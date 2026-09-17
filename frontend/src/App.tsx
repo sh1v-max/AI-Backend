@@ -1,77 +1,96 @@
 import { useState } from 'react'
-import { HistoryPanel } from './components/history/HistoryPanel'
-import { ChatMain } from './components/chat/ChatMain'
-import { DocumentsPanel } from './components/documents/DocumentsPanel'
+import { Sidebar } from './components/sidebar/Sidebar'
+import { ChatView } from './components/chat/ChatView'
 import { useDocuments } from './hooks/useDocuments'
+import { useSessions } from './hooks/useSessions'
 import { useChat } from './hooks/useChat'
+import { log } from './utils/logger'
+import type { UploadedDocument } from './types/document'
 import './App.css'
 
 function App() {
   const { documents, status, error, uploadFile } = useDocuments()
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const { sessions, refresh: refreshSessions } = useSessions()
+  const {
+    activeSessionId,
+    activeDocument,
+    messages,
+    chatInput,
+    setChatInput,
+    chatLoading,
+    restoring,
+    startNewChat,
+    resetToWelcome,
+    openSession,
+    sendMessage,
+  } = useChat(refreshSessions)
 
-  // Sidebar starts open on desktop, collapsed to an icon rail on demand —
-  // same idea as ChatGPT's history sidebar. Separate from the mobile drawer
-  // flags below, which fully hide/show the panels instead of just narrowing them.
-  const [historyCollapsed, setHistoryCollapsed] = useState(false)
-  const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
-  const [mobileDocsOpen, setMobileDocsOpen] = useState(false)
+  // Sidebar starts open on desktop, collapsed to an icon rail on demand.
+  // Separate from the mobile drawer flag, which fully hides/shows the panel
+  // instead of just narrowing it.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
 
-  const { messages, chatInput, setChatInput, chatLoading, sendMessage } = useChat(selectedId)
-  const selectedDocument = documents.find((d) => d.documentId === selectedId) ?? null
-
-  async function handleFileSelected(file: File) {
+  async function handleUpload(file: File) {
+    log.info('App', `[action] file selected for upload — "${file.name}"`)
     const doc = await uploadFile(file)
     if (doc) {
-      setSelectedId(doc.documentId)
-      setMobileHistoryOpen(false)
+      startNewChat(doc.documentId, doc.filename)
+      setMobileSidebarOpen(false)
+    } else {
+      log.warn('App', '[action] upload did not return a document — staying on new-chat screen')
     }
   }
 
-  function handleSelectDocument(id: string) {
-    setSelectedId(id)
-    setMobileHistoryOpen(false)
+  function handlePickDocument(doc: UploadedDocument) {
+    log.info('App', `[action] picked existing document — "${doc.filename}" (${doc.documentId})`)
+    startNewChat(doc.documentId, doc.filename)
+    setMobileSidebarOpen(false)
+  }
+
+  function handleSelectSession(session: (typeof sessions)[number]) {
+    log.info('App', `[action] selected session from history — "${session.title}"`)
+    openSession(session)
+    setMobileSidebarOpen(false)
+  }
+
+  function handleNewChat() {
+    log.info('App', '[action] "New chat" clicked')
+    resetToWelcome()
+    setMobileSidebarOpen(false)
   }
 
   return (
     <div className="app-shell">
-      <HistoryPanel
-        documents={documents}
-        selectedId={selectedId}
-        collapsed={historyCollapsed}
-        mobileOpen={mobileHistoryOpen}
-        onToggleCollapse={() => setHistoryCollapsed((v) => !v)}
-        onCloseMobile={() => setMobileHistoryOpen(false)}
-        onSelect={handleSelectDocument}
+      <Sidebar
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        collapsed={sidebarCollapsed}
+        mobileOpen={mobileSidebarOpen}
+        onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
+        onCloseMobile={() => setMobileSidebarOpen(false)}
+        onNewChat={handleNewChat}
+        onSelectSession={handleSelectSession}
       />
 
-      {mobileHistoryOpen && (
-        <div className="scrim" onClick={() => setMobileHistoryOpen(false)} aria-hidden />
+      {mobileSidebarOpen && (
+        <div className="scrim" onClick={() => setMobileSidebarOpen(false)} aria-hidden />
       )}
 
-      <ChatMain
-        selectedDocument={selectedDocument}
+      <ChatView
+        activeDocument={activeDocument}
         messages={messages}
         input={chatInput}
         onInputChange={setChatInput}
         onSend={sendMessage}
         loading={chatLoading}
-        onOpenHistory={() => setMobileHistoryOpen(true)}
-        onOpenDocs={() => setMobileDocsOpen(true)}
-      />
-
-      {mobileDocsOpen && (
-        <div className="scrim" onClick={() => setMobileDocsOpen(false)} aria-hidden />
-      )}
-
-      <DocumentsPanel
+        restoring={restoring}
+        onOpenSidebar={() => setMobileSidebarOpen(true)}
         documents={documents}
-        selectedDocument={selectedDocument}
-        status={status}
-        error={error}
-        mobileOpen={mobileDocsOpen}
-        onCloseMobile={() => setMobileDocsOpen(false)}
-        onFileSelected={handleFileSelected}
+        uploadStatus={status}
+        uploadError={error}
+        onUpload={handleUpload}
+        onPickDocument={handlePickDocument}
       />
     </div>
   )
