@@ -50,3 +50,9 @@ export async function uploadDocument(file: File): Promise<UploadedDocument> {
     createdAt: data.createdAt,
   }
 }
+
+export async function deleteDocument(documentId: string): Promise<void> {
+  log.info('api:documents', `DELETE /documents/${documentId}`)
+  const res = await parseJsonOrThrow(await fetch(`${API_URL}/documents/${documentId}`, { method: 'DELETE' }))
+  log.info('api:documents', 'delete complete', res)
+}

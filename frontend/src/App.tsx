@@ -6,11 +6,12 @@ import { useSessions } from './hooks/useSessions'
 import { useChat } from './hooks/useChat'
 import { log } from './utils/logger'
 import type { UploadedDocument } from './types/document'
+import type { SessionSummary } from './types/chat'
 import './App.css'
 
 function App() {
-  const { documents, status, error, uploadFile } = useDocuments()
-  const { sessions, refresh: refreshSessions } = useSessions()
+  const { documents, status, error, uploadFile, deleteDocument } = useDocuments()
+  const { sessions, refresh: refreshSessions, deleteSession } = useSessions()
   const {
     activeSessionId,
     activeDocument,
@@ -60,6 +61,41 @@ function App() {
     setMobileSidebarOpen(false)
   }
 
+  async function handleDeleteDocument(doc: UploadedDocument) {
+    log.info('App', `[action] delete document requested — "${doc.filename}" (${doc.documentId})`)
+    const confirmed = window.confirm(
+      `Delete "${doc.filename}"? This also deletes every conversation about it. This can't be undone.`,
+    )
+    if (!confirmed) {
+      log.info('App', '[action] delete document cancelled by user')
+      return
+    }
+
+    const wasActive = activeDocument?.documentId === doc.documentId
+    const ok = await deleteDocument(doc.documentId)
+
+    if (ok) {
+      // Deleting a document also deletes its chat_messages on the backend,
+      // so any session summaries for it are now stale — refresh the list
+      // instead of trying to figure out which ones to drop client-side.
+      refreshSessions()
+      if (wasActive) resetToWelcome()
+    }
+  }
+
+  async function handleDeleteSession(session: SessionSummary) {
+    log.info('App', `[action] delete session requested — "${session.title}" (${session.sessionId})`)
+    const confirmed = window.confirm(`Delete this conversation? This can't be undone.`)
+    if (!confirmed) {
+      log.info('App', '[action] delete session cancelled by user')
+      return
+    }
+
+    const wasActive = activeSessionId === session.sessionId
+    const ok = await deleteSession(session.sessionId)
+    if (ok && wasActive) resetToWelcome()
+  }
+
   return (
     <div className="app-shell">
       <Sidebar
@@ -71,6 +107,7 @@ function App() {
         onCloseMobile={() => setMobileSidebarOpen(false)}
         onNewChat={handleNewChat}
         onSelectSession={handleSelectSession}
+        onDeleteSession={handleDeleteSession}
       />
 
       {mobileSidebarOpen && (
@@ -91,6 +128,7 @@ function App() {
         uploadError={error}
         onUpload={handleUpload}
         onPickDocument={handlePickDocument}
+        onDeleteDocument={handleDeleteDocument}
       />
     </div>
   )

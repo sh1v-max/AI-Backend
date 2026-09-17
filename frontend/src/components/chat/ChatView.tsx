@@ -19,6 +19,7 @@ interface ChatViewProps {
   uploadError: string | null
   onUpload: (file: File) => void
   onPickDocument: (doc: UploadedDocument) => void
+  onDeleteDocument: (doc: UploadedDocument) => void
 }
 
 export function ChatView({
@@ -35,6 +36,7 @@ export function ChatView({
   uploadError,
   onUpload,
   onPickDocument,
+  onDeleteDocument,
 }: ChatViewProps) {
   return (
     <main className="chat-main">
@@ -71,6 +73,7 @@ export function ChatView({
           uploadError={uploadError}
           onUpload={onUpload}
           onPickDocument={onPickDocument}
+          onDeleteDocument={onDeleteDocument}
         />
       )}
     </main>

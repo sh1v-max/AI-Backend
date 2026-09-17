@@ -1,4 +1,4 @@
-import { FileText, XCircle } from '@phosphor-icons/react'
+import { FileText, TrashSimple, XCircle } from '@phosphor-icons/react'
 import { UploadDropzone } from '../documents/UploadDropzone'
 import type { UploadedDocument, UploadStatus } from '../../types/document'
 
@@ -8,6 +8,7 @@ interface NewChatScreenProps {
   uploadError: string | null
   onUpload: (file: File) => void
   onPickDocument: (doc: UploadedDocument) => void
+  onDeleteDocument: (doc: UploadedDocument) => void
 }
 
 export function NewChatScreen({
@@ -16,6 +17,7 @@ export function NewChatScreen({
   uploadError,
   onUpload,
   onPickDocument,
+  onDeleteDocument,
 }: NewChatScreenProps) {
   return (
     <div className="new-chat-screen">
@@ -38,15 +40,24 @@ export function NewChatScreen({
           <span className="new-chat-recent-label">Or continue with a document you've uploaded before</span>
           <div className="doc-chip-row">
             {documents.map((doc) => (
-              <button
-                key={doc.documentId}
-                type="button"
-                className="doc-chip"
-                onClick={() => onPickDocument(doc)}
-              >
-                <FileText size={14} weight="regular" aria-hidden />
-                {doc.filename}
-              </button>
+              <div key={doc.documentId} className="doc-chip">
+                <button type="button" className="doc-chip-button" onClick={() => onPickDocument(doc)}>
+                  <FileText size={14} weight="regular" aria-hidden />
+                  {doc.filename}
+                </button>
+                <button
+                  type="button"
+                  className="doc-chip-delete"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDeleteDocument(doc)
+                  }}
+                  aria-label={`Delete "${doc.filename}"`}
+                  title="Delete document"
+                >
+                  <TrashSimple size={12} weight="regular" />
+                </button>
+              </div>
             ))}
           </div>
         </div>

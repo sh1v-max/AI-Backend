@@ -12,6 +12,7 @@ interface SidebarProps {
   onCloseMobile: () => void
   onNewChat: () => void
   onSelectSession: (session: SessionSummary) => void
+  onDeleteSession: (session: SessionSummary) => void
 }
 
 export function Sidebar({
@@ -23,6 +24,7 @@ export function Sidebar({
   onCloseMobile,
   onNewChat,
   onSelectSession,
+  onDeleteSession,
 }: SidebarProps) {
   return (
     <aside
@@ -56,6 +58,7 @@ export function Sidebar({
           sessions={sessions}
           activeSessionId={activeSessionId}
           onSelectSession={onSelectSession}
+          onDeleteSession={onDeleteSession}
         />
       )}
     </aside>

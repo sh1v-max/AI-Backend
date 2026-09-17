@@ -1,4 +1,4 @@
-import { API_URL } from './client'
+import { API_URL, parseJsonOrThrow } from './client'
 import { log } from '../utils/logger'
 import type { ChatMessage, SessionSummary } from '../types/chat'
 
@@ -16,4 +16,10 @@ export async function fetchSessionMessages(sessionId: string): Promise<ChatMessa
   const rows: { role: 'user' | 'assistant'; content: string }[] = await res.json()
   log.info('api:sessions', `received ${rows.length} message(s) for session ${sessionId}`, rows)
   return rows.map((r) => ({ role: r.role, content: r.content }))
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  log.info('api:sessions', `DELETE /sessions/${sessionId}`)
+  const res = await parseJsonOrThrow(await fetch(`${API_URL}/sessions/${sessionId}`, { method: 'DELETE' }))
+  log.info('api:sessions', 'delete complete', res)
 }

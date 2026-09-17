@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchDocuments, uploadDocument } from '../api/documents'
+import { deleteDocument as deleteDocumentRequest, fetchDocuments, uploadDocument } from '../api/documents'
 import { log } from '../utils/logger'
 import type { UploadedDocument, UploadStatus } from '../types/document'
 
@@ -50,5 +50,18 @@ export function useDocuments() {
     }
   }
 
-  return { documents, status, error, uploadFile }
+  async function deleteDocument(documentId: string): Promise<boolean> {
+    log.info('useDocuments', `deleteDocument() called — ${documentId}`)
+    try {
+      await deleteDocumentRequest(documentId)
+      setDocuments((prev) => prev.filter((d) => d.documentId !== documentId))
+      log.info('useDocuments', `document ${documentId} removed from state`)
+      return true
+    } catch (err) {
+      log.error('useDocuments', `delete failed for ${documentId}`, err)
+      return false
+    }
+  }
+
+  return { documents, status, error, uploadFile, deleteDocument }
 }

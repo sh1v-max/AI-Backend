@@ -1,10 +1,11 @@
-import { ChatCircleDots } from '@phosphor-icons/react'
+import { ChatCircleDots, TrashSimple } from '@phosphor-icons/react'
 import type { SessionSummary } from '../../types/chat'
 
 interface HistoryListProps {
   sessions: SessionSummary[]
   activeSessionId: string | null
   onSelectSession: (session: SessionSummary) => void
+  onDeleteSession: (session: SessionSummary) => void
 }
 
 function groupLabel(isoDate: string): string {
@@ -20,7 +21,12 @@ function groupLabel(isoDate: string): string {
   return 'Older'
 }
 
-export function HistoryList({ sessions, activeSessionId, onSelectSession }: HistoryListProps) {
+export function HistoryList({
+  sessions,
+  activeSessionId,
+  onSelectSession,
+  onDeleteSession,
+}: HistoryListProps) {
   if (sessions.length === 0) {
     return (
       <div className="history-empty">
@@ -46,16 +52,32 @@ export function HistoryList({ sessions, activeSessionId, onSelectSession }: Hist
           {group.items.map((session) => {
             const isActive = session.sessionId === activeSessionId
             return (
-              <button
+              <div
                 key={session.sessionId}
-                type="button"
                 className={`history-item ${isActive ? 'history-item--active' : ''}`}
-                onClick={() => onSelectSession(session)}
-                title={session.title}
-                aria-current={isActive}
               >
-                <span className="history-item-title">{session.title}</span>
-              </button>
+                <button
+                  type="button"
+                  className="history-item-button"
+                  onClick={() => onSelectSession(session)}
+                  title={session.title}
+                  aria-current={isActive}
+                >
+                  <span className="history-item-title">{session.title}</span>
+                </button>
+                <button
+                  type="button"
+                  className="history-item-delete"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDeleteSession(session)
+                  }}
+                  aria-label={`Delete conversation "${session.title}"`}
+                  title="Delete conversation"
+                >
+                  <TrashSimple size={14} weight="regular" />
+                </button>
+              </div>
             )
           })}
         </div>

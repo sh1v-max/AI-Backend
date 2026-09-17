@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { fetchSessions } from '../api/sessions'
+import { deleteSession as deleteSessionRequest, fetchSessions } from '../api/sessions'
 import { log } from '../utils/logger'
 import type { SessionSummary } from '../types/chat'
 
@@ -23,5 +23,18 @@ export function useSessions() {
     refresh()
   }, [refresh])
 
-  return { sessions, refresh }
+  async function deleteSession(sessionId: string): Promise<boolean> {
+    log.info('useSessions', `deleteSession() called — ${sessionId}`)
+    try {
+      await deleteSessionRequest(sessionId)
+      setSessions((prev) => prev.filter((s) => s.sessionId !== sessionId))
+      log.info('useSessions', `session ${sessionId} removed from state`)
+      return true
+    } catch (err) {
+      log.error('useSessions', `delete failed for ${sessionId}`, err)
+      return false
+    }
+  }
+
+  return { sessions, refresh, deleteSession }
 }
