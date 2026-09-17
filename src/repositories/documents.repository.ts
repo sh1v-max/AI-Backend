@@ -1,4 +1,4 @@
-import { desc } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { db } from '../db/client'
 import { documents } from '../db/schema'
 
@@ -23,3 +23,10 @@ export async function listDocuments() {
 }
 // equivalent sql query:
 // SELECT * FROM documents ORDER BY created_at DESC
+
+// this function deletes a document by its id
+export async function deleteDocument(id: string): Promise<void> {
+  await db.delete(documents).where(eq(documents.id, id))
+}
+// equivalent sql query:
+// DELETE FROM documents WHERE id = $1

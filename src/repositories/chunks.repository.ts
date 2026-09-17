@@ -15,6 +15,13 @@ export async function insertChunk(
 // instead of this, we can also write the same above code in SQL as:
 // INSERT INTO chunks (content, embedding, document_id) VALUES ($1, $2, $3)
 
+// this function deletes all chunks for one document
+export async function deleteChunksByDocumentId(documentId: string): Promise<void> {
+  await db.delete(chunks).where(eq(chunks.documentId, documentId))
+}
+// equivalent sql query:
+// DELETE FROM chunks WHERE document_id = $1
+
 export async function searchSimilar(
   queryEmbedding: number[],
   limit: number,

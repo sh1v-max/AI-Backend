@@ -6,13 +6,15 @@ import { randomUUID } from 'crypto'
 import { PDFParse } from 'pdf-parse'
 import { getEmbedding } from './services/embeddings.service'
 import { generateAnswer } from './services/llm.service'
-import { insertChunk, searchSimilar } from './repositories/chunks.repository'
-import { insertDocument, listDocuments } from './repositories/documents.repository'
+import { insertChunk, searchSimilar, deleteChunksByDocumentId } from './repositories/chunks.repository'
+import { insertDocument, listDocuments, deleteDocument } from './repositories/documents.repository'
 import {
   insertMessage,
   getRecentMessages,
   getMessagesForSession,
   listSessions,
+  deleteSession,
+  deleteMessagesByDocumentId,
 } from './repositories/chatMessages.repository'
 import {
   pipelineStart,
@@ -86,6 +88,22 @@ app.get('/sessions', async (_req, res) => {
 app.get('/sessions/:sessionId/messages', async (req, res) => {
   const messages = await getMessagesForSession(req.params.sessionId)
   res.json(messages)
+})
+
+// Deleting a document removes its chunks and every session's chat history
+// tied to it too — otherwise chat_messages would keep rows pointing at a
+// document_id that no longer exists in the documents table.
+app.delete('/documents/:documentId', async (req, res) => {
+  const { documentId } = req.params
+  await deleteChunksByDocumentId(documentId)
+  await deleteMessagesByDocumentId(documentId)
+  await deleteDocument(documentId)
+  res.json({ deleted: documentId })
+})
+
+app.delete('/sessions/:sessionId', async (req, res) => {
+  await deleteSession(req.params.sessionId)
+  res.json({ deleted: req.params.sessionId })
 })
 
 app.post('/chat', async (req, res) => {

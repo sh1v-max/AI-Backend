@@ -111,3 +111,19 @@ export async function listSessions(): Promise<SessionSummary[]> {
     (a, b) => b.lastMessageAt.getTime() - a.lastMessageAt.getTime(),
   )
 }
+
+// Deletes all messages for one session
+export async function deleteSession(sessionId: string): Promise<void> {
+  await db.delete(chatMessages).where(eq(chatMessages.sessionId, sessionId))
+}
+// equivalent sql query:
+// DELETE FROM chat_messages WHERE session_id = $1
+
+// Deletes every session's worth of messages for one document — used when
+// the document itself is deleted, so no orphaned chat history is left
+// pointing at a document_id that no longer exists.
+export async function deleteMessagesByDocumentId(documentId: string): Promise<void> {
+  await db.delete(chatMessages).where(eq(chatMessages.documentId, documentId))
+}
+// equivalent sql query:
+// DELETE FROM chat_messages WHERE document_id = $1
