@@ -52,3 +52,12 @@ export const chatMessages = pgTable('chat_messages', {
   content: text('content').notNull(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 })
+// equivalent sql query:
+// CREATE TABLE chat_messages (
+//   id SERIAL PRIMARY KEY,
+//   session_id TEXT NOT NULL,
+//   document_id TEXT NOT NULL,
+//   role TEXT NOT NULL,
+//   content TEXT NOT NULL,
+//   created_at TIMESTAMP NOT NULL DEFAULT NOW()
+// )
