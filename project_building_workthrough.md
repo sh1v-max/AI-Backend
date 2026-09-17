@@ -68,13 +68,17 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 - A simple message list + input box, POSTs each message to `/chat` with the selected `documentId`, appends the reply to the list
 - Output: DocMind now has a real, clickable chat interface, even though it's still single-turn underneath
 
-**Step 2.4 — Give it memory**
-- Add a `chat_messages` table (`id, sessionId, documentId, role, content, createdAt`)
-- On each `/chat` call: save the user message, pull the last 6-10 messages for that session, build the prompt as `[system: RAG context] + [history] + [new message]`, save the assistant's reply too
-- Test with a vague follow-up ("what about the next part?") and confirm it resolves correctly
+**Step 2.4 — Give it memory** *(done)*
+- Added a `chat_messages` table (`id, sessionId, documentId, role, content, createdAt`)
+- `/chat` rewritten as a 7-step pipeline: embed → search → **load history** (last `HISTORY_LIMIT = 8` messages for the session) → save user message → build layered prompt (`RAG context` + `history` + `new question`) → generate → **save assistant reply**
+- Tested with a real vague follow-up ("what's the first stage?" after discussing "3 pipelines") — confirmed it resolves correctly using history, verified directly in Neon's `chat_messages` table
 - Output: `/chat` now feels like a conversation, not a search box
 
-**Milestone:** upload a PDF through the browser, ask it questions across multiple turns in a real chat UI, get grounded answers that remember context.
+**Step 2.4F — Frontend: session tracking** *(done)*
+- Frontend generates one `sessionId` per document (`crypto.randomUUID()`, on first message), reused for every message in that document's thread, sent along with every `/chat` request
+- **Known gap, not yet fixed:** `sessionId` and visible messages only live in React state — refreshing the tab starts a brand-new session, orphaning the old conversation (data survives in Postgres, just unreachable from the UI). Fix later: persist `sessionsByDocument` to `localStorage` + add a history-fetch endpoint so a refresh can rehydrate the same session.
+
+**Milestone:** upload a PDF through the browser, ask it questions across multiple turns in a real chat UI, get grounded answers that remember context — confirmed working end to end.
 
 ---
 

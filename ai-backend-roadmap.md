@@ -70,7 +70,7 @@ No auth, no queues, no multi-step agents, no deployment pressure. Just enough to
   → calls the LLM → returns the answer as JSON.
 - **This is the whole idea of RAG.** Once this works, say it back to yourself in one sentence: "instead of the model guessing from memory, I hand it the relevant text right before asking." That sentence is worth more than any framework. It's still single-turn at this point — no memory of earlier messages yet, that's the next step.
 
-**Step 2.4 — Give it memory: real conversation (4h)**
+**Step 2.4 — Give it memory: real conversation (4h)** ✅ *done — see `project_building_workthrough.md` for exact implementation + a known gap (session doesn't survive a page refresh yet)*
 - The thing that makes something feel like a "chatbot" instead of a search box is that it remembers what you just said. Right now if you ask "summarize chapter 2" then follow up with "what about chapter 3?", the model has no idea what "what about" refers to.
 - Build: a `chat_messages` table (`id, sessionId, documentId, role, content, createdAt`). On every `/chat` call:
   1. Save the incoming user message
