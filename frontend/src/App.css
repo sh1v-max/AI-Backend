@@ -254,8 +254,21 @@
   text-align: center;
 }
 
-.chat-bubble {
+.chat-turn {
+  display: flex;
+  flex-direction: column;
   max-width: 70ch;
+}
+
+.chat-turn--user {
+  align-self: flex-end;
+}
+
+.chat-turn--assistant {
+  align-self: flex-start;
+}
+
+.chat-bubble {
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   font-size: 14px;
@@ -264,14 +277,12 @@
 }
 
 .chat-bubble--user {
-  align-self: flex-end;
   background: var(--color-accent);
   color: var(--color-on-primary);
   border-bottom-right-radius: 2px;
 }
 
 .chat-bubble--assistant {
-  align-self: flex-start;
   background: var(--color-muted-bg);
   color: var(--color-foreground);
   border-bottom-left-radius: 2px;
@@ -280,6 +291,72 @@
 .chat-bubble--error {
   background: var(--color-destructive-bg);
   color: var(--color-destructive);
+}
+
+.sources {
+  margin-top: var(--space-1);
+}
+
+.sources-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  background: var(--color-muted-bg);
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.sources-summary::-webkit-details-marker {
+  display: none;
+}
+
+.sources-summary:hover {
+  color: var(--color-foreground);
+}
+
+.sources-caret {
+  transition: transform 150ms ease;
+}
+
+.sources[open] .sources-caret {
+  transform: rotate(180deg);
+}
+
+.sources-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.source-card {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.source-distance {
+  display: inline-block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-accent-hover);
+}
+
+.source-content {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-muted);
+  white-space: pre-wrap;
 }
 
 .chat-bubble--loading {
