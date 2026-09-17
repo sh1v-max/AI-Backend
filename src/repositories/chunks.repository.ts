@@ -12,6 +12,8 @@ export async function insertChunk(
   // scoped to one document instead of finding matches across every upload
   await db.insert(chunks).values({ content, embedding, documentId })
 }
+// instead of this, we can also write the same above code in SQL as:
+// INSERT INTO chunks (content, embedding, document_id) VALUES ($1, $2, $3)
 
 export async function searchSimilar(
   queryEmbedding: number[],
@@ -30,3 +32,9 @@ export async function searchSimilar(
     .orderBy(distance)
     .limit(limit)
 }
+// equivalent sql query:
+// SELECT content, embedding <=> $1 AS distance
+// FROM chunks
+// WHERE document_id = $2
+// ORDER BY distance
+// LIMIT $3
