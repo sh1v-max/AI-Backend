@@ -5,7 +5,7 @@ import multer from 'multer'
 import { randomUUID } from 'crypto'
 import { PDFParse } from 'pdf-parse'
 import { getEmbedding } from './services/embeddings.service'
-import { generateAnswer } from './services/llm.service'
+import { generateAnswer, streamAnswer } from './services/llm.service'
 import { insertChunk, searchSimilar, deleteChunksByDocumentId } from './repositories/chunks.repository'
 import { insertDocument, listDocuments, deleteDocument } from './repositories/documents.repository'
 import {
@@ -59,6 +59,32 @@ function chunkText(text: string, wordsPerChunk = 500): string[] {
   return chunks
 }
 
+// Shared by /chat and /chat-stream — same grounding + history instructions
+// either way, only how the answer gets delivered differs between them.
+function buildChatPrompt(
+  context: string,
+  history: { role: string; content: string }[],
+  message: string,
+): string {
+  const historyBlock =
+    history.length > 0
+      ? `\n\nConversation so far:\n${history.map((m) => `${m.role}: ${m.content}`).join('\n')}`
+      : ''
+
+  return `You are answering questions about a specific document. Use only the context below to answer — don't rely on outside knowledge, and don't guess.
+
+Answer directly and naturally, like you're explaining it to someone, not like you're quoting a source. Don't start every reply with phrases like "Based on the provided context" — just answer the question. Only mention the document explicitly if it's genuinely relevant to say so (for example, if the answer isn't in it).
+
+If the context doesn't contain the answer, say so plainly and briefly — don't pad it with an apology or a long explanation.
+
+If there's conversation history below, use it to understand what the new question is referring to (e.g. "the first one", "what about that").
+
+Context:
+${context}${historyBlock}
+
+New question: ${message}`
+}
+
 // The frontend (Vite dev server, localhost:5173) and this API (localhost:3000)
 // are different origins even both on localhost — browsers block cross-origin
 // requests by default unless the server explicitly allows them.
@@ -73,6 +99,32 @@ app.get('/', (_req, res) => {
     status: 'ok',
     message: 'DocMind API - POST a PDF to /upload',
   })
+})
+
+// Step 3.1 — throwaway. Just the SSE mechanics in isolation: headers,
+// res.write() per event, res.end() when done. Delete once understood —
+// this has nothing to do with DocMind itself.
+app.get('/tick', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  })
+
+  let count = 0
+  const interval = setInterval(() => {
+    count++
+    res.write(`data: tick ${count}\n\n`)
+
+    if (count >= 5) {
+      clearInterval(interval)
+      res.end()
+    }
+  }, 1000)
+
+  // If the client disconnects early (closes the tab), stop the interval —
+  // otherwise it keeps running server-side forever, writing to a dead connection.
+  req.on('close', () => clearInterval(interval))
 })
 
 app.get('/documents', async (_req, res) => {
@@ -158,24 +210,8 @@ app.post('/chat', async (req, res) => {
   await insertMessage(sessionId, documentId, 'user', message)
 
   const context = relevantChunks.map((c) => c.content).join('\n\n')
-  const historyBlock =
-    history.length > 0
-      ? `\n\nConversation so far:\n${history.map((m) => `${m.role}: ${m.content}`).join('\n')}`
-      : ''
-
-  const prompt = `You are answering questions about a specific document. Use only the context below to answer — don't rely on outside knowledge, and don't guess.
-
-Answer directly and naturally, like you're explaining it to someone, not like you're quoting a source. Don't start every reply with phrases like "Based on the provided context" — just answer the question. Only mention the document explicitly if it's genuinely relevant to say so (for example, if the answer isn't in it).
-
-If the context doesn't contain the answer, say so plainly and briefly — don't pad it with an apology or a long explanation.
-
-If there's conversation history below, use it to understand what the new question is referring to (e.g. "the first one", "what about that").
-
-Context:
-${context}${historyBlock}
-
-New question: ${message}`
-  step('chat', 5, 7, `Built prompt — ${prompt.length} characters (${context.length} context, ${historyBlock.length} history)`)
+  const prompt = buildChatPrompt(context, history, message)
+  step('chat', 5, 7, `Built prompt — ${prompt.length} characters`)
 
   step('chat', 6, 7, 'Calling the LLM to generate an answer...')
   const genStart = Date.now()
@@ -193,6 +229,106 @@ New question: ${message}`
     answer,
     sources: relevantChunks.map((c) => ({ content: c.content, distance: c.distance })),
   })
+})
+
+// Step 3.2 — same pipeline as /chat, but the reply arrives piece by piece.
+// GET + query params, not POST + JSON body — EventSource (what the browser
+// uses to consume SSE) can only send GET requests.
+app.get('/chat-stream', async (req, res) => {
+  const t0 = Date.now()
+  const documentId = req.query.documentId
+  const message = req.query.message
+  const sessionId = (req.query.sessionId as string) || randomUUID()
+
+  pipelineStart('chat', 'GET /chat-stream')
+
+  if (!documentId || typeof documentId !== 'string') {
+    rejected('missing/invalid documentId')
+    return res.status(400).json({ error: 'documentId (string) is required' })
+  }
+
+  if (!message || typeof message !== 'string') {
+    rejected('missing/invalid message')
+    return res.status(400).json({ error: 'message (string) is required' })
+  }
+
+  step('chat', 1, 7, 'Request received')
+  detail(`sessionId:  ${sessionId}`)
+  detail(`documentId: ${documentId}`)
+  detail(`message:    "${message}"`)
+
+  step('chat', 2, 7, 'Embedding the question...')
+  const embedStart = Date.now()
+  const questionEmbedding = await getEmbedding(message)
+  timing(Date.now() - embedStart, `vector has ${questionEmbedding.length} dimensions`)
+
+  step('chat', 3, 7, 'Searching stored chunks (scoped to this documentId, top 3 by cosine distance)...')
+  const searchStart = Date.now()
+  const relevantChunks = await searchSimilar(questionEmbedding, 3, documentId)
+  timing(Date.now() - searchStart, `found ${relevantChunks.length} chunk(s)`)
+
+  if (relevantChunks.length === 0) {
+    notFound('No chunks found for this documentId — does it exist?')
+    pipelineEnd('chat', Date.now() - t0)
+    return res.status(404).json({ error: 'No document found with that documentId' })
+  }
+
+  relevantChunks.forEach((c, i) => {
+    preview(`#${i + 1} distance=${c.distance.toFixed(4)}`, c.content)
+  })
+
+  step('chat', 4, 7, `Loading conversation history (last ${HISTORY_LIMIT} messages)...`)
+  const history = await getRecentMessages(sessionId, HISTORY_LIMIT)
+  detail(`${history.length} prior message(s) in this session`)
+
+  await insertMessage(sessionId, documentId, 'user', message)
+
+  const context = relevantChunks.map((c) => c.content).join('\n\n')
+  const prompt = buildChatPrompt(context, history, message)
+  step('chat', 5, 7, `Built prompt — ${prompt.length} characters`)
+
+  // Send sessionId + sources as the very first event — the client needs
+  // sessionId immediately (same "first message in a new thread" moment as
+  // /chat's JSON response), and sources up front instead of tacked onto
+  // the end once the whole stream project structure is known either way.
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  })
+  res.write(
+    `event: meta\ndata: ${JSON.stringify({
+      sessionId,
+      sources: relevantChunks.map((c) => ({ content: c.content, distance: c.distance })),
+    })}\n\n`,
+  )
+
+  step('chat', 6, 7, 'Streaming the answer from the LLM...')
+  const genStart = Date.now()
+  let fullAnswer = ''
+
+  try {
+    for await (const piece of streamAnswer(prompt)) {
+      fullAnswer += piece
+      res.write(`data: ${JSON.stringify({ text: piece })}\n\n`)
+    }
+  } catch (err) {
+    res.write(`event: error\ndata: ${JSON.stringify({ error: 'Streaming failed' })}\n\n`)
+    res.end()
+    console.error('streamAnswer error:', err)
+    return
+  }
+
+  timing(Date.now() - genStart, `${fullAnswer.length} characters total`)
+  preview('answer', fullAnswer, 150)
+
+  step('chat', 7, 7, 'Saving assistant reply to history')
+  await insertMessage(sessionId, documentId, 'assistant', fullAnswer)
+
+  res.write(`event: done\ndata: {}\n\n`)
+  res.end()
+
+  pipelineEnd('chat', Date.now() - t0)
 })
 
 app.post('/upload', upload.single('file'), async (req, res) => {
