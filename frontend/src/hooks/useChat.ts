@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { sendChatMessage } from '../api/chat'
+import { streamChatMessage } from '../api/chat'
 import { fetchSessionMessages, fetchSessions } from '../api/sessions'
 import { log } from '../utils/logger'
 import type { ChatMessage, SessionSummary } from '../types/chat'
@@ -118,33 +118,61 @@ export function useChat(onMessageSent: () => void) {
     setChatInput('')
     setChatLoading(true)
 
-    try {
-      const res = await sendChatMessage(documentId, message, sessionId)
-      log.info('useChat', 'reply received, appending to thread', {
-        sources: res.sources.length,
+    // A single placeholder that gets filled in piece by piece — same array
+    // slot the whole time, just its content growing as chunks arrive.
+    const assistantIndex = { current: -1 }
+
+    function appendToAssistantBubble(piece: string) {
+      setMessages((prev) => {
+        if (assistantIndex.current === -1) {
+          assistantIndex.current = prev.length
+          return [...prev, { role: 'assistant', content: piece }]
+        }
+        const next = [...prev]
+        next[assistantIndex.current] = {
+          ...next[assistantIndex.current],
+          content: next[assistantIndex.current].content + piece,
+        }
+        return next
       })
-      setMessages((prev) => [...prev, { role: 'assistant', content: res.answer, sources: res.sources }])
-
-      if (isNewSession) {
-        log.info('useChat', `first message in this thread — session ${res.sessionId} is now active`)
-        setActiveSessionId(res.sessionId)
-        localStorage.setItem(ACTIVE_SESSION_KEY, res.sessionId)
-      }
-
-      onMessageSent()
-    } catch (err) {
-      log.error('useChat', 'sendMessage() failed', err)
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: err instanceof Error ? err.message : 'Something went wrong',
-          isError: true,
-        },
-      ])
-    } finally {
-      setChatLoading(false)
     }
+
+    await new Promise<void>((resolve) => {
+      streamChatMessage(documentId, message, sessionId, {
+        onMeta: (meta) => {
+          log.info('useChat', 'stream meta — attaching sources, session confirmed', meta)
+          setChatLoading(false)
+
+          if (isNewSession) {
+            log.info('useChat', `first message in this thread — session ${meta.sessionId} is now active`)
+            setActiveSessionId(meta.sessionId)
+            localStorage.setItem(ACTIVE_SESSION_KEY, meta.sessionId)
+          }
+
+          // Sources arrive up front, before any text — stash them on the
+          // placeholder bubble now so it's already correct once text starts.
+          appendToAssistantBubble('')
+          setMessages((prev) => {
+            const next = [...prev]
+            next[assistantIndex.current] = { ...next[assistantIndex.current], sources: meta.sources }
+            return next
+          })
+        },
+        onChunk: (text) => appendToAssistantBubble(text),
+        onDone: () => {
+          log.info('useChat', 'reply fully streamed in')
+          onMessageSent()
+          setChatLoading(false)
+          resolve()
+        },
+        onError: (message) => {
+          log.error('useChat', 'streamChatMessage() failed', message)
+          setChatLoading(false)
+          setMessages((prev) => [...prev, { role: 'assistant', content: message, isError: true }])
+          resolve()
+        },
+      })
+    })
   }
 
   return {
