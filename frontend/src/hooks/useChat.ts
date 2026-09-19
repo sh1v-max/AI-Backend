@@ -118,22 +118,17 @@ export function useChat(onMessageSent: () => void) {
     setChatInput('')
     setChatLoading(true)
 
-    // A single placeholder that gets filled in piece by piece — same array
-    // slot the whole time, just its content growing as chunks arrive.
-    const assistantIndex = { current: -1 }
-
+    // Updaters passed to setMessages must be pure: React (StrictMode, in dev)
+    // deliberately calls them twice with the same `prev` to catch impurities.
+    // So the streaming bubble is always "the last message in the array" —
+    // derived from `prev` itself, never from a variable mutated in here.
     function appendToAssistantBubble(piece: string) {
       setMessages((prev) => {
-        if (assistantIndex.current === -1) {
-          assistantIndex.current = prev.length
+        const last = prev[prev.length - 1]
+        if (!last || last.role !== 'assistant') {
           return [...prev, { role: 'assistant', content: piece }]
         }
-        const next = [...prev]
-        next[assistantIndex.current] = {
-          ...next[assistantIndex.current],
-          content: next[assistantIndex.current].content + piece,
-        }
-        return next
+        return [...prev.slice(0, -1), { ...last, content: last.content + piece }]
       })
     }
 
@@ -141,7 +136,6 @@ export function useChat(onMessageSent: () => void) {
       streamChatMessage(documentId, message, sessionId, {
         onMeta: (meta) => {
           log.info('useChat', 'stream meta — attaching sources, session confirmed', meta)
-          setChatLoading(false)
 
           if (isNewSession) {
             log.info('useChat', `first message in this thread — session ${meta.sessionId} is now active`)
@@ -149,14 +143,10 @@ export function useChat(onMessageSent: () => void) {
             localStorage.setItem(ACTIVE_SESSION_KEY, meta.sessionId)
           }
 
-          // Sources arrive up front, before any text — stash them on the
-          // placeholder bubble now so it's already correct once text starts.
-          appendToAssistantBubble('')
-          setMessages((prev) => {
-            const next = [...prev]
-            next[assistantIndex.current] = { ...next[assistantIndex.current], sources: meta.sources }
-            return next
-          })
+          // Sources arrive up front, before any text — add the (still empty)
+          // assistant bubble now with its sources already attached. Chunks
+          // then just grow the last message in place.
+          setMessages((prev) => [...prev, { role: 'assistant', content: '', sources: meta.sources }])
         },
         onChunk: (text) => appendToAssistantBubble(text),
         onDone: () => {
@@ -168,7 +158,16 @@ export function useChat(onMessageSent: () => void) {
         onError: (message) => {
           log.error('useChat', 'streamChatMessage() failed', message)
           setChatLoading(false)
-          setMessages((prev) => [...prev, { role: 'assistant', content: message, isError: true }])
+          setMessages((prev) => {
+            const last = prev[prev.length - 1]
+            const errorMessage: ChatMessage = { role: 'assistant', content: message, isError: true }
+            // If the empty streaming placeholder is still there, replace it
+            // instead of leaving a blank bubble sitting above the error.
+            if (last?.role === 'assistant' && !last.content) {
+              return [...prev.slice(0, -1), errorMessage]
+            }
+            return [...prev, errorMessage]
+          })
           resolve()
         },
       })
