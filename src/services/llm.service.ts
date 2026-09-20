@@ -48,6 +48,7 @@ export async function* streamAnswer(prompt: string): AsyncGenerator<string> {
     const { done, value } = await reader.read()
     if (done) break
 
+    // Gemini sends raw bytes, not JSON, so we need to decode them.
     // Gemini terminates SSE lines with \r\n — normalize to \n so the
     // blank-line split below matches (done on the whole buffer so a \r\n
     // split across two chunks is still caught).
