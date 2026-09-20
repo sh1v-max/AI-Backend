@@ -25,7 +25,8 @@ Roadmap phases (details in the walkthrough): 1 Embeddings & vector search · 2 R
 
 - **Done:** Phase 1 (embeddings, pgvector, Drizzle repositories), Phase 2 (PDF upload → chunk → embed → store; `/chat` RAG; conversation memory; session/document history + deletes; ChatGPT-style frontend), **Phase 3 Steps 3.1, 3.2, 3.2F** (SSE mechanics, streamed `/chat-stream`, frontend `EventSource`).
 - **Next up:** **Step 3.3 — multi-document chat** ("all PDFs" as default, one PDF as override). Full breakdown in the roadmap. Then Phase 4 (quiz + Zod). See [PROGRESS.md](PROGRESS.md) for the tracker.
-- **Git:** working branch is `Streaming-branch` (branched from `main`, one commit ahead at last check: `0568597 gemini response conflict`). Shiv was opening a PR into `main`. The throwaway `/tick` route deletion and the docs updates were made **uncommitted** after that — Shiv commits them himself. Run `git status` to see what's pending.
+- **Backend restructure done (2026-09-20):** the 449-line `src/index.ts` was split into `app.ts` + `config.ts` + `routes/` + `services/` + `utils/` (see §6), with **no behavior change**. Verified: `tsc --noEmit` clean; all 400/404 validation paths, `/chat` and `/chat-stream` happy paths (incl. history persistence, cleaned up afterwards), and the bad-API-key failure paths (503 for `/chat`, `event: error` frame for the stream, same terminal error block) behave as before. The frontend was not touched.
+- **Git:** working branch is `Streaming-branch` (branched from `main`; last commit at time of writing: `0568597 gemini response conflict`). Shiv was opening a PR into `main`. The backend restructure (new `src/` files + the slimmed `index.ts`) and this file's latest edits were **uncommitted** when written — Shiv commits them himself. Run `git status` to see what's pending.
 - `topics/07-streaming-sse/NOTES.md` is still the empty template — Shiv fills it in himself.
 
 ## 4. Stack
@@ -62,17 +63,28 @@ Tests: none yet (Phase 9).
 
 ```
 src/
-  index.ts                     Express app: all routes, chunkText(), buildChatPrompt(), withErrorHandling()
-  db/client.ts                 Pool + drizzle instance (the `db` every repository imports)
-  db/schema.ts                 documents, chunks, chatMessages tables
+  index.ts                     ~7 lines: load dotenv, app.listen(). Nothing else — don't grow it
+  app.ts                       builds the Express app (json, cors, health route, mounts the routers); no listen(), so tests can import it
+  config.ts                    HISTORY_LIMIT, PORT, FRONTEND_URL, CONNECTION_ERROR_MESSAGE
+  routes/                      thin: read the request, call a service/repository, write the response
+    documents.routes.ts        GET /documents, DELETE /documents/:id, POST /upload (multer lives here)
+    sessions.routes.ts         GET /sessions, GET /sessions/:id/messages, DELETE /sessions/:id
+    chat.routes.ts             POST /chat, GET /chat-stream (steps 6-7 differ per route, so they stay here)
+  services/
+    chat.service.ts            buildChatPrompt() + prepareChat() = steps 1-5 of the chat pipeline, shared by both chat routes
+    ingestion.service.ts       ingestPdf(): parse -> chunk -> embed + store -> document row (steps 2-5 of upload)
+    embeddings.service.ts      getEmbedding(text) -> number[3072]
+    llm.service.ts             generateAnswer(prompt) and streamAnswer(prompt) (async generator)
   repositories/
     chunks.repository.ts       insertChunk, searchSimilar (cosine distance), deleteChunksByDocumentId
     documents.repository.ts    insertDocument, listDocuments, deleteDocument
     chatMessages.repository.ts insertMessage, getRecentMessages, getMessagesForSession, listSessions, deleteSession, deleteMessagesByDocumentId
-  services/
-    embeddings.service.ts      getEmbedding(text) -> number[3072]
-    llm.service.ts             generateAnswer(prompt) and streamAnswer(prompt) (async generator)
-  utils/pipelineLogger.ts      chalk-coloured step/timing/preview logging used by every route
+  db/client.ts                 Pool + drizzle instance (the `db` every repository imports)
+  db/schema.ts                 documents, chunks, chatMessages tables
+  utils/
+    errors.ts                  summarizeError(), withErrorHandling() (wraps /chat and /chat-stream)
+    chunkText.ts               ~500-word splitter
+    pipelineLogger.ts          chalk-coloured step/timing/preview logging used by every route
   step1-embeddings.ts, step2-pgvector.ts, step3-drizzle.ts   Phase 1 learning scripts
 frontend/src/
   api/         client.ts, documents.ts, chat.ts (sendChatMessage + streamChatMessage), sessions.ts
@@ -84,7 +96,9 @@ frontend/src/
 topics/        16 concept folders (README = reading, NOTES = Shiv's own notes) + advanced/ + OVERVIEW.md
 ```
 
-Rule that matters: **nothing outside `repositories/` touches SQL/Drizzle directly.** Routes call repositories; repositories call `db`.
+Rules that matter: **nothing outside `repositories/` touches SQL/Drizzle directly** (routes/services call repositories; repositories call `db`), and **services never touch `req`/`res`** — `prepareChat()` returns `{ ok: false, status, error }` and the route sends the response. That's what lets the same service be reused by a background worker later.
+
+Note: `/upload` and the read/delete routes are *not* wrapped in `withErrorHandling` (only `/chat` and `/chat-stream` are) — that's pre-existing behavior, kept as-is during the refactor. Also, a bad `GEMINI_API_KEY` currently produces the "check your internet connection" message, because `withErrorHandling` doesn't distinguish failure types yet.
 
 ## 7. API surface
 
@@ -119,7 +133,7 @@ Only the last-stage failures are special: a failed DB save of the assistant repl
 - `chunks(id serial PK, content, embedding vector(3072), document_id text)`
 - `chat_messages(id serial PK, session_id, document_id NOT NULL, role 'user'|'assistant', content, created_at)`
 - **There is no `sessions` table.** A session is just a `session_id` shared by a group of `chat_messages` rows; history is *derived* (`listSessions()` groups and reduces). A session's `title` is its first user message.
-- Forward-looking constraints for Step 3.3: `searchSimilar`'s `documentId` param is currently required, and `chat_messages.document_id` is `NOT NULL` — both need to loosen for "all documents" mode.
+- Forward-looking constraints for Step 3.3: `searchSimilar`'s `documentId` param is currently required, and `chat_messages.document_id` is `NOT NULL` — both need to loosen for "all documents" mode. The retrieval change now belongs in **one place**: `prepareChat()` in `chat.service.ts` (plus its 400/404 validation, which currently requires a `documentId`).
 
 ## 9. Decisions and gotchas worth remembering
 
@@ -150,6 +164,8 @@ Only the last-stage failures are special: a failed DB save of the assistant repl
 - Frontend logs through `utils/logger.ts` with a scope (`log.info('useChat', ...)`).
 - Frontend: `api/` = fetch only, `hooks/` = state + async logic, `components/` = presentation, `App.tsx` = wiring.
 - TypeScript strict; run `npx tsc --noEmit` after backend edits.
+- **Logging is a feature — never lose it.** Refactors must preserve every `pipelineLogger` call, the `withErrorHandling` / `summarizeError` error block (cause chain + `where:` frame), the in-stream `console.error`s, and the frontend `[DocMind:<scope>]` logger. After any refactor, deliberately break things (wifi off, bad `documentId`, empty message, bad API key) and confirm the same error output appears. Errors currently go to the terminal only; writing full errors to a gitignored `logs/errors.log` (JSON lines, with `key=` redaction and long values clipped) was discussed and **deliberately deferred** — add it later when errors get complex, not before.
+- **Structure rule:** new features get their own route + service file from the start (e.g. `routes/quiz.routes.ts` + `services/quiz.service.ts`); `index.ts`/`app.ts` don't grow. Split an existing file only when it passes ~200–250 lines or does two unrelated jobs — no speculative folders.
 
 ## 11. Doc map (which file is for what)
 
@@ -159,6 +175,7 @@ Only the last-stage failures are special: a failed DB save of the assistant repl
 | [project_building_workthrough.md](project_building_workthrough.md) | Phase-by-phase build order + implementation details of what was built | Claude, when a step is finished |
 | [ai-backend-roadmap.md](ai-backend-roadmap.md) | The original learning plan with resources; done steps get ✅ + a "how it turned out" note | Claude, when a step is finished |
 | [PROGRESS.md](PROGRESS.md) | The tracker — single source of truth for "what next" | Claude, when a topic finishes |
+| [CODE_EXPLAINED.md](CODE_EXPLAINED.md) | Deep, line-linked explanation of every file and step (1.1 → 3.2): why, what, how. Written for Shiv to re-learn from. Link line numbers can drift as code changes — function names are the reliable anchor | Claude, when a step is finished (add the new step's section) and after big refactors (re-check links) |
 | [README.md](README.md) | Short intro, setup, two-machine git workflow | Occasionally |
 | `topics/NN-*/README.md` / `NOTES.md` | Reading material / **Shiv's own notes (don't write)** | Shiv |
 
@@ -168,6 +185,8 @@ Shiv sometimes works on two laptops. Git is the only thing that carries code; `.
 
 ## 13. Work log (newest first — append an entry each session)
 
+- **2026-09-20 (latest)** — Wrote [CODE_EXPLAINED.md](CODE_EXPLAINED.md): the full line-linked walkthrough of Steps 1.1–3.2 (all backend + frontend files, the SSE protocol, error/logging design, a request traced end to end, known limitations). All 276 line links were machine-checked against the files. Found while writing it: `npm run step2` (`DROP TABLE chunks`) and `npm run step3` (`DELETE FROM chunks`) would wipe the real chunks table — documented as "don't re-run". `format.ts` helpers and the non-streaming `sendChatMessage` are currently unused.
+- **2026-09-20 (later)** — Split `index.ts` into routes/services/utils/app/config ahead of Step 3.3 (chat pipeline steps 1-5 now live once in `prepareChat()`; upload pipeline in `ingestPdf()`), kept all logging intact, smoke-tested every route and the failure paths. Decided: error logging stays terminal-only for now (file logging deferred); no more refactor passes — new features get their own route + service files. Next: Step 3.3.
 - **2026-09-20** — Finished Phase 3 streaming: `/chat-stream`, `streamAnswer()`, shared `buildChatPrompt()`, `withErrorHandling()`/`summarizeError()`, frontend `EventSource` wrapper + streaming chat UI. Fixed Gemini `\r\n` parsing and a stream-response conflict (`0568597`). Deleted the throwaway `/tick` route. Updated walkthrough, roadmap, PROGRESS, README (added the two-machine workflow section). Discussed git workflow (rebase vs merge, one branch per laptop). Created this file. Next: Step 3.3.
 - **2026-09-18** — Step 2.5: `GET /sessions`, `GET /sessions/:id/messages`, delete endpoints, ChatGPT-style frontend, `localStorage` session persistence, frontend folder restructure, tagged logger.
 - **2026-09-17** — Step 2.4: `chat_messages` table + repository, `/chat` rewritten with memory, RAG notes.
@@ -179,5 +198,5 @@ At the end of every work session, before Shiv ends the chat:
 1. Update **§3 Current state** (what's done, what's next, git/branch status).
 2. Add a dated line to **§13 Work log**.
 3. Add any new decision/gotcha to **§9**, any new route to **§7**, any schema change to **§8**.
-4. Update the walkthrough / roadmap / PROGRESS if a step finished.
+4. Update the walkthrough / roadmap / PROGRESS if a step finished, and add that step's section to [CODE_EXPLAINED.md](CODE_EXPLAINED.md) (same format: why / what / how, with `[file:lines](path#Lx-Ly)` links — verify the links resolve).
 5. Keep it factual and verifiable against the code — if this file and the code disagree, the code wins; fix the file.
