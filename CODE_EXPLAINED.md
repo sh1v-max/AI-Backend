@@ -1,0 +1,707 @@
+# DocMind — Code Explained (Step 1.1 → Step 3.2)
+
+A file-by-file, line-linked walkthrough of everything built so far: **why** each piece exists, **what** it does, and **how** it's implemented. Every `[file:lines]` link jumps to the exact code (Ctrl+Click in VS Code).
+
+How this relates to the other docs:
+- [project_building_workthrough.md](project_building_workthrough.md) = the *build order* (what step comes next).
+- [PROGRESS.md](PROGRESS.md) = the *tracker*.
+- **This file** = the *code explained*. Read it when you want to understand (or re-learn) how something actually works.
+- Line numbers were checked when this was written. If a file has been edited since, the link may be a few lines off — the function names are the reliable anchor.
+
+---
+
+## Table of contents
+
+0. [The big picture](#0-the-big-picture)
+1. [Project foundation (config files)](#1-project-foundation)
+2. [Phase 1 — Embeddings & vector search](#phase-1--embeddings--vector-search)
+   - [Step 1.1 — Embeddings + cosine similarity](#step-11--embeddings--cosine-similarity)
+   - [Step 1.2 — Postgres + pgvector](#step-12--postgres--pgvector)
+   - [Step 1.3 — Drizzle + the repository pattern](#step-13--drizzle--the-repository-pattern)
+3. [Phase 2 — RAG, memory, history](#phase-2--rag-memory-history)
+   - [Step 2.1 — Parse a PDF](#step-21--parse-a-pdf)
+   - [Step 2.1F / 2.2F — Frontend scaffold + upload UI](#step-21f--22f--frontend-scaffold--upload-ui)
+   - [Step 2.2 — `POST /upload`, the full pipeline](#step-22--post-upload-the-full-pipeline)
+   - [Step 2.3 — `POST /chat`, single turn](#step-23--post-chat-single-turn)
+   - [Step 2.3F — Chat UI](#step-23f--chat-ui)
+   - [Step 2.4 — Memory](#step-24--memory)
+   - [Step 2.5 — History + deletes](#step-25--history--deletes)
+4. [Phase 3 — Streaming](#phase-3--streaming)
+   - [Step 3.1 — SSE mechanics (`/tick`, now deleted)](#step-31--sse-mechanics-tick-now-deleted)
+   - [Step 3.2 — Streaming the real chat reply](#step-32--streaming-the-real-chat-reply)
+   - [Step 3.2F — Streaming in the frontend](#step-32f--streaming-in-the-frontend)
+5. [Cross-cutting: errors, logging, and the backend restructure](#5-cross-cutting-errors-logging-and-the-backend-restructure)
+6. [One chat message, end to end](#6-one-chat-message-end-to-end)
+7. [Known limitations (honest list)](#7-known-limitations-honest-list)
+8. [Glossary](#8-glossary)
+
+---
+
+## 0. The big picture
+
+DocMind has two data flows. Everything in this file is a piece of one of them.
+
+**Flow A — ingestion ("upload a PDF")**
+
+```
+PDF file ──► multer (into memory) ──► pdf-parse ──► plain text
+   ──► chunkText (~500 words each) ──► for each chunk: getEmbedding() ──► 3072 numbers
+   ──► insertChunk() ──► Postgres `chunks` table (pgvector)
+   ──► insertDocument() ──► `documents` table (one row per PDF)
+```
+
+**Flow B — chat ("ask the PDF a question")**
+
+```
+question ──► getEmbedding() ──► searchSimilar() (top 3 nearest chunks, cosine distance)
+   ──► getRecentMessages() (last 8 messages of this session = memory)
+   ──► insertMessage(user)
+   ──► buildChatPrompt(chunks + history + question) ──► Gemini
+   ──► answer (all at once = /chat, or piece by piece = /chat-stream)
+   ──► insertMessage(assistant) ──► back to the browser
+```
+
+**Who talks to whom**
+
+```
+Browser (React, :5173) ──HTTP──► Express API (:3000) ──► Gemini API   (embeddings + generation)
+                                        └────────────► Neon Postgres (documents, chunks, chat_messages)
+```
+
+**File map** (backend `src/`, frontend `frontend/src/`)
+
+| Area | Files |
+|---|---|
+| Learning scripts (Phase 1) | [step1-embeddings.ts](src/step1-embeddings.ts), [step2-pgvector.ts](src/step2-pgvector.ts), [step3-drizzle.ts](src/step3-drizzle.ts) |
+| Server bootstrap | [index.ts](src/index.ts), [app.ts](src/app.ts), [config.ts](src/config.ts) |
+| Routes (HTTP layer) | [documents.routes.ts](src/routes/documents.routes.ts), [sessions.routes.ts](src/routes/sessions.routes.ts), [chat.routes.ts](src/routes/chat.routes.ts) |
+| Services (the actual work) | [chat.service.ts](src/services/chat.service.ts), [ingestion.service.ts](src/services/ingestion.service.ts), [embeddings.service.ts](src/services/embeddings.service.ts), [llm.service.ts](src/services/llm.service.ts) |
+| Repositories (all SQL lives here) | [chunks.repository.ts](src/repositories/chunks.repository.ts), [documents.repository.ts](src/repositories/documents.repository.ts), [chatMessages.repository.ts](src/repositories/chatMessages.repository.ts) |
+| Database | [db/client.ts](src/db/client.ts), [db/schema.ts](src/db/schema.ts) |
+| Utils | [utils/chunkText.ts](src/utils/chunkText.ts), [utils/errors.ts](src/utils/errors.ts), [utils/pipelineLogger.ts](src/utils/pipelineLogger.ts) |
+| Frontend API layer | [api/client.ts](frontend/src/api/client.ts), [api/documents.ts](frontend/src/api/documents.ts), [api/chat.ts](frontend/src/api/chat.ts), [api/sessions.ts](frontend/src/api/sessions.ts) |
+| Frontend state (hooks) | [useDocuments.ts](frontend/src/hooks/useDocuments.ts), [useSessions.ts](frontend/src/hooks/useSessions.ts), [useChat.ts](frontend/src/hooks/useChat.ts) |
+| Frontend UI | [App.tsx](frontend/src/App.tsx) + `components/` (sidebar, chat, documents, common) |
+
+**The layering rule** (this is why the code is split the way it is):
+
+```
+route  →  service  →  repository  →  db
+(HTTP)    (the work)   (SQL)          (Postgres)
+```
+- A **route** only reads the request and writes the response.
+- A **service** does the real work and never touches `req`/`res`.
+- A **repository** is the only place SQL/Drizzle appears.
+- The frontend mirrors it: `api/` (fetch only) → `hooks/` (state + logic) → `components/` (pixels).
+
+---
+
+## 1. Project foundation
+
+Before any step, the project needed a place to live.
+
+### [package.json](package.json)
+- `"type": "commonjs"` — Node loads files with `require`. TypeScript `import` statements are compiled to `require` calls, and **import order = load order** (this matters for `dotenv`, see below).
+- `npm run dev` = `ts-node-dev --respawn --transpile-only src/index.ts`. `ts-node-dev` runs TypeScript directly and **restarts the server on every file save** (`--respawn`). `--transpile-only` skips type-checking to make restarts fast — the price is that **type errors don't stop the server**, so run `npx tsc --noEmit` yourself to catch them.
+- `npm run step1 / step2 / step3` run the three Phase 1 learning scripts.
+- Dependencies, each with one job: `express` (HTTP server), `cors` (allow the browser at :5173 to call :3000), `multer` (file uploads), `pdf-parse` (PDF → text), `pg` (Postgres driver), `drizzle-orm` (typed queries), `dotenv` (load `.env`), `chalk` (coloured terminal logs). `drizzle-kit` is the CLI for Drizzle (configured in [drizzle.config.ts](drizzle.config.ts)).
+
+### [tsconfig.json](tsconfig.json)
+`"strict": true` — TypeScript's strictest checking (no implicit `any`, null-safety). It's why you see things like `documentId: unknown` followed by a `typeof documentId !== 'string'` check in [chat.service.ts:63-71](src/services/chat.service.ts#L63-L71).
+
+### `.env` (never committed) and [.env.example](.env.example)
+Three keys: `GEMINI_API_KEY`, `DATABASE_URL` (Neon connection string), `FRONTEND_URL` (allowed CORS origin). `.env.example` is the committed template with no real values. The frontend has its own `frontend/.env` with `VITE_API_URL` (read at [client.ts:3](frontend/src/api/client.ts#L3)).
+
+### [.gitignore](.gitignore)
+Ignores `node_modules/`, `dist/`, `.env`, and **`.history`** (the VS Code Local History extension snapshots every saved file — including `.env` — so it must never be tracked; a real secret leak happened this way, per the comment in the file).
+
+### [drizzle.config.ts](drizzle.config.ts)
+Tells `drizzle-kit` where the schema is (`./src/db/schema.ts`) and which database to use. There's no `drizzle/` migrations folder in the repo, so schema changes were applied to Neon outside git — the equivalent SQL is kept in comments beside each table in the schema file.
+
+### Why `import 'dotenv/config'` appears first
+[index.ts:1](src/index.ts#L1), [config.ts:1](src/config.ts#L1) and [db/client.ts:1](src/db/client.ts#L1) all import `dotenv/config` at the very top. It reads `.env` into `process.env`. Files like [embeddings.service.ts:1](src/services/embeddings.service.ts#L1) read `process.env.GEMINI_API_KEY` **the moment they're loaded** — so `.env` must already be loaded by then. Because imports run in order, putting dotenv first guarantees it.
+
+---
+
+# Phase 1 — Embeddings & vector search
+
+**The whole phase in one paragraph:** a computer can't compare the *meaning* of two sentences directly, but it can compare two lists of numbers. An **embedding** model turns a sentence into a list of numbers (a *vector*) such that similar meanings get similar numbers. A **vector database** stores those lists and can quickly find the ones closest to a query. That's the engine under RAG.
+
+---
+
+## Step 1.1 — Embeddings + cosine similarity
+
+**Script:** [src/step1-embeddings.ts](src/step1-embeddings.ts) — run with `npm run step1`.
+
+### Why we need it
+Everything later (search, chat, memory-aware retrieval) rests on one fact: *similar text → similar vectors*. This step proves it by hand, with no database and no libraries, so it's not magic later.
+
+### What it does
+Embeds four sentences (two similar, two unrelated), computes how "close" each pair is, and prints which pair scored higher.
+
+### How it works
+
+**Calling the embedding API — [step1-embeddings.ts:11-27](src/step1-embeddings.ts#L11-L27)**
+- [L7-9](src/step1-embeddings.ts#L7-L9): the API key from `.env` and the endpoint for Gemini's `gemini-embedding-001` model.
+- [L12-18](src/step1-embeddings.ts#L12-L18): a plain `fetch` POST (no SDK). The body shape `{ content: { parts: [{ text }] } }` is Gemini's format.
+- [L20-22](src/step1-embeddings.ts#L20-L22): if the HTTP status isn't 2xx, throw with the status and body — so a bad key shows up as a readable error instead of a mysterious `undefined` later.
+- [L26](src/step1-embeddings.ts#L26): the answer lives at `data.embedding.values` — an array of **3072 numbers**. (The original plan text says `text-embedding-004` / 768 numbers; the code uses `gemini-embedding-001` / 3072. Trust the code.)
+
+**Cosine similarity, written by hand — [step1-embeddings.ts:32-44](src/step1-embeddings.ts#L32-L44)**
+```
+cosine_similarity(a, b) = dot(a, b) / (|a| × |b|)
+```
+- [L37-41](src/step1-embeddings.ts#L37-L41): one loop computes three sums at once — `dot` (Σ aᵢ·bᵢ), `magA` (Σ aᵢ²), `magB` (Σ bᵢ²).
+- [L43](src/step1-embeddings.ts#L43): `dot / (√magA × √magB)`.
+- What it measures: the **angle** between the two vectors, ignoring their length. `1` = pointing the same way (same meaning), `0` = unrelated, `-1` = opposite. It was written by hand on purpose — typing the formula is what makes it click.
+
+**The experiment — [step1-embeddings.ts:46-81](src/step1-embeddings.ts#L46-L81)**
+- [L47-55](src/step1-embeddings.ts#L47-L55): `similarPair` ("cat sat on the mat" / "kitten resting on the rug") and `unrelatedPair` ("cat…" / "stock market crashed").
+- [L59-60](src/step1-embeddings.ts#L59-L60): `Promise.all` embeds both sentences of a pair *in parallel*.
+- [L66-80](src/step1-embeddings.ts#L66-L80): scores both pairs and prints ✅ if the similar pair scored higher.
+
+### What you should see
+A length of 3072, the first 5 numbers of one vector, two scores, and "✅ Confirmed". Exact numbers depend on the model; what matters is *similar > unrelated*.
+
+### Takeaway
+An embedding is just an array of numbers where **distance ≈ difference in meaning**. Nothing else in the project is more fundamental.
+
+---
+
+## Step 1.2 — Postgres + pgvector
+
+**Script:** [src/step2-pgvector.ts](src/step2-pgvector.ts) — run with `npm run step2`.
+
+### Why we need it
+Step 1.1 compared two vectors in JavaScript. A real system has *thousands* of stored vectors and needs "give me the closest 3 to this one". Looping in JS over everything doesn't scale, so we let a **database** do the math. **pgvector** is a Postgres extension that adds a `vector` column type and distance operators. Hosted for free on **Neon**.
+
+### What it does
+Creates a table, embeds 10 sentences and stores them, then asks: *"what's closest to 'a cat napping on a blanket'?"* — expecting the two cat sentences back.
+
+### How it works
+- [L35](src/step2-pgvector.ts#L35): `new Pool(...)` — a connection pool from the `pg` driver, using `DATABASE_URL`.
+- [L38](src/step2-pgvector.ts#L38): `CREATE EXTENSION IF NOT EXISTS vector;` — turns on pgvector in the database. Needed once.
+- [L39-46](src/step2-pgvector.ts#L39-L46): `DROP TABLE IF EXISTS chunks;` then `CREATE TABLE chunks (id, content, embedding VECTOR(3072))`. `VECTOR(3072)` = "a vector of exactly 3072 numbers" — it must match the embedding model's output size.
+- [L30-32](src/step2-pgvector.ts#L30-L32): `toVectorLiteral` — pgvector wants vectors as text like `'[0.1,0.2,…]'`, so this joins the array with commas inside brackets.
+- [L62-69](src/step2-pgvector.ts#L62-L69): for each sentence → embed → `INSERT … VALUES ($1, $2)`. The `$1/$2` are **parameterized query** placeholders: the driver sends values separately from the SQL, which prevents SQL injection.
+- [L73-79](src/step2-pgvector.ts#L73-L79): the search query:
+  ```sql
+  SELECT content, embedding <=> $1 AS distance
+  FROM chunks ORDER BY embedding <=> $1 LIMIT 2
+  ```
+  `<=>` is pgvector's **cosine distance** operator (`distance = 1 − similarity`, so **smaller = more similar**). This is the exact math from Step 1.1, run inside the database. `ORDER BY … LIMIT 2` = "two nearest".
+
+### Other pgvector operators (for reference)
+`<=>` cosine distance · `<->` Euclidean (straight-line) distance · `<#>` negative inner product.
+
+### ⚠️ Warning: don't re-run this script now
+[L39](src/step2-pgvector.ts#L39) `DROP TABLE IF EXISTS chunks` would **destroy your real chunks table** (and recreate it *without* the `document_id` column the app now needs). It was a Phase 1 learning script, safe only when the table held throwaway data.
+
+### Takeaway
+The database computes the same cosine math you wrote by hand, just fast and at scale. Without an index it still compares against every row (fine for thousands of rows; for millions see [topics/02-vector-search-pgvector/INDEXING-AT-SCALE.md](topics/02-vector-search-pgvector/INDEXING-AT-SCALE.md)).
+
+---
+
+## Step 1.3 — Drizzle + the repository pattern
+
+**Files:** [db/client.ts](src/db/client.ts), [db/schema.ts](src/db/schema.ts), [services/embeddings.service.ts](src/services/embeddings.service.ts), [repositories/chunks.repository.ts](src/repositories/chunks.repository.ts), script [step3-drizzle.ts](src/step3-drizzle.ts).
+
+### Why we need it
+Step 1.2 scattered raw SQL strings and a copy-pasted `getEmbedding` through the script. In a real app that becomes unmaintainable and un-type-checked. The fix:
+1. **Drizzle ORM** — describe tables in TypeScript so queries are type-checked and autocompleted.
+2. **Repository pattern** — put *all* database access behind a few named functions (`insertChunk`, `searchSimilar`). Nothing else in the app writes SQL. If the database changes, only repositories change.
+3. **One shared `getEmbedding`** — a single file instead of one copy per script.
+
+### How it works
+
+**[db/client.ts](src/db/client.ts) — the connection**
+- [L8](src/db/client.ts#L8): a `Pool` from `pg` (same as Step 1.2).
+- [L10](src/db/client.ts#L10): `export const db = drizzle(pool, { schema })` — wraps the pool with Drizzle. **Every repository imports this one `db` object.**
+
+**[db/schema.ts](src/db/schema.ts) — tables as TypeScript** (the `chunks` table is the Phase 1 one; the others came later)
+- `chunks`: [L27-36](src/db/schema.ts#L27-L36) — `id` (serial primary key), `content` (text), `embedding` (`vector('embedding', { dimensions: 3072 })` at [L33](src/db/schema.ts#L33)), and `documentId` (which PDF this chunk came from, added in Step 2.2).
+- `documents`: [L16-23](src/db/schema.ts#L16-L23) — Step 2.2. `chat_messages`: [L45-54](src/db/schema.ts#L45-L54) — Step 2.4.
+- Every other file imports these definitions, so a typo in a column name is a compile error, not a runtime surprise.
+
+**[services/embeddings.service.ts](src/services/embeddings.service.ts) — the shared embedder**
+[getEmbedding at L5-20](src/services/embeddings.service.ts#L5-L20) is Step 1.1's function, moved to one place. Used by the upload pipeline, the chat pipeline, and step3.
+
+**[repositories/chunks.repository.ts](src/repositories/chunks.repository.ts)**
+- `insertChunk(content, embedding, documentId)` — [L6-14](src/repositories/chunks.repository.ts#L6-L14): `db.insert(chunks).values(...)`. The SQL equivalent is in the comment at [L15-16](src/repositories/chunks.repository.ts#L15-L16).
+- `searchSimilar(queryEmbedding, limit, documentId)` — [L25-41](src/repositories/chunks.repository.ts#L25-L41):
+  - [L31](src/repositories/chunks.repository.ts#L31): `cosineDistance(chunks.embedding, queryEmbedding)` builds the same `<=>` expression as a reusable value; `.mapWith(Number)` makes sure the result comes back as a JS number.
+  - [L35-40](src/repositories/chunks.repository.ts#L35-L40): `select content + distance → where documentId matches → order by distance → limit`. It returns `{ content, distance }[]`, nearest first.
+  - The `where documentId = …` filter is what keeps one PDF's answers from mixing in another PDF's text (Step 2.2 added it).
+- `deleteChunksByDocumentId` — [L19-21](src/repositories/chunks.repository.ts#L19-L21): used when a document is deleted (Step 2.5).
+
+**[step3-drizzle.ts](src/step3-drizzle.ts) — proof it works**
+Same experiment as Step 1.2 but through `insertChunk()` / `searchSimilar()` ([L34-41](src/step3-drizzle.ts#L34-L41)) — the caller never writes SQL. ⚠️ [L18](src/step3-drizzle.ts#L18) runs `DELETE FROM chunks` — **it wipes every chunk in the table, including your real PDFs'**. Don't re-run it against the live database.
+
+### Takeaway
+Routes and services say *what* they want (`searchSimilar(embedding, 3, docId)`); the repository knows *how* (SQL). That separation is the whole point of the pattern.
+
+---
+
+# Phase 2 — RAG, memory, history
+
+**RAG in one sentence:** instead of the model guessing from its training memory, we **retrieve** the relevant text from the user's PDF and hand it to the model right before asking the question. That's why the pipeline is *embed the question → find nearest chunks → put them in the prompt → generate*.
+
+---
+
+## Step 2.1 — Parse a PDF
+
+**Where it lives now:** [documents.routes.ts:11](src/routes/documents.routes.ts#L11) (multer), [documents.routes.ts:29-52](src/routes/documents.routes.ts#L29-L52) (`POST /upload`), and [ingestion.service.ts:17-25](src/services/ingestion.service.ts#L17-L25) (the parsing). Originally all of this was in `index.ts`; the backend restructure ([§5](#5-cross-cutting-errors-logging-and-the-backend-restructure)) moved it without changing behavior.
+
+### Why we need it
+Users upload a **file**, but everything so far works on **text**. We need "PDF in → plain text out" before we can chunk or embed anything.
+
+### How it works
+- **Multer** ([documents.routes.ts:11](src/routes/documents.routes.ts#L11)): `multer({ storage: multer.memoryStorage() })`. Multer is Express middleware for `multipart/form-data` (file uploads). `memoryStorage()` keeps the uploaded file **in RAM** as a `Buffer` instead of writing it to disk — simplest option for parsing straight away.
+- **The route** ([L29](src/routes/documents.routes.ts#L29)): `upload.single('file')` says "expect one file in the form field named `file`" and puts it on `req.file` (`buffer`, `originalname`, `size`, `mimetype`).
+- **Validation** ([L33-43](src/routes/documents.routes.ts#L33-L43)): no file → `400`; `mimetype !== 'application/pdf'` → `400`. Note the mimetype comes from the *client's* request header, so it's a convenience check, not a security guarantee.
+- **Parsing** ([ingestion.service.ts:19-25](src/services/ingestion.service.ts#L19-L25)): `new PDFParse({ data: file.buffer })` then `await parser.getText()` → `result.text`. `pdf-parse` only reads PDFs with a real **text layer** (typed/exported); scanned images would need OCR.
+- **Cleanup** ([ingestion.service.ts:62-64](src/services/ingestion.service.ts#L62-L64)): `finally { await parser.destroy() }` frees the parser even if something above threw.
+
+### Takeaway
+Multer turns an HTTP file upload into a `Buffer`; `pdf-parse` turns the buffer into a string. That string is the raw material for everything after.
+
+---
+
+## Step 2.1F / 2.2F — Frontend scaffold + upload UI
+
+**Why a frontend at all:** to test each endpoint the way a real client would (real `FormData`, real `EventSource`, real CORS) instead of only via Postman. It's built alongside the backend, kept deliberately simple: Vite + React + TypeScript, no router, no state library.
+
+### Entry and wiring
+- [main.tsx:6-10](frontend/src/main.tsx#L6-L10): mounts `<App />` inside `<StrictMode>`. StrictMode (dev only) intentionally runs some things **twice** to expose impure code — this is why the streaming state updater in [useChat.ts:125-133](frontend/src/hooks/useChat.ts#L125-L133) must be a pure function.
+- [vite.config.ts](frontend/vite.config.ts): just the React plugin. Vite serves the app on `localhost:5173`.
+
+### CORS — why the backend needs [app.ts:17-21](src/app.ts#L17-L21)
+The page is served from `:5173` and calls the API on `:3000`. Those are **different origins**, and browsers block cross-origin requests unless the server says it's OK. `cors({ origin: FRONTEND_URL })` sends the allow header for exactly the frontend's origin ([config.ts:14](src/config.ts#L14), defaulting to `http://localhost:5173`).
+
+### The API layer — `frontend/src/api/` (fetch and nothing else)
+- [client.ts](frontend/src/api/client.ts): [L3](frontend/src/api/client.ts#L3) `API_URL` (from `VITE_API_URL`, falling back to `http://localhost:3000`); [L5-14](frontend/src/api/client.ts#L5-L14) `parseJsonOrThrow(res)` — parses the JSON, and if the status isn't OK, logs it and throws an `ApiError` carrying the server's `error` message. Every API function shares it, so error handling is written once.
+- [documents.ts](frontend/src/api/documents.ts):
+  - `uploadDocument(file)` — [L30-52](frontend/src/api/documents.ts#L30-L52): builds a `FormData` ([L33-34](frontend/src/api/documents.ts#L33-L34)) and POSTs it. **It deliberately sets no `Content-Type` header** — the browser sets `multipart/form-data` *with the boundary string* itself; setting it manually breaks the upload.
+  - `fetchDocuments()` — [L14-28](frontend/src/api/documents.ts#L14-L28): `GET /documents`, and renames the server's `id` to the frontend's `documentId`.
+  - `deleteDocument()` — [L54-58](frontend/src/api/documents.ts#L54-L58) (Step 2.5).
+
+### Types — [types/document.ts](frontend/src/types/document.ts)
+`UploadedDocument` ([L1-8](frontend/src/types/document.ts#L1-L8)) and `UploadStatus = 'idle' | 'uploading' | 'error'` ([L10](frontend/src/types/document.ts#L10)).
+
+### State — [hooks/useDocuments.ts](frontend/src/hooks/useDocuments.ts)
+- [L7-9](frontend/src/hooks/useDocuments.ts#L7-L9): `documents`, `status`, `error`.
+- [L14-24](frontend/src/hooks/useDocuments.ts#L14-L24): on mount, load documents that **already exist on the server** (so a PDF uploaded via Postman or another tab still shows up).
+- `uploadFile` — [L26-51](frontend/src/hooks/useDocuments.ts#L26-L51): checks `file.type` is a PDF ([L29-34](frontend/src/hooks/useDocuments.ts#L29-L34)), sets `status: 'uploading'`, calls the API, prepends the new doc to state, or sets an error.
+- `deleteDocument` — [L53-64](frontend/src/hooks/useDocuments.ts#L53-L64).
+
+### UI — [components/documents/UploadDropzone.tsx](frontend/src/components/documents/UploadDropzone.tsx)
+A drag-and-drop box that's also click-to-browse. [L11-13](frontend/src/components/documents/UploadDropzone.tsx#L11-L13) tracks dragging and a hidden `<input type="file" accept="application/pdf">`; [handleDrop L15-20](frontend/src/components/documents/UploadDropzone.tsx#L15-L20) grabs the dropped file; [L46-50](frontend/src/components/documents/UploadDropzone.tsx#L46-L50) resets the input value so picking the *same* file twice still fires; while `busy` it shows a spinner and "Extracting text…" ([L53-57](frontend/src/components/documents/UploadDropzone.tsx#L53-L57)). It calls `onFileSelected` and knows nothing about APIs — presentation only.
+
+### Small shared pieces
+- [utils/logger.ts](frontend/src/utils/logger.ts): the tagged console logger (see [§5](#frontend-logger)).
+- [utils/format.ts](frontend/src/utils/format.ts): `formatFileSize` and `formatRelativeTime` — **currently unused** (left over from an earlier UI; safe to delete or reuse).
+- [components/common/IconButton.tsx:8-18](frontend/src/components/common/IconButton.tsx#L8-L18): a reusable icon-only button; `mobileOnly` adds a class that hides it on desktop.
+
+---
+
+## Step 2.2 — `POST /upload`, the full pipeline
+
+**Files:** [ingestion.service.ts](src/services/ingestion.service.ts), [chunkText.ts](src/utils/chunkText.ts), [documents.repository.ts](src/repositories/documents.repository.ts), [documents.routes.ts](src/routes/documents.routes.ts), [pipelineLogger.ts](src/utils/pipelineLogger.ts).
+
+### Why we need it
+Step 2.1 gave us one big string. To search it we need to (a) cut it into **chunks** small enough to embed and to fit in a prompt, (b) embed each chunk, (c) store the vectors, and (d) remember which chunks belong to which PDF.
+
+### What it does
+`POST /upload` turns a PDF into searchable chunks in the database, and returns `{ documentId, filename, fileSizeBytes, textLength, chunkCount, createdAt }`.
+
+### How it works — `ingestPdf()` at [ingestion.service.ts:17-65](src/services/ingestion.service.ts#L17-L65)
+
+| Step | Code | What happens |
+|---|---|---|
+| 1 | [documents.routes.ts:45](src/routes/documents.routes.ts#L45) | log "File received" (route checks come first) |
+| 2 | [ingestion.service.ts:22-25](src/services/ingestion.service.ts#L22-L25) | extract text with `parser.getText()` |
+| 3 | [ingestion.service.ts:27-30](src/services/ingestion.service.ts#L27-L30) | `chunkText(text)`; generate `documentId = randomUUID()` |
+| 4 | [ingestion.service.ts:32-42](src/services/ingestion.service.ts#L32-L42) | for each chunk: `getEmbedding` → `insertChunk(chunk, embedding, documentId)` |
+| 5 | [ingestion.service.ts:44-52](src/services/ingestion.service.ts#L44-L52) | `insertDocument(...)` writes the metadata row |
+
+- **`chunkText`** — [chunkText.ts:3-12](src/utils/chunkText.ts#L3-L12): split the text on whitespace into words, then group **500 words per chunk** and join them back with spaces. Deliberately simple. Honest limitation: it ignores paragraph/sentence boundaries and flattens newlines. Better chunking is a later topic ([topics/advanced/02-chunking-strategy](topics/advanced/02-chunking-strategy/NOTES.md)).
+- **Why chunk at all?** (1) An embedding of a whole book is too vague to match a specific question; a ~500-word piece has a focused meaning. (2) Only the top few chunks go into the prompt, keeping it small and cheap.
+- **`documentId`** is a UUID made per upload. It's stored on every chunk (`chunks.document_id`) so a search can be limited to one PDF.
+- **The loop is sequential** ([L34-42](src/services/ingestion.service.ts#L34-L42)): one embedding API call per chunk, one after another. Simple and easy to log, but slow for big PDFs — Phase 6 (background jobs) is the fix.
+- **`documents` table** — [schema.ts:16-23](src/db/schema.ts#L16-L23): one row per PDF (`id`, `filename`, `fileSizeBytes`, `textLength`, `chunkCount`, `createdAt`). It exists so "what documents exist?" doesn't have to be reverse-engineered from chunk rows.
+- **`insertDocument`** — [documents.repository.ts:5-17](src/repositories/documents.repository.ts#L5-L17): `.insert(...).values(...).returning()` gives back the saved row (that's where `createdAt` comes from).
+- **`listDocuments`** — [L21-23](src/repositories/documents.repository.ts#L21-L23) newest first; served by `GET /documents` at [documents.routes.ts:13-16](src/routes/documents.routes.ts#L13-L16).
+
+### The logger you see in the terminal — [utils/pipelineLogger.ts](src/utils/pipelineLogger.ts)
+Every route prints a readable trace. Helpers: `pipelineStart` ([L18-22](src/utils/pipelineLogger.ts#L18-L22)) header line · `step(pipeline, n, total, label)` ([L30-33](src/utils/pipelineLogger.ts#L30-L33)) `[3/5] …` · `detail` ([L35-37](src/utils/pipelineLogger.ts#L35-L37)) indented grey line · `timing` ([L39-41](src/utils/pipelineLogger.ts#L39-L41)) `done in Nms` · `preview` ([L43-47](src/utils/pipelineLogger.ts#L43-L47)) shows the first ~80 chars of some text · `rejected` / `notFound` ([L49-55](src/utils/pipelineLogger.ts#L49-L55)) red failure lines · `pipelineEnd` ([L24-28](src/utils/pipelineLogger.ts#L24-L28)) total time. Uploads are **cyan**, chats **magenta** ([L11-14](src/utils/pipelineLogger.ts#L11-L14)) so mixed traffic is easy to read; `chalk.level = 1` ([L6](src/utils/pipelineLogger.ts#L6)) forces colour even when output is piped.
+
+### Takeaway
+Upload is an *offline* pipeline (nobody needs the result instantly), which is why Phase 6 will move it to a background queue. Chat is *online*: a human is waiting.
+
+---
+
+## Step 2.3 — `POST /chat`, single turn
+
+**Files:** [chat.routes.ts:11-37](src/routes/chat.routes.ts#L11-L37), [chat.service.ts](src/services/chat.service.ts), [llm.service.ts:7-22](src/services/llm.service.ts#L7-L22), [chunks.repository.ts:25-41](src/repositories/chunks.repository.ts#L25-L41).
+
+### Why we need it
+This is RAG itself: answer a question **from the PDF**, not from the model's memory.
+
+### What it does
+`POST /chat` with `{ documentId, message, sessionId? }` returns `{ sessionId, answer, sources }`, where `sources` are the chunks that were used (with their distances) so the UI can show where the answer came from.
+
+### How it works
+The route is thin ([chat.routes.ts:11-37](src/routes/chat.routes.ts#L11-L37)); the shared pipeline is `prepareChat()` in [chat.service.ts:57-118](src/services/chat.service.ts#L57-L118):
+
+1. **Validate** — [L63-71](src/services/chat.service.ts#L63-L71): `documentId` and `message` must be non-empty strings. They arrive typed `unknown` because they're raw request input; the `typeof` checks narrow them. Failure → returns `{ ok: false, status: 400, error }` (the *service never touches `res`* — the route sends the response).
+2. **Embed the question** — [L78-81](src/services/chat.service.ts#L78-L81): the **same model** that embedded the chunks (a question can only be compared to chunks embedded the same way).
+3. **Search** — [L83-86](src/services/chat.service.ts#L83-L86): `searchSimilar(questionEmbedding, 3, documentId)` — top **3** nearest chunks of this document.
+4. **No chunks?** — [L88-92](src/services/chat.service.ts#L88-L92): the `documentId` doesn't exist → `404`.
+5. *(steps 4–5 of the pipeline — history and prompt — are covered next, in Step 2.4)*
+6. **Generate** — [chat.routes.ts:21-25](src/routes/chat.routes.ts#L21-L25): `generateAnswer(prompt)`.
+7. **Save + respond** — [L27-36](src/routes/chat.routes.ts#L27-L36).
+
+**The prompt — [buildChatPrompt, chat.service.ts:15-37](src/services/chat.service.ts#L15-L37)**
+It tells the model to (a) use **only** the supplied context, no outside knowledge, no guessing; (b) answer naturally, not "Based on the provided context…"; (c) say so briefly if the answer isn't in the context; (d) use the conversation history to resolve follow-ups like "the first one". Then the layout is `Context:` (the chunks joined by blank lines) + optional `Conversation so far:` + `New question:`. Prompt wording lives in this **one** function, shared by `/chat` and `/chat-stream`.
+
+**Calling Gemini — [generateAnswer, llm.service.ts:7-22](src/services/llm.service.ts#L7-L22)**
+- [L2-3](src/services/llm.service.ts#L2-L3): the `gemini-flash-lite-latest:generateContent` endpoint.
+- [L8-14](src/services/llm.service.ts#L8-L14): POST with body `{ contents: [{ parts: [{ text: prompt }] }] }`.
+- [L16-18](src/services/llm.service.ts#L16-L18): non-OK status → throw with the API's error body.
+- [L21](src/services/llm.service.ts#L21): the reply text is at `data.candidates[0].content.parts[0].text`.
+
+### Takeaway
+"Instead of the model guessing from memory, I hand it the relevant text right before asking." That sentence *is* RAG. At this point the bot answers from the PDF but forgets everything after each request.
+
+---
+
+## Step 2.3F — Chat UI
+
+**Files:** [components/chat/](frontend/src/components/chat) — `ChatPanel`, `ChatTurn`, `ChatSources`, `ChatInputForm`, `ChatView`, `NewChatScreen`.
+
+- [ChatInputForm.tsx:11-40](frontend/src/components/chat/ChatInputForm.tsx#L11-L40): a controlled text input + send button. [L12-17](frontend/src/components/chat/ChatInputForm.tsx#L12-L17) prevents the page reload, trims, ignores empty messages, then calls `onSubmit`. The button is disabled while `disabled` (a reply is in flight) or the box is empty ([L33](frontend/src/components/chat/ChatInputForm.tsx#L33)).
+- [ChatTurn.tsx:8-22](frontend/src/components/chat/ChatTurn.tsx#L8-L22): one message bubble. The CSS class comes from `message.role` (`user`/`assistant`) and gets an error style if `isError` ([L11-15](frontend/src/components/chat/ChatTurn.tsx#L11-L15)). If the message has `sources`, it renders `ChatSources` under it.
+- [ChatSources.tsx:8-28](frontend/src/components/chat/ChatSources.tsx#L8-L28): a collapsible `<details>` listing the source chunks — each shows its `distance` and the first 220 characters. This is how you *see* what the model was given.
+- [ChatPanel.tsx:15-57](frontend/src/components/chat/ChatPanel.tsx#L15-L57): the message list + input. Auto-scrolls to the bottom with a ref ([L16](frontend/src/components/chat/ChatPanel.tsx#L16), [L23-27](frontend/src/components/chat/ChatPanel.tsx#L23-L27)), shows a "Thinking…" bubble while waiting ([L44-49](frontend/src/components/chat/ChatPanel.tsx#L44-L49)). (Its streaming-specific logic is in [Step 3.2F](#step-32f--streaming-in-the-frontend).)
+- [ChatView.tsx:25-81](frontend/src/components/chat/ChatView.tsx#L25-L81): the right-hand pane. Header shows the active document's filename ([L48-54](frontend/src/components/chat/ChatView.tsx#L48-L54)); body is one of three states: **restoring** spinner ([L57-60](frontend/src/components/chat/ChatView.tsx#L57-L60)), **`ChatPanel`** if a document is active ([L61-68](frontend/src/components/chat/ChatView.tsx#L61-L68)), otherwise **`NewChatScreen`** ([L69-78](frontend/src/components/chat/ChatView.tsx#L69-L78)).
+- [NewChatScreen.tsx:14-67](frontend/src/components/chat/NewChatScreen.tsx#L14-L67): the landing screen — the upload dropzone ([L29](frontend/src/components/chat/NewChatScreen.tsx#L29)), an error banner ([L31-36](frontend/src/components/chat/NewChatScreen.tsx#L31-L36)), and "continue with a document you've uploaded before" chips with a delete button on each ([L38-64](frontend/src/components/chat/NewChatScreen.tsx#L38-L64)); `e.stopPropagation()` at [L52](frontend/src/components/chat/NewChatScreen.tsx#L52) stops a delete click from also selecting the chip.
+- [types/chat.ts](frontend/src/types/chat.ts): `ChatSource` ([L1-4](frontend/src/types/chat.ts#L1-L4)), `ChatMessage` ([L6-11](frontend/src/types/chat.ts#L6-L11), with optional `isError`/`sources`), `SessionSummary` ([L13-21](frontend/src/types/chat.ts#L13-L21)).
+- [api/chat.ts `sendChatMessage`, L11-28](frontend/src/api/chat.ts#L11-L28): the original non-streaming call (`POST /chat`, JSON body). **The UI no longer uses it** (it uses the streaming call since Step 3.2F), but it's kept as the simple reference implementation.
+
+---
+
+## Step 2.4 — Memory
+
+**Files:** [schema.ts:45-54](src/db/schema.ts#L45-L54), [chatMessages.repository.ts](src/repositories/chatMessages.repository.ts), [chat.service.ts:98-109](src/services/chat.service.ts#L98-L109), [config.ts:7](src/config.ts#L7), [useChat.ts:109-110](frontend/src/hooks/useChat.ts#L109-L110).
+
+### Why we need it
+Without memory, "what about the next part?" means nothing — each request is independent. A chatbot feels like a chatbot because it remembers what you just said.
+
+### The idea
+The LLM itself remembers nothing. "Memory" = **we store every message, and replay the last few into each new prompt**.
+
+### How it works
+- **The table** — [schema.ts:45-54](src/db/schema.ts#L45-L54): `chat_messages(id, session_id, document_id, role, content, created_at)`. `session_id` groups messages into one conversation; `role` is `'user'` or `'assistant'`.
+- **Saving** — `insertMessage(sessionId, documentId, role, content)` — [chatMessages.repository.ts:16-23](src/repositories/chatMessages.repository.ts#L16-L23).
+- **Loading** — `getRecentMessages(sessionId, limit)` — [L29-41](src/repositories/chatMessages.repository.ts#L29-L41): selects the newest `limit` rows (`ORDER BY created_at DESC LIMIT n`), then **`.reverse()`** ([L40](src/repositories/chatMessages.repository.ts#L40)) so they read oldest-first, the order a conversation needs.
+- **The limit** — [`HISTORY_LIMIT = 8`, config.ts:7](src/config.ts#L7). You can't send unlimited history forever (cost + context-window limits), so it caps at the last 8. Real systems summarize older messages instead of dropping them (later topic).
+- **In the pipeline** — [chat.service.ts:98-109](src/services/chat.service.ts#L98-L109):
+  1. [L99](src/services/chat.service.ts#L99) load history **first**.
+  2. [L105](src/services/chat.service.ts#L105) *then* save the new user message.
+  3. [L107-109](src/services/chat.service.ts#L107-L109) build the prompt.
+  The order matters: history is loaded *before* the new message is saved, so the question isn't duplicated in the prompt (it's added separately as `New question:`), yet the *next* turn's history will include it.
+- **Assistant reply saved** after generation — [chat.routes.ts:27-28](src/routes/chat.routes.ts#L27-L28).
+- **Where `sessionId` comes from** — the frontend makes one with `crypto.randomUUID()` for a new thread ([useChat.ts:109-110](frontend/src/hooks/useChat.ts#L109-L110)) and reuses it for every message in that thread; the server falls back to its own `randomUUID()` if none is sent ([chat.routes.ts:14](src/routes/chat.routes.ts#L14)).
+
+### Verified how
+A real vague follow-up ("what's the first stage?" after discussing "3 pipelines") resolved correctly, and the rows were checked directly in Neon's `chat_messages` table.
+
+---
+
+## Step 2.5 — History + deletes
+
+**Files:** [chatMessages.repository.ts:5-13, 65-127](src/repositories/chatMessages.repository.ts), [sessions.routes.ts](src/routes/sessions.routes.ts), [documents.routes.ts:18-27](src/routes/documents.routes.ts#L18-L27), and most of the frontend.
+
+### Why we need it
+Step 2.4's frontend kept the `sessionId` only in React state, so **refreshing the tab started a new session** and orphaned the old conversation (the data was safe in Postgres, just unreachable). Also, nothing could be deleted.
+
+### Backend
+
+**There is no `sessions` table.** A session is just a `session_id` shared by a group of `chat_messages` rows, so the session list is **derived** from the messages.
+
+- **`listSessions()`** — [chatMessages.repository.ts:70-113](src/repositories/chatMessages.repository.ts#L70-L113):
+  1. [L71-80](src/repositories/chatMessages.repository.ts#L71-L80): read all messages, oldest first.
+  2. [L82-83](src/repositories/chatMessages.repository.ts#L82-L83): read documents to build a `documentId → filename` map.
+  3. [L85-108](src/repositories/chatMessages.repository.ts#L85-L108): walk the messages, one `Map` entry per `sessionId`. The **first** message seen creates the summary — its content becomes the `title` ([L95-97](src/repositories/chatMessages.repository.ts#L95-L97), the ChatGPT trick of naming a thread after your first message); every later message updates `lastMessage`, `lastMessageAt` and `messageCount`.
+  4. [L110-112](src/repositories/chatMessages.repository.ts#L110-L112): sort newest-activity-first.
+  Returns a `SessionSummary` ([L5-13](src/repositories/chatMessages.repository.ts#L5-L13)).
+- **`getMessagesForSession()`** — [L51-63](src/repositories/chatMessages.repository.ts#L51-L63): the full transcript, oldest first.
+- **Routes** — [sessions.routes.ts](src/routes/sessions.routes.ts): `GET /sessions` ([L10-13](src/routes/sessions.routes.ts#L10-L13)), `GET /sessions/:sessionId/messages` ([L15-18](src/routes/sessions.routes.ts#L15-L18)), `DELETE /sessions/:sessionId` ([L20-23](src/routes/sessions.routes.ts#L20-L23)).
+- **`deleteSession`** — [repository L116-118](src/repositories/chatMessages.repository.ts#L116-L118): deletes that conversation's messages; the document stays.
+- **`DELETE /documents/:documentId`** — [documents.routes.ts:21-27](src/routes/documents.routes.ts#L21-L27): deletes the chunks ([`deleteChunksByDocumentId`](src/repositories/chunks.repository.ts#L19-L21)), then every chat message for it ([`deleteMessagesByDocumentId`, L125-127](src/repositories/chatMessages.repository.ts#L125-L127)), then the document row ([`deleteDocument`](src/repositories/documents.repository.ts#L28-L30)) — so no rows are left pointing at a dead `document_id`.
+
+### Frontend
+
+**Sessions API + hook**
+- [api/sessions.ts](frontend/src/api/sessions.ts): `fetchSessions` ([L5-11](frontend/src/api/sessions.ts#L5-L11)), `fetchSessionMessages` ([L13-19](frontend/src/api/sessions.ts#L13-L19)), `deleteSession` ([L21-25](frontend/src/api/sessions.ts#L21-L25)).
+- [hooks/useSessions.ts](frontend/src/hooks/useSessions.ts): holds `sessions`; `refresh` ([L9-19](frontend/src/hooks/useSessions.ts#L9-L19), wrapped in `useCallback` so its identity is stable) reloads the list; [L21-24](frontend/src/hooks/useSessions.ts#L21-L24) loads it on mount; `deleteSession` ([L26-37](frontend/src/hooks/useSessions.ts#L26-L37)) removes it from state on success.
+
+**The heart: [hooks/useChat.ts](frontend/src/hooks/useChat.ts)** (chat state + the persistence trick)
+- State — [L15-20](frontend/src/hooks/useChat.ts#L15-L20): active session id, active document, messages, input text, loading flag, and `restoring`.
+- **Persistence, done right** — only the **active session id** goes into `localStorage` under `docmind:activeSessionId` ([L7](frontend/src/hooks/useChat.ts#L7)) — *never the messages*. On load ([L25-60](frontend/src/hooks/useChat.ts#L25-L60)): read the saved id → fetch `/sessions` **and** the transcript in parallel ([L34](frontend/src/hooks/useChat.ts#L34)) → cross-check the id against `/sessions` to recover which document it belongs to ([L36-42](frontend/src/hooks/useChat.ts#L36-L42); if it's gone, drop the stale id) → restore state ([L49-54](frontend/src/hooks/useChat.ts#L49-L54)). The source of truth stays the database; the browser just remembers *which* conversation was open.
+- `startNewChat` ([L62-69](frontend/src/hooks/useChat.ts#L62-L69)), `resetToWelcome` ([L71-77](frontend/src/hooks/useChat.ts#L71-L77)), `openSession` ([L79-96](frontend/src/hooks/useChat.ts#L79-L96)) — the three ways the active conversation changes.
+
+**Layout**
+- [App.tsx](frontend/src/App.tsx) is a **thin orchestrator**: it calls the three hooks ([L13-27](frontend/src/App.tsx#L13-L27)), holds sidebar open/collapsed flags ([L32-33](frontend/src/App.tsx#L32-L33)), defines handlers that connect them — `handleUpload` ([L35-44](frontend/src/App.tsx#L35-L44)), `handlePickDocument` ([L46-50](frontend/src/App.tsx#L46-L50)), `handleSelectSession` ([L52-56](frontend/src/App.tsx#L52-L56)), `handleNewChat` ([L58-62](frontend/src/App.tsx#L58-L62)) — and renders `<Sidebar>` + `<ChatView>` ([L99-134](frontend/src/App.tsx#L99-L134)).
+- **Deleting with a confirm step** — `handleDeleteDocument` ([L64-84](frontend/src/App.tsx#L64-L84)) and `handleDeleteSession` ([L86-97](frontend/src/App.tsx#L86-L97)) use `window.confirm` first; if the deleted item was the open one, they call `resetToWelcome()` (so you never stare at a dead conversation); deleting a document also calls `refreshSessions()` ([L81](frontend/src/App.tsx#L81)) because its sessions vanished server-side.
+- [components/sidebar/Sidebar.tsx:18-65](frontend/src/components/sidebar/Sidebar.tsx#L18-L65): brand + collapse toggle + "New chat" button + the history list; collapsed mode hides the labels/list ([L37](frontend/src/components/sidebar/Sidebar.tsx#L37), [L53](frontend/src/components/sidebar/Sidebar.tsx#L53), [L56-63](frontend/src/components/sidebar/Sidebar.tsx#L56-L63)).
+- [components/sidebar/HistoryList.tsx](frontend/src/components/sidebar/HistoryList.tsx): [`groupLabel` L11-22](frontend/src/components/sidebar/HistoryList.tsx#L11-L22) buckets a date into *Today / Yesterday / Previous 7 days / Older* by comparing calendar days; [L39-45](frontend/src/components/sidebar/HistoryList.tsx#L39-L45) groups the sessions; each item has a select button and a hover-revealed trash button ([L55-80](frontend/src/components/sidebar/HistoryList.tsx#L55-L80)); empty state at [L30-37](frontend/src/components/sidebar/HistoryList.tsx#L30-L37).
+- The old single 500+-line `App.tsx` was split into `api/`, `types/`, `hooks/`, `utils/`, `components/` — the layers in the [big-picture section](#0-the-big-picture).
+
+### Takeaway
+Persistence via **"remember the pointer, re-fetch the data"** — a refresh resumes the exact conversation, and the database remains the single source of truth.
+
+---
+
+# Phase 3 — Streaming
+
+**Why stream:** an LLM produces its answer word by word. Waiting for the *whole* answer before showing anything feels slow; showing words as they're generated feels instant. Streaming = send each piece as it's ready.
+
+---
+
+## Step 3.1 — SSE mechanics (`/tick`, now deleted)
+
+### Why we need it
+Before mixing streaming with the whole chat pipeline, learn the *transport* in isolation. This step built a throwaway endpoint, then it was deleted. To see the original code: `git show dfb1061:src/index.ts` (the commit that added it) and look for `/tick`. It was:
+
+```ts
+app.get('/tick', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  })
+
+  let count = 0
+  const interval = setInterval(() => {
+    count++
+    res.write(`data: tick ${count}\n\n`)
+    if (count >= 5) { clearInterval(interval); res.end() }
+  }, 1000)
+
+  req.on('close', () => clearInterval(interval))
+})
+```
+
+### What is SSE (Server-Sent Events)?
+A tiny protocol on top of ordinary HTTP: the server keeps the response **open** and writes text events into it over time. The browser reads them with the built-in **`EventSource`** API. It's one-directional (server → browser), which is exactly what "stream an answer" needs — simpler than WebSockets, and it works through normal HTTP.
+
+### The pieces
+- **Headers**: `Content-Type: text/event-stream` tells the browser "this is an event stream, don't wait for it to end"; `Cache-Control: no-cache` stops buffering/caching; `Connection: keep-alive` keeps the connection open.
+- **`res.write(...)` vs `res.json(...)`**: `res.json` sends everything and ends the response. `res.write` sends a piece and **leaves the response open**. `res.end()` closes it.
+- **Event format**: each event is lines of `field: value`, ended by a **blank line** (`\n\n`). The blank line is what separates events.
+  ```
+  data: tick 1
+
+  data: tick 2
+
+  ```
+  A named event adds an `event:` line: `event: done\ndata: {}\n\n`. An event with no name is the default "message" event.
+- **`req.on('close', …)`**: if the browser disconnects early, stop the timer; otherwise it would keep writing to a dead connection forever.
+
+### Takeaway
+Streaming is nothing more than "write pieces into a response that stays open, in the `data:…\n\n` format". Step 3.2 applies exactly this to the chat reply.
+
+---
+
+## Step 3.2 — Streaming the real chat reply
+
+**Files:** [chat.routes.ts:42-101](src/routes/chat.routes.ts#L42-L101) (`GET /chat-stream`), [llm.service.ts:24-73](src/services/llm.service.ts#L24-L73) (`streamAnswer`), [utils/errors.ts](src/utils/errors.ts), shared [chat.service.ts](src/services/chat.service.ts).
+
+### Why GET, not POST?
+The browser's `EventSource` can **only send GET requests**. So `/chat-stream` takes `documentId`, `message`, `sessionId` as **query parameters** ([chat.routes.ts:44-46](src/routes/chat.routes.ts#L44-L46)) instead of a JSON body. (Trade-off: the message ends up in the URL — see [§7](#7-known-limitations-honest-list).)
+
+### Part 1 — `streamAnswer()`: reading Gemini's stream — [llm.service.ts:29-73](src/services/llm.service.ts#L29-L73)
+
+It's an **async generator** (`async function*`): instead of returning one value, it **`yield`s many** values over time, and the caller loops over them with `for await`.
+
+- [L4-5](src/services/llm.service.ts#L4-L5): a different Gemini method, `streamGenerateContent` (there's no `stream: true` flag on `generateContent`).
+- [L30-36](src/services/llm.service.ts#L30-L36): POST with `?alt=sse` — that switches Gemini's reply to real SSE (`data: {json}\n\n`).
+- [L38-40](src/services/llm.service.ts#L38-L40): check `res.ok` and that a body exists.
+- [L42-44](src/services/llm.service.ts#L42-L44): `res.body.getReader()` gives raw byte chunks as they arrive; `TextDecoder` turns bytes into text; `buffer` accumulates text.
+- [L46-72](src/services/llm.service.ts#L46-L72): the read loop.
+  - [L48-49](src/services/llm.service.ts#L48-L49): `reader.read()` → `{ done, value }`; stop when `done`.
+  - [L55](src/services/llm.service.ts#L55): decode the bytes (`{ stream: true }` handles multi-byte characters split across chunks) and **normalize `\r\n` → `\n`**. Gemini ends SSE lines with `\r\n`, so without this the blank-line split below would never match. It's done on the *whole buffer* so a `\r\n` split across two network chunks is still caught. *(This was a real bug that was fixed.)*
+  - [L61-62](src/services/llm.service.ts#L61-L62): split on `\n\n` (event boundary). `events.pop()` takes the **last piece back into `buffer`** — it may be a *partial* event; network chunks don't end neatly on event boundaries.
+  - [L64-71](src/services/llm.service.ts#L64-L71): for each complete event: skip anything not starting with `data: `, `JSON.parse` the rest, pull `candidates[0].content.parts[0].text`, and `yield text`.
+
+### Part 2 — the route: writing our own SSE — [chat.routes.ts:42-101](src/routes/chat.routes.ts#L42-L101)
+
+Same 7-step pipeline as `/chat`, but steps 6–7 differ.
+
+1. **Steps 1–5** via the shared `prepareChat()` ([L50-51](src/routes/chat.routes.ts#L50-L51)). If it says `ok: false`, send a normal JSON `400/404` — **this must happen *before* `writeHead`**, because once SSE headers are sent, the status code can no longer change.
+2. **Open the stream** — [L57-61](src/routes/chat.routes.ts#L57-L61): `res.writeHead(200, { 'Content-Type': 'text/event-stream', … })`.
+3. **First event: `meta`** — [L62-67](src/routes/chat.routes.ts#L62-L67): sends `{ sessionId, sources }` *before any text*. The frontend needs the `sessionId` immediately (for a new thread) and can show the sources while the answer is still typing.
+4. **Stream the pieces** — [L69-77](src/routes/chat.routes.ts#L69-L77): `for await (const piece of streamAnswer(prompt))` → append to `fullAnswer` and `res.write('data: {"text": piece}\n\n')`. We keep `fullAnswer` so we can save the *complete* reply afterwards.
+5. **Save the reply** — [L88-95](src/routes/chat.routes.ts#L88-L95): `insertMessage(..., 'assistant', fullAnswer)` in its own `try/catch`. The user already has the full answer by now, so a failed save is **logged but not sent as an error**.
+6. **Finish** — [L97-98](src/routes/chat.routes.ts#L97-L98): `event: done` then `res.end()`.
+
+**The event protocol** (the frontend depends on this exactly):
+
+| Event | Payload | When |
+|---|---|---|
+| `meta` (named) | `{ sessionId, sources }` | once, first |
+| *(unnamed `data:`)* | `{ text }` | once per piece |
+| `done` (named) | `{}` | after the reply is saved |
+| `error` (named) | `{ error }` | on failure |
+
+What the wire looks like:
+```
+event: meta
+data: {"sessionId":"…","sources":[{"content":"…","distance":0.31}, …]}
+
+data: {"text":"RAG is a "}
+
+data: {"text":"technique that…"}
+
+event: done
+data: {}
+```
+
+### Part 3 — three places errors can happen
+1. **Before the stream opens** (embedding/search/DB fails): [`withErrorHandling(..., { sse: true })`, errors.ts:36-64](src/utils/errors.ts#L36-L64) catches it. Because `EventSource` **can't read the body of a non-200 response** (it only sees "connection error"), the handler sends a real `event: error` frame with status 200 ([L50-56](src/utils/errors.ts#L50-L56)).
+2. **Mid-stream** (Gemini drops): the `catch` at [chat.routes.ts:78-83](src/routes/chat.routes.ts#L78-L83) writes an `event: error` frame, ends, and logs.
+3. **Saving the reply fails**: logged only, stream still ends with `done` ([L91-95](src/routes/chat.routes.ts#L91-L95)).
+
+### Takeaway
+SSE = headers + `res.write` in the `data:…\n\n` format. The two subtle parts are *parsing Gemini's byte stream correctly* (buffering partial events, `\r\n`) and *reporting errors in-band* (since a stream can't change its status code after it starts).
+
+---
+
+## Step 3.2F — Streaming in the frontend
+
+**Files:** [api/chat.ts:30-90](frontend/src/api/chat.ts#L30-L90), [hooks/useChat.ts:98-175](frontend/src/hooks/useChat.ts#L98-L175), [ChatPanel.tsx](frontend/src/components/chat/ChatPanel.tsx).
+
+### `streamChatMessage()` — the `EventSource` wrapper, [api/chat.ts:40-90](frontend/src/api/chat.ts#L40-L90)
+- [L46-49](frontend/src/api/chat.ts#L46-L49): builds the URL with `URLSearchParams` (which also URL-encodes the message safely).
+- [L53](frontend/src/api/chat.ts#L53): `new EventSource(url)` opens the connection.
+- Four listeners map SSE events to callbacks (`StreamHandlers`, [L30-35](frontend/src/api/chat.ts#L30-L35)):
+  - `meta` → [L55-59](frontend/src/api/chat.ts#L55-L59) → `onMeta`
+  - default `message` → [L61-64](frontend/src/api/chat.ts#L61-L64) (`source.onmessage`) → `onChunk(text)`
+  - `done` → [L66-70](frontend/src/api/chat.ts#L66-L70) → `onDone`, then `source.close()`
+  - `error` → [L76-87](frontend/src/api/chat.ts#L76-L87). The native `error` event fires both for our own `event: error` frames (**has `e.data`**) and for plain connection failures (**no `e.data`**) — the code handles the two cases with different messages.
+- **Why `source.close()` matters (it's easy to miss):** `EventSource` **automatically reconnects** when a connection ends. If we didn't close on `done`/`error`, the browser would re-issue the GET and **send the same question again**. Closing stops that.
+- [L89](frontend/src/api/chat.ts#L89): returns a cleanup function that closes the connection.
+
+### `sendMessage()` — [useChat.ts:98-175](frontend/src/hooks/useChat.ts#L98-L175)
+- [L99-106](frontend/src/hooks/useChat.ts#L99-L106): ignore empty messages, no active document, or a reply already in flight.
+- [L108-110](frontend/src/hooks/useChat.ts#L108-L110): `isNewSession` and the `sessionId` (existing, or a fresh `crypto.randomUUID()`).
+- [L117-119](frontend/src/hooks/useChat.ts#L117-L119): **optimistically** show the user's message right away, clear the input, set loading.
+- [L125-133](frontend/src/hooks/useChat.ts#L125-L133) `appendToAssistantBubble`: grows the last assistant message by each piece. **It's written as a pure function of `prev`** — "the bubble being streamed into is the last message in the array" — never a variable mutated inside the callback. In dev, React StrictMode calls state updaters twice with the same input to catch impure code; a mutated variable would double-append text.
+- [L135-174](frontend/src/hooks/useChat.ts#L135-L174): wraps the callback-style stream in a `Promise` so `await sendMessage()` completes when the stream ends.
+  - `onMeta` ([L137-150](frontend/src/hooks/useChat.ts#L137-L150)): for a new thread, save the session id (state + `localStorage`); add an **empty** assistant bubble with its `sources` already attached.
+  - `onChunk` ([L151](frontend/src/hooks/useChat.ts#L151)): append text.
+  - `onDone` ([L152-157](frontend/src/hooks/useChat.ts#L152-L157)): refresh the sidebar list (`onMessageSent` = `refreshSessions`), stop loading, resolve.
+  - `onError` ([L158-172](frontend/src/hooks/useChat.ts#L158-L172)): stop loading; if the empty placeholder is still the last message, **replace** it with the error bubble instead of leaving a blank bubble above it.
+
+### `ChatPanel` polish — [ChatPanel.tsx](frontend/src/components/chat/ChatPanel.tsx)
+- [L21](frontend/src/components/chat/ChatPanel.tsx#L21) `streamingStarted`: true once the assistant bubble has real text. Until then (retrieval + first token) the "Thinking…" bubble stays ([L44](frontend/src/components/chat/ChatPanel.tsx#L44)).
+- [L35-41](frontend/src/components/chat/ChatPanel.tsx#L35-L41): the empty placeholder is **not rendered**, so you never see a blank bubble beside "Thinking…".
+- [L23-27](frontend/src/components/chat/ChatPanel.tsx#L23-L27): auto-scroll follows the reply as it *grows* (depends on the last message's length, not just the count), using instant scroll while streaming and smooth otherwise.
+
+### Result
+The reply types out word by word in the chat bubble, sources appear immediately, the sidebar updates when it finishes, and history still works on the next turn.
+
+---
+
+## 5. Cross-cutting: errors, logging, and the backend restructure
+
+### Error handling on the backend — [utils/errors.ts](src/utils/errors.ts)
+Every chat step talks to the network (Gemini, Neon) and can fail on a bad connection. Without handling, that becomes a bare `500` and the real cause is buried in a stack trace.
+- **`withErrorHandling(label, handler, { sse })`** — [L36-64](src/utils/errors.ts#L36-L64): wraps a route handler in `try/catch`. On failure it logs the real cause to the terminal and sends the client a clear message ([config.ts:18-19](src/config.ts#L18-L19)): a plain route → `503 { error }`; a stream route → an `event: error` frame. If headers were already sent it just ends the response.
+- **`summarizeError(err)`** — [L16-34](src/utils/errors.ts#L16-L34): Drizzle's failed-query errors embed the SQL **and every bound parameter** — for a vector search that's all 3072 numbers, drowning the real reason. This prints only: the first line of the message, the chain of `cause`s (where `ECONNRESET` etc. live), and the first stack frame inside *our* code (`where: …`). Never `console.error(err)` raw in a route.
+- **Where it's applied:** only `/chat` and `/chat-stream`. The upload and the read/delete routes are *not* wrapped (pre-existing behavior; Express's default handler answers those). Also note: a wrong API key currently shows the "check your internet connection" message, because the wrapper doesn't distinguish failure types.
+
+### Frontend logger
+[utils/logger.ts](frontend/src/utils/logger.ts): `log.info/warn/error(scope, …)` prints `[DocMind:<scope>]` in colour. Filter the browser console by `[DocMind:` (or `[DocMind:useChat]`) to trace upload → chat → session flow. Toggle everything with `ENABLED` ([L4](frontend/src/utils/logger.ts#L4)).
+
+### The backend restructure (`index.ts` 449 lines → 7)
+The original `index.ts` held setup, helpers, error handling, and every route. It was split with **no behavior change**:
+
+| Old (inside `index.ts`) | Now |
+|---|---|
+| server start | [index.ts:5-7](src/index.ts#L5-L7) |
+| `express()`, `json`, `cors`, `GET /`, mounting | [app.ts](src/app.ts) (no `listen`, so tests can import it) |
+| `HISTORY_LIMIT`, `PORT`, CORS origin, error message | [config.ts](src/config.ts) |
+| `chunkText` | [utils/chunkText.ts](src/utils/chunkText.ts) |
+| `summarizeError`, `withErrorHandling` | [utils/errors.ts](src/utils/errors.ts) |
+| `buildChatPrompt` + chat steps 1–5 (duplicated in `/chat` and `/chat-stream`) | [chat.service.ts](src/services/chat.service.ts) (`prepareChat`, one copy) |
+| upload steps 2–5 | [ingestion.service.ts](src/services/ingestion.service.ts) (`ingestPdf`) |
+| `/documents`, `/upload` | [documents.routes.ts](src/routes/documents.routes.ts) |
+| `/sessions…` | [sessions.routes.ts](src/routes/sessions.routes.ts) |
+| `/chat`, `/chat-stream` | [chat.routes.ts](src/routes/chat.routes.ts) |
+
+Why: the chat code was duplicated (Step 3.3 would have meant editing it twice), the upload logic needs to be a plain function for the future background worker (Phase 6), and tests need the app without opening a port.
+
+---
+
+## 6. One chat message, end to end
+
+Follow a single message from the keyboard to the screen (streaming version):
+
+1. **You type and press send.** [ChatInputForm.tsx:12-17](frontend/src/components/chat/ChatInputForm.tsx#L12-L17) trims it and calls `onSubmit` → `App` passes `sendMessage` from [useChat.ts:98](frontend/src/hooks/useChat.ts#L98).
+2. **The user bubble appears immediately** ([useChat.ts:117](frontend/src/hooks/useChat.ts#L117)); loading = true → "Thinking…" ([ChatPanel.tsx:44](frontend/src/components/chat/ChatPanel.tsx#L44)).
+3. **`EventSource` opens** `GET /chat-stream?documentId=…&message=…&sessionId=…` ([api/chat.ts:46-53](frontend/src/api/chat.ts#L46-L53)). The browser first checks CORS ([app.ts:17-21](src/app.ts#L17-L21)).
+4. **Express routes it** — [app.ts:32](src/app.ts#L32) mounts `chatRouter`; [chat.routes.ts:42](src/routes/chat.routes.ts#L42) handles it inside `withErrorHandling`.
+5. **`prepareChat()`** ([chat.service.ts:57](src/services/chat.service.ts#L57)):
+   - validates input → [embeddings.service.ts](src/services/embeddings.service.ts) calls Gemini to embed the question →
+   - [`searchSimilar`](src/repositories/chunks.repository.ts#L25-L41) runs the pgvector `<=>` query on Neon → top 3 chunks →
+   - [`getRecentMessages`](src/repositories/chatMessages.repository.ts#L29-L41) loads the last 8 messages →
+   - [`insertMessage`](src/repositories/chatMessages.repository.ts#L16-L23) saves your message →
+   - [`buildChatPrompt`](src/services/chat.service.ts#L15-L37) assembles context + history + question.
+6. **SSE opens**; `meta` (session id + sources) is sent ([chat.routes.ts:57-67](src/routes/chat.routes.ts#L57-L67)). The frontend adds the empty assistant bubble with sources ([useChat.ts:137-150](frontend/src/hooks/useChat.ts#L137-L150)).
+7. **[`streamAnswer`](src/services/llm.service.ts#L29-L73)** calls Gemini's streaming endpoint; each parsed piece is `yield`ed, and the route writes it as `data: {"text": …}` ([chat.routes.ts:74-77](src/routes/chat.routes.ts#L74-L77)).
+8. **Each piece reaches `onmessage`** ([api/chat.ts:61-64](frontend/src/api/chat.ts#L61-L64)) → `appendToAssistantBubble` → React re-renders; the bubble grows and the view scrolls ([ChatPanel.tsx:23-27](frontend/src/components/chat/ChatPanel.tsx#L23-L27)).
+9. **The stream ends**: the server saves the full reply ([chat.routes.ts:88-95](src/routes/chat.routes.ts#L88-L95)) and sends `event: done`; the browser closes the connection and `onDone` refreshes the sidebar ([useChat.ts:152-157](frontend/src/hooks/useChat.ts#L152-L157)).
+
+Along the way, the backend terminal shows the colourful `[1/7] … [7/7]` trace, and the browser console shows `[DocMind:…]` lines.
+
+---
+
+## 7. Known limitations (honest list)
+
+Things that work but are deliberately simple — good to know, and several are future roadmap steps.
+
+- **Uploads embed chunks one at a time**, so big PDFs are slow → Phase 6 (BullMQ background jobs).
+- **`chunkText` is naive** (fixed 500 words, no overlap, flattens newlines) → advanced chunking topic.
+- **Search has no vector index**, so it compares against every chunk → fine now, see INDEXING-AT-SCALE for later.
+- **A chat is pinned to one document.** `searchSimilar` requires a `documentId` and `chat_messages.document_id` is `NOT NULL` → Step 3.3 (multi-document chat) loosens both, in [`prepareChat`](src/services/chat.service.ts#L57-L118).
+- **`listSessions()` loads *every* message** of every session and reduces them in JavaScript ([repository L70-113](src/repositories/chatMessages.repository.ts#L70-L113)) — fine for a learning project, wasteful at scale.
+- **`/chat-stream` puts the user's message in the URL** (because `EventSource` is GET-only): it can appear in server logs, and very long messages could hit URL length limits.
+- **The Gemini API key is sent in the URL** (`?key=`). Gemini also accepts it in an `x-goog-api-key` header, which keeps it out of URLs and logs.
+- **The upload's PDF check trusts the client's mimetype** ([documents.routes.ts:40](src/routes/documents.routes.ts#L40)).
+- **Errors are terminal-only** — writing them to a file (`logs/errors.log`) was discussed and intentionally deferred.
+- **No automated tests yet** (Phase 9).
+- **Don't re-run `npm run step2` / `step3` against the real database** — they drop/clear the `chunks` table (see the warnings in Phase 1).
+
+---
+
+## 8. Glossary
+
+- **Embedding** — a list of numbers (3072 here) representing a piece of text's meaning.
+- **Vector** — that list of numbers; "vector" and "embedding" are used interchangeably here.
+- **Cosine similarity / distance** — how alike two vectors are, by angle. Distance = 1 − similarity; smaller distance = closer meaning.
+- **pgvector** — Postgres extension adding the `vector` type and operators like `<=>`.
+- **Chunk** — a ~500-word slice of a PDF's text, embedded and stored as one row.
+- **RAG** — Retrieval-Augmented Generation: retrieve relevant chunks, put them in the prompt, then generate.
+- **Session** — one conversation: all `chat_messages` rows sharing a `session_id`.
+- **Repository** — a module whose only job is database access.
+- **Service** — a module that does the real work and never touches `req`/`res`.
+- **Route** — Express handler that reads the request and writes the response.
+- **Multer** — Express middleware for file uploads.
+- **CORS** — browser rule that blocks cross-origin requests unless the server allows them.
+- **SSE** — Server-Sent Events: a server keeps an HTTP response open and writes `data:…` events into it.
+- **`EventSource`** — the browser API that consumes SSE (GET-only, auto-reconnects).
+- **Async generator** — an `async function*` that `yield`s values over time; consumed with `for await`.
+- **StrictMode** — React dev mode that double-invokes some code to expose impure logic.
+- **Optimistic update** — showing the result in the UI *before* the server confirms (the user's message bubble).
