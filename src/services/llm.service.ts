@@ -48,7 +48,10 @@ export async function* streamAnswer(prompt: string): AsyncGenerator<string> {
     const { done, value } = await reader.read()
     if (done) break
 
-    buffer += decoder.decode(value, { stream: true })
+    // Gemini terminates SSE lines with \r\n — normalize to \n so the
+    // blank-line split below matches (done on the whole buffer so a \r\n
+    // split across two chunks is still caught).
+    buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n')
 
     // SSE events are separated by a blank line — process every complete
     // one currently in the buffer, keep any trailing partial event for

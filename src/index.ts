@@ -158,7 +158,71 @@ app.delete('/sessions/:sessionId', async (req, res) => {
   res.json({ deleted: req.params.sessionId })
 })
 
-app.post('/chat', async (req, res) => {
+// Every chat step talks to something over the network (Gemini, Neon), and any
+// of them can fail on a weak/dropped connection. Without this, the rejection
+// escapes as a bare "500 Internal Server Error" and the real cause is only
+// visible as a stack trace. This logs the real error to the terminal and gives
+// the client a clear message instead. If a stream already started (headers
+// sent, so the status can no longer change), it closes the stream cleanly.
+const CONNECTION_ERROR_MESSAGE =
+  'Could not reach Gemini or the database — check your internet connection and try again.'
+
+// Drizzle's failed-query errors carry the SQL *and every bound parameter* in
+// their message — for a vector search that's all 3072 embedding numbers, which
+// buries the real reason. Print just: the first line of the message, the chain
+// of underlying causes (where the real reason lives, e.g. ECONNRESET), and the
+// first stack frame inside our own code.
+function summarizeError(err: unknown): string {
+  const clip = (s: string, max = 200) => (s.length > max ? `${s.slice(0, max)}…` : s)
+  const lines: string[] = []
+
+  let current: unknown = err
+  for (let depth = 0; current && depth < 5; depth++) {
+    const e = current as { message?: string; code?: string; cause?: unknown }
+    const message = clip(String(e.message ?? current).split('\n')[0])
+    lines.push(`${depth === 0 ? '' : '  ← caused by: '}${message}${e.code ? ` (code: ${e.code})` : ''}`)
+    current = e.cause
+  }
+
+  const frame = String((err as { stack?: string })?.stack ?? '')
+    .split('\n')
+    .find((l) => l.includes('    at ') && !l.includes('node_modules') && !l.includes('node:internal'))
+  if (frame) lines.push(`  where: ${frame.trim().replace(/^at /, '')}`)
+
+  return lines.length > 0 ? lines.join('\n') : String(err)
+}
+
+function withErrorHandling(
+  label: string,
+  handler: (req: express.Request, res: express.Response) => Promise<unknown>,
+  { sse = false } = {},
+) {
+  return async (req: express.Request, res: express.Response) => {
+    try {
+      await handler(req, res)
+    } catch (err) {
+      console.error(`[${label}] failed: ${summarizeError(err)}`)
+      // EventSource can't read the body of a non-200 response (it only sees
+      // "connection error"), so for the stream route the error goes out as a
+      // real SSE `event: error` frame, which the frontend already displays.
+      if (sse) {
+        if (!res.headersSent) {
+          res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
+        }
+        if (!res.writableEnded) {
+          res.write(`event: error\ndata: ${JSON.stringify({ error: CONNECTION_ERROR_MESSAGE })}\n\n`)
+          res.end()
+        }
+      } else if (!res.headersSent) {
+        res.status(503).json({ error: CONNECTION_ERROR_MESSAGE })
+      } else if (!res.writableEnded) {
+        res.end()
+      }
+    }
+  }
+}
+
+app.post('/chat', withErrorHandling('POST /chat', async (req, res) => {
   const t0 = Date.now()
   const { documentId, message } = req.body
   const sessionId: string = req.body.sessionId || randomUUID()
@@ -229,12 +293,12 @@ app.post('/chat', async (req, res) => {
     answer,
     sources: relevantChunks.map((c) => ({ content: c.content, distance: c.distance })),
   })
-})
+}))
 
 // Step 3.2 — same pipeline as /chat, but the reply arrives piece by piece.
 // GET + query params, not POST + JSON body — EventSource (what the browser
 // uses to consume SSE) can only send GET requests.
-app.get('/chat-stream', async (req, res) => {
+app.get('/chat-stream', withErrorHandling('GET /chat-stream', async (req, res) => {
   const t0 = Date.now()
   const documentId = req.query.documentId
   const message = req.query.message
@@ -315,7 +379,7 @@ app.get('/chat-stream', async (req, res) => {
   } catch (err) {
     res.write(`event: error\ndata: ${JSON.stringify({ error: 'Streaming failed' })}\n\n`)
     res.end()
-    console.error('streamAnswer error:', err)
+    console.error(`[GET /chat-stream] streamAnswer failed: ${summarizeError(err)}`)
     return
   }
 
@@ -323,13 +387,19 @@ app.get('/chat-stream', async (req, res) => {
   preview('answer', fullAnswer, 150)
 
   step('chat', 7, 7, 'Saving assistant reply to history')
-  await insertMessage(sessionId, documentId, 'assistant', fullAnswer)
+  // The user already has the full answer by now, so a failed save must not
+  // turn into an error event — log it and still finish the stream.
+  try {
+    await insertMessage(sessionId, documentId, 'assistant', fullAnswer)
+  } catch (err) {
+    console.error(`[GET /chat-stream] could not save assistant reply: ${summarizeError(err)}`)
+  }
 
   res.write(`event: done\ndata: {}\n\n`)
   res.end()
 
   pipelineEnd('chat', Date.now() - t0)
-})
+}, { sse: true }))
 
 app.post('/upload', upload.single('file'), async (req, res) => {
   const t0 = Date.now()
