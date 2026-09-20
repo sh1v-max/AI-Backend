@@ -18,7 +18,10 @@ export function ChatSources({ sources }: ChatSourcesProps) {
       <div className="sources-list">
         {sources.map((s, i) => (
           <div key={i} className="source-card">
-            <span className="source-distance">distance {s.distance.toFixed(3)}</span>
+            <div className="source-meta">
+              {s.filename && <span className="source-file">{s.filename}</span>}
+              <span className="source-distance">distance {s.distance.toFixed(3)}</span>
+            </div>
             <p className="source-content">{s.content.slice(0, 220)}…</p>
           </div>
         ))}

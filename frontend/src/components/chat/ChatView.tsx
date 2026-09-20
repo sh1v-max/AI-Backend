@@ -3,6 +3,7 @@ import { IconButton } from '../common/IconButton'
 import { ChatPanel } from './ChatPanel'
 import { NewChatScreen } from './NewChatScreen'
 import type { ChatMessage } from '../../types/chat'
+import { ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL } from '../../types/document'
 import type { UploadedDocument, UploadStatus } from '../../types/document'
 
 interface ChatViewProps {
@@ -19,6 +20,8 @@ interface ChatViewProps {
   uploadError: string | null
   onUpload: (file: File) => void
   onPickDocument: (doc: UploadedDocument) => void
+  onPickAll: () => void
+  onChangeScope: (documentId: string) => void
   onDeleteDocument: (doc: UploadedDocument) => void
 }
 
@@ -36,6 +39,8 @@ export function ChatView({
   uploadError,
   onUpload,
   onPickDocument,
+  onPickAll,
+  onChangeScope,
   onDeleteDocument,
 }: ChatViewProps) {
   return (
@@ -46,7 +51,28 @@ export function ChatView({
         </IconButton>
 
         <div className="chat-main-title">
-          {activeDocument ? (
+          {activeDocument && documents.length > 1 ? (
+            // Step 3.3 — the scope toggle. A conversation's scope is fixed once
+            // it starts (its messages are saved against one documentId), so
+            // picking a different one starts a fresh chat; the old one stays
+            // in the sidebar history.
+            <label className="scope-select">
+              <span className="scope-select-label">Searching in</span>
+              <select
+                value={activeDocument.documentId}
+                onChange={(e) => onChangeScope(e.target.value)}
+                title="Switching starts a new chat"
+                aria-label="Which documents to search"
+              >
+                <option value={ALL_DOCUMENTS}>{ALL_DOCUMENTS_LABEL}</option>
+                {documents.map((doc) => (
+                  <option key={doc.documentId} value={doc.documentId}>
+                    {doc.filename}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : activeDocument ? (
             <span className="chat-main-subtitle">{activeDocument.filename}</span>
           ) : (
             <span className="chat-main-subtitle chat-main-subtitle--muted">New chat</span>
@@ -73,6 +99,7 @@ export function ChatView({
           uploadError={uploadError}
           onUpload={onUpload}
           onPickDocument={onPickDocument}
+          onPickAll={onPickAll}
           onDeleteDocument={onDeleteDocument}
         />
       )}

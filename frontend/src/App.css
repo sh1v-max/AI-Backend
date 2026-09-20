@@ -262,6 +262,44 @@
   font-weight: 400;
 }
 
+/* Step 3.3 — "Searching in [All documents ▾]" scope dropdown in the chat header */
+.scope-select {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+}
+
+.scope-select-label {
+  font-size: 12px;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.scope-select select {
+  min-width: 0;
+  max-width: 260px;
+  padding: 4px var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-foreground);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+
+.scope-select select:hover {
+  border-color: var(--color-accent);
+}
+
+.scope-select select:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 1px;
+}
+
 .chat-restoring {
   flex: 1;
   display: flex;
@@ -332,6 +370,17 @@
 .doc-chip:hover {
   border-color: var(--color-accent);
   background: var(--color-accent-bg);
+}
+
+/* Step 3.3 — the "All documents" chip is the default choice, so it's tinted */
+.doc-chip--all {
+  border-color: var(--color-accent);
+  background: var(--color-accent-bg);
+}
+
+.doc-chip--all .doc-chip-button {
+  padding-right: var(--space-3);
+  font-weight: 500;
 }
 
 .doc-chip-button {
@@ -532,9 +581,24 @@
   background: var(--color-surface);
 }
 
+/* Step 3.3 — filename + distance on one line above each source's text */
+.source-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: 4px;
+}
+
+.source-file {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-foreground);
+  overflow-wrap: anywhere;
+}
+
 .source-distance {
   display: inline-block;
-  margin-bottom: 4px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;

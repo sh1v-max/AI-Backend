@@ -1,4 +1,4 @@
-import { FileText, TrashSimple, XCircle } from '@phosphor-icons/react'
+import { Files, FileText, TrashSimple, XCircle } from '@phosphor-icons/react'
 import { UploadDropzone } from '../documents/UploadDropzone'
 import type { UploadedDocument, UploadStatus } from '../../types/document'
 
@@ -8,6 +8,7 @@ interface NewChatScreenProps {
   uploadError: string | null
   onUpload: (file: File) => void
   onPickDocument: (doc: UploadedDocument) => void
+  onPickAll: () => void
   onDeleteDocument: (doc: UploadedDocument) => void
 }
 
@@ -17,6 +18,7 @@ export function NewChatScreen({
   uploadError,
   onUpload,
   onPickDocument,
+  onPickAll,
   onDeleteDocument,
 }: NewChatScreenProps) {
   return (
@@ -39,6 +41,16 @@ export function NewChatScreen({
         <div className="new-chat-recent">
           <span className="new-chat-recent-label">Or continue with a document you've uploaded before</span>
           <div className="doc-chip-row">
+            {/* Step 3.3 — the default scope: search every document at once.
+                Only worth offering when there's more than one to search. */}
+            {documents.length > 1 && (
+              <div className="doc-chip doc-chip--all">
+                <button type="button" className="doc-chip-button" onClick={onPickAll}>
+                  <Files size={14} weight="regular" aria-hidden />
+                  All documents ({documents.length})
+                </button>
+              </div>
+            )}
             {documents.map((doc) => (
               <div key={doc.documentId} className="doc-chip">
                 <button type="button" className="doc-chip-button" onClick={() => onPickDocument(doc)}>
