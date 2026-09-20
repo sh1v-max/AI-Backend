@@ -101,32 +101,6 @@ app.get('/', (_req, res) => {
   })
 })
 
-// Step 3.1 — throwaway. Just the SSE mechanics in isolation: headers,
-// res.write() per event, res.end() when done. Delete once understood —
-// this has nothing to do with DocMind itself.
-app.get('/tick', (req, res) => {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  })
-
-  let count = 0
-  const interval = setInterval(() => {
-    count++
-    res.write(`data: tick ${count}\n\n`)
-
-    if (count >= 5) {
-      clearInterval(interval)
-      res.end()
-    }
-  }, 1000)
-
-  // If the client disconnects early (closes the tab), stop the interval —
-  // otherwise it keeps running server-side forever, writing to a dead connection.
-  req.on('close', () => clearInterval(interval))
-})
-
 app.get('/documents', async (_req, res) => {
   const docs = await listDocuments()
   res.json(docs)
