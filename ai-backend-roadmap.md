@@ -92,16 +92,20 @@ No auth, no queues, no multi-step agents, no deployment pressure. Just enough to
 
 ## Phase 3 — Streaming (1 day, ~5 hrs)
 
-**Step 3.1 — SSE basics, isolated (2h)**
+**Step 3.1 — SSE basics, isolated (2h)** ✅ *done — see `project_building_workthrough.md`*
 - Watch: [Crash Course: SSE with Express.js & EventSource (YouTube)](https://www.youtube.com/watch?v=ieUsuDsQY0o)
 - Build: a throwaway `/tick` endpoint that streams "tick 1, tick 2, tick 3..." one per second using `res.write()`. Don't touch your real project yet — just get comfortable with the mechanics (headers, `res.write`, keeping the connection open).
+- Built as `GET /tick` (5 ticks, then `res.end()`), with `req.on('close')` to stop the interval if the client disconnects. Deleted from `src/index.ts` once understood — it was scaffolding, not part of DocMind.
 
-**Step 3.2 — Stream the real chat reply (3h)**
+**Step 3.2 — Stream the real chat reply (3h)** ✅ *done — see `project_building_workthrough.md`*
 - Learn: [Gemini API docs – Text generation & streaming](https://ai.google.dev/gemini-api/docs/text-generation) — the same page, look for `stream: true` — it returns pieces of the answer as they're generated instead of the whole thing at once
 - Build: `GET /chat-stream?sessionId=...&documentId=...&message=...` — same logic as `/chat` (including pulling history), but instead of waiting for the full reply, write each streamed piece to the response as it arrives using the SSE format you just learned. Still save the complete reply to `chat_messages` once the stream finishes, so history stays intact for the next turn.
 - Test it by opening the URL directly in a browser tab and watching the words appear.
+- How it turned out: Gemini's REST API has no `stream: true` flag here — streaming is a different method, `streamGenerateContent?alt=sse`, wrapped as an `async function*` called `streamAnswer()` in `llm.service.ts` that reads the raw byte stream, splits on blank-line event boundaries and `yield`s each piece of text. `/chat-stream` sends a `meta` event first (`sessionId` + sources), then unnamed `data: {"text": ...}` events, then `done` (or `error`). The prompt was pulled into a shared `buildChatPrompt()` used by both `/chat` and `/chat-stream`. It's GET because `EventSource` can only send GET.
+- Also added: `withErrorHandling()` around both chat routes (clear `503` message, or an `event: error` frame on the stream route, plus a readable one-block error summary in the terminal) so a dropped connection to Gemini/Neon no longer shows up as a bare `500`.
+- Frontend (Step 3.2F): `streamChatMessage()` in `api/chat.ts` (an `EventSource` wrapper) replaced the `fetch` call inside `useChat`, so the reply now types out in the chat bubble.
 
-**Step 3.3 — Multi-document chat: "all PDFs" as the default, single-PDF as the override (~3h)** *(planned — build right after 3.1/3.2 are done)*
+**Step 3.3 — Multi-document chat: "all PDFs" as the default, single-PDF as the override (~3h)** ✅ *done — see `project_building_workthrough.md`*
 - Problem: right now every chat session is pinned to exactly one `documentId`. The goal is to default to searching across *every* uploaded document, while still allowing a chat scoped to just one.
 - Why it's a small change, not a new phase: `searchSimilar(embedding, limit, documentId)` in `chunks.repository.ts` already does a cosine-distance scan filtered by `documentId` — no schema migration needed, just make that filter optional.
   - `searchSimilar(embedding, limit, documentId?: string)` — omit `documentId` to scan all chunks.
@@ -111,6 +115,7 @@ No auth, no queues, no multi-step agents, no deployment pressure. Just enough to
 - The one real tradeoff: searching everything dilutes relevance if you have many unrelated PDFs — top-K might span 3 documents instead of the one you meant. Citing sources per-chunk is the mitigation, not a full fix; if it's not good enough in practice, revisit with a query-classification/routing step (this is exactly what Phase B's "vector-based intent routing" already teaches, just applied to document selection instead of intent).
 - Schema note: `chatMessages.documentId` is `NOT NULL` today — an "all documents" session needs that to become nullable (or use a sentinel like `'all'`), since a session is no longer guaranteed to be about one document.
 - Frontend: a toggle in the chat header — "All documents" (default) vs. picking one specific document — rather than a separate screen/flow.
+- **How it turned out:** the sentinel option was chosen (`'all'` stored in the existing `NOT NULL` column, no table change). `searchSimilar` returns `documentId` + `filename` via a `LEFT JOIN documents`, and all-documents mode adds `documents.id IS NOT NULL` so orphan chunks with no `documents` row can't leak into answers. The header toggle is a `<select>`; since a session's scope is fixed by the `documentId` on its messages, changing it starts a new chat. The dilution tradeoff above is real: a vague/"meta" question ("which documents do you have?") only sees the nearest 3 chunks, often from a single file.
 
 ---
 

@@ -5,6 +5,7 @@ import { useDocuments } from './hooks/useDocuments'
 import { useSessions } from './hooks/useSessions'
 import { useChat } from './hooks/useChat'
 import { log } from './utils/logger'
+import { ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL } from './types/document'
 import type { UploadedDocument } from './types/document'
 import type { SessionSummary } from './types/chat'
 import './App.css'
@@ -47,6 +48,25 @@ function App() {
     log.info('App', `[action] picked existing document — "${doc.filename}" (${doc.documentId})`)
     startNewChat(doc.documentId, doc.filename)
     setMobileSidebarOpen(false)
+  }
+
+  // Step 3.3 — start a chat that searches every uploaded document.
+  function handlePickAll() {
+    log.info('App', '[action] picked "All documents"')
+    startNewChat(ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL)
+    setMobileSidebarOpen(false)
+  }
+
+  // Step 3.3 — the header's scope dropdown. A conversation's scope is fixed
+  // when it starts, so switching begins a new chat (the old one stays in history).
+  function handleChangeScope(documentId: string) {
+    log.info('App', `[action] scope changed to ${documentId}`)
+    if (documentId === ALL_DOCUMENTS) {
+      startNewChat(ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL)
+      return
+    }
+    const doc = documents.find((d) => d.documentId === documentId)
+    if (doc) startNewChat(doc.documentId, doc.filename)
   }
 
   function handleSelectSession(session: (typeof sessions)[number]) {
@@ -128,6 +148,8 @@ function App() {
         uploadError={error}
         onUpload={handleUpload}
         onPickDocument={handlePickDocument}
+        onPickAll={handlePickAll}
+        onChangeScope={handleChangeScope}
         onDeleteDocument={handleDeleteDocument}
       />
     </div>

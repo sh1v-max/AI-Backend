@@ -30,7 +30,7 @@ export function ChatPanel({ messages, input, onInputChange, onSend, loading }: C
     <div className="chat-panel">
       <div className="chat-messages">
         {messages.length === 0 ? (
-          <p className="chat-empty">Ask a question about this document to get started.</p>
+          <p className="chat-empty">Ask a question to get started.</p>
         ) : (
           messages.map((m, i) =>
             // The empty placeholder (sources arrived, no text yet) stays hidden

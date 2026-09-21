@@ -117,28 +117,42 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 
 *Topic: [07-streaming-sse](topics/07-streaming-sse)*
 
-**Step 3.1 — SSE mechanics, isolated**
-- Build a throwaway `/tick` endpoint that streams "tick 1, tick 2..." once a second with `res.write()`
-- Get comfortable with headers, keeping the connection open, and how `EventSource` consumes it client-side
-- Output: a disposable endpoint, deleted once it's understood
+**Step 3.1 — SSE mechanics, isolated** *(done)*
+- Built a throwaway `GET /tick` endpoint that streams "tick 1 … tick 5" once a second with `res.write()`: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`, each event written as `data: ...\n\n` (the blank line is what ends one event)
+- `req.on('close', ...)` clears the interval if the client disconnects early — otherwise it keeps writing to a dead connection forever
+- Output: the SSE mechanics understood in isolation. `/tick` was deleted from `src/index.ts` once understood — it was scaffolding, not part of DocMind.
 
-**Step 3.2 — Stream the real chat reply**
-- Build `GET /chat-stream?sessionId=...&documentId=...&message=...`
-- Same logic as `/chat` (including pulling history), but write each piece of the LLM's streamed response to the client as it arrives
-- Still save the complete reply to `chat_messages` once the stream finishes
-- Output: open the URL in a browser tab, watch words appear one at a time
+**Step 3.2 — Stream the real chat reply** *(done)*
+- `GET /chat-stream?sessionId=...&documentId=...&message=...` — **GET, not POST**, because the browser's `EventSource` can only send GET requests, so everything travels as query params instead of a JSON body
+- Same 7-step pipeline as `/chat` (embed → search → load history → save user message → build prompt → generate → save assistant reply). To avoid maintaining the prompt twice, it was extracted into a shared `buildChatPrompt(context, history, message)` helper used by both routes
+- **`streamAnswer()`** in `llm.service.ts` (an `async function*` — it `yield`s pieces instead of returning once) calls Gemini's `streamGenerateContent?alt=sse`. It reads raw bytes with `res.body.getReader()`, decodes with `TextDecoder`, normalizes Gemini's `\r\n` line endings to `\n` (on the whole buffer, so a `\r\n` split across two network chunks is still caught), splits on the blank-line event boundary, keeps the trailing partial event in the buffer for the next read, and yields the `text` out of each `data: {...}` payload
+- The route's own SSE event protocol, which the frontend depends on:
+  | Event | Payload | When |
+  |---|---|---|
+  | `meta` (named) | `{ sessionId, sources }` | once, first — so the client learns the session id and gets the sources before any text |
+  | default (unnamed `data:`) | `{ text }` | once per piece of the answer |
+  | `done` (named) | `{}` | after the full reply is saved |
+  | `error` (named) | `{ error }` | if anything fails mid-stream |
+- Saving the assistant reply happens *after* the last chunk, in its own `try/catch` — the user already has the full answer by then, so a failed DB write is logged, not turned into an error event
+- **Error handling added along the way:** every chat step talks to Gemini or Neon and can fail on a weak connection, which used to surface as a bare `500`. Added `withErrorHandling(label, handler, { sse })`, wrapped around `/chat` and `/chat-stream`: it logs the real cause to the terminal and returns a clear message. A plain route answers `503 { error }`; for the stream route (`sse: true`) the error goes out as a real `event: error` frame instead, because `EventSource` can't read the body of a non-200 response — it only sees "connection error". `summarizeError()` prints just the first line of the message, the chain of `cause`s (where the real reason like `ECONNRESET` lives) and the first stack frame in our own code — Drizzle's failed-query errors otherwise dump the SQL plus all 3072 bound embedding numbers into the log
+- Output: open the URL in a browser tab, watch the words appear one at a time
 
-**Step 3.2F — Frontend: streaming chat**
-- Swap the chat UI's `fetch` call for an `EventSource` connection to `/chat-stream`, appending each streamed chunk to the in-progress reply as it arrives
-- Output: the chat UI now shows the reply typing out word by word, the actual DocMind experience
+**Step 3.2F — Frontend: streaming chat** *(done)*
+- `streamChatMessage()` in `api/chat.ts` opens an `EventSource` and routes the four events to `onMeta` / `onChunk` / `onDone` / `onError` handlers, and returns a cleanup function that closes the connection. The native `error` event fires both for our own `event: error` frames (has `e.data`) and for plain connection failures (no `e.data`), so it's handled as two separate cases with different messages
+- `useChat.sendMessage()` now awaits a Promise wrapped around those handlers. `onMeta` sets the active session (first message of a new thread) and adds an *empty* assistant bubble with its sources already attached; each chunk then grows the last message in place. On error, an empty placeholder is replaced by the error bubble rather than left blank above it
+- One React detail worth remembering: the functions passed to `setMessages(prev => ...)` must be pure — in dev, StrictMode calls them twice with the same `prev`. So "the bubble being streamed into" is always derived as *the last message in `prev`*, never from a variable mutated inside the callback
+- `ChatPanel` keeps showing the "Thinking…" bubble until the assistant bubble has real text (retrieval + first token can take a moment), hides the empty placeholder so it doesn't render as a blank bubble, and auto-scrolls as the reply grows (`auto` while streaming, `smooth` otherwise), not just when a new message is added
+- Output: the chat UI shows the reply typing out word by word, the actual DocMind experience
 
-**Step 3.3 — Multi-document chat: "all PDFs" by default, one PDF as the override** *(planned, not built yet — see [ai-backend-roadmap.md](ai-backend-roadmap.md) Step 3.3 for the full breakdown)*
-- Make `searchSimilar(embedding, limit, documentId)`'s `documentId` optional — omit it to scan chunks across every document instead of one
-- `/chat` accepts `documentId: string | undefined` (`undefined`/`'all'` = search everything); sources carry `documentId` + filename so answers can cite which PDF they came from
-- Frontend: a toggle in the chat header ("All documents" default vs. picking one) rather than a separate screen
-- Do this right after 3.1/3.2, before moving on to Phase 4
+**Step 3.3 — Multi-document chat: "all PDFs" by default, one PDF as the override** *(done — line-linked explanation in [CODE_EXPLAINED.md](CODE_EXPLAINED.md#step-33--multi-document-chat))*
+- **Backend:** `documentId` is now optional everywhere. **Omitted / empty / `'all'` = search every document**; a real id = that one PDF. The change lives in one place, `prepareChat()` in `chat.service.ts`, so `/chat` and `/chat-stream` both got it for free
+- `searchSimilar(embedding, limit, documentId?)` — no `documentId` skips the filter. It now returns `{ content, distance, documentId, filename }` (a `LEFT JOIN documents`), so sources say which PDF each chunk came from. In all-documents mode it only searches chunks whose `documents` row exists (`documents.id IS NOT NULL`), because older "orphan" chunks (test uploads from before Step 2.2) have no row, aren't visible in the UI, and would otherwise show up in answers as an "unknown document"
+- **No schema change:** an all-documents session stores the sentinel `'all'` in the existing `NOT NULL` `chat_messages.document_id` column (`ALL_DOCUMENTS` in `config.ts`) instead of making it nullable — avoids altering the live table. `listSessions()` labels such a session "All documents"
+- **Prompt:** `buildChatPrompt(..., multiDocument)` — in all-mode each chunk is prefixed `[Source: filename]` and the model is told to name the document it used; the single-document prompt is unchanged
+- **Frontend:** an "All documents (N)" chip on the New Chat screen (only when there's more than one document) and a **"Searching in [All documents ▾]"** dropdown in the chat header; source cards show their filename. A conversation's scope is fixed when it starts, so switching the dropdown starts a *new* chat (the old one stays in history)
+- **Known tradeoff:** the top 3 chunks are shared across all PDFs, and "meta" questions like "which documents do you have?" can't be answered by chunk search — the model only sees the nearest 3 chunks, often from one file. Routing (Phase 7) is the real fix
 
-**Milestone:** the chat reply streams instead of arriving all at once, visibly in the browser, and history still works on the next turn.
+**Milestone:** the chat reply streams instead of arriving all at once, visibly in the browser, and history still works on the next turn. *(Reached — Steps 3.1, 3.2, 3.2F and 3.3 all done; Phase 3 is complete.)*
 
 ---
 

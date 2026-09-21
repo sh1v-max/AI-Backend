@@ -21,7 +21,7 @@ export function ChatInputForm({ value, onChange, onSubmit, disabled }: ChatInput
       <input
         type="text"
         className="chat-input"
-        placeholder="Ask a question about this document…"
+        placeholder="Ask a question…"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
