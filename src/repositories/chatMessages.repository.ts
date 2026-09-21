@@ -1,6 +1,7 @@
 import { asc, desc, eq } from 'drizzle-orm'
 import { db } from '../db/client'
 import { chatMessages, documents } from '../db/schema'
+import { ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL } from '../config'
 
 export interface SessionSummary {
   sessionId: string
@@ -91,7 +92,12 @@ export async function listSessions(): Promise<SessionSummary[]> {
       bySession.set(row.sessionId, {
         sessionId: row.sessionId,
         documentId: row.documentId,
-        filename: filenameByDocumentId.get(row.documentId) ?? null,
+        // An "all documents" session (Step 3.3) has no single file, so it gets
+        // a fixed label instead of a filename lookup.
+        filename:
+          row.documentId === ALL_DOCUMENTS
+            ? ALL_DOCUMENTS_LABEL
+            : (filenameByDocumentId.get(row.documentId) ?? null),
         // First user message doubles as the conversation's title — the same
         // idea ChatGPT uses for naming a thread from its opening message.
         title: row.role === 'user' ? row.content : 'New conversation',
