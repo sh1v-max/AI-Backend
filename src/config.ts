@@ -6,6 +6,13 @@ import 'dotenv/config'
 // How many previous messages get replayed into every chat prompt.
 export const HISTORY_LIMIT = 8
 
+// Step 3.3 — the documentId value that means "search every uploaded document".
+// A sentinel string instead of NULL because chat_messages.document_id is NOT
+// NULL — using 'all' avoids altering the live table. A session's scope is
+// whatever documentId its messages were saved with.
+export const ALL_DOCUMENTS = 'all'
+export const ALL_DOCUMENTS_LABEL = 'All documents'
+
 export const PORT = process.env.PORT || 3000
 
 // The frontend (Vite dev server, localhost:5173) and this API (localhost:3000)

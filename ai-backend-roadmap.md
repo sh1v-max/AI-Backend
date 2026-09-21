@@ -105,7 +105,7 @@ No auth, no queues, no multi-step agents, no deployment pressure. Just enough to
 - Also added: `withErrorHandling()` around both chat routes (clear `503` message, or an `event: error` frame on the stream route, plus a readable one-block error summary in the terminal) so a dropped connection to Gemini/Neon no longer shows up as a bare `500`.
 - Frontend (Step 3.2F): `streamChatMessage()` in `api/chat.ts` (an `EventSource` wrapper) replaced the `fetch` call inside `useChat`, so the reply now types out in the chat bubble.
 
-**Step 3.3 — Multi-document chat: "all PDFs" as the default, single-PDF as the override (~3h)** *(planned — build right after 3.1/3.2 are done)*
+**Step 3.3 — Multi-document chat: "all PDFs" as the default, single-PDF as the override (~3h)** ✅ *done — see `project_building_workthrough.md`*
 - Problem: right now every chat session is pinned to exactly one `documentId`. The goal is to default to searching across *every* uploaded document, while still allowing a chat scoped to just one.
 - Why it's a small change, not a new phase: `searchSimilar(embedding, limit, documentId)` in `chunks.repository.ts` already does a cosine-distance scan filtered by `documentId` — no schema migration needed, just make that filter optional.
   - `searchSimilar(embedding, limit, documentId?: string)` — omit `documentId` to scan all chunks.
@@ -115,6 +115,7 @@ No auth, no queues, no multi-step agents, no deployment pressure. Just enough to
 - The one real tradeoff: searching everything dilutes relevance if you have many unrelated PDFs — top-K might span 3 documents instead of the one you meant. Citing sources per-chunk is the mitigation, not a full fix; if it's not good enough in practice, revisit with a query-classification/routing step (this is exactly what Phase B's "vector-based intent routing" already teaches, just applied to document selection instead of intent).
 - Schema note: `chatMessages.documentId` is `NOT NULL` today — an "all documents" session needs that to become nullable (or use a sentinel like `'all'`), since a session is no longer guaranteed to be about one document.
 - Frontend: a toggle in the chat header — "All documents" (default) vs. picking one specific document — rather than a separate screen/flow.
+- **How it turned out:** the sentinel option was chosen (`'all'` stored in the existing `NOT NULL` column, no table change). `searchSimilar` returns `documentId` + `filename` via a `LEFT JOIN documents`, and all-documents mode adds `documents.id IS NOT NULL` so orphan chunks with no `documents` row can't leak into answers. The header toggle is a `<select>`; since a session's scope is fixed by the `documentId` on its messages, changing it starts a new chat. The dilution tradeoff above is real: a vague/"meta" question ("which documents do you have?") only sees the nearest 3 chunks, often from a single file.
 
 ---
 

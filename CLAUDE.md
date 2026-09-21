@@ -24,7 +24,7 @@ Roadmap phases (details in the walkthrough): 1 Embeddings & vector search · 2 R
 ## 3. Current state (as of 2026-09-20)
 
 - **Done:** Phase 1 (embeddings, pgvector, Drizzle repositories), Phase 2 (PDF upload → chunk → embed → store; `/chat` RAG; conversation memory; session/document history + deletes; ChatGPT-style frontend), **Phase 3 Steps 3.1, 3.2, 3.2F** (SSE mechanics, streamed `/chat-stream`, frontend `EventSource`).
-- **Next up:** **Step 3.3 — multi-document chat** ("all PDFs" as default, one PDF as override). Full breakdown in the roadmap. Then Phase 4 (quiz + Zod). See [PROGRESS.md](PROGRESS.md) for the tracker.
+- **Next up:** **Phase 4 — quiz generation with structured output (Zod)**, starting at Step 4.1. See [PROGRESS.md](PROGRESS.md) for the tracker and the walkthrough for step details. (Phase 3 is complete, including Step 3.3 multi-document chat.)
 - **Backend restructure done (2026-09-20):** the 449-line `src/index.ts` was split into `app.ts` + `config.ts` + `routes/` + `services/` + `utils/` (see §6), with **no behavior change**. Verified: `tsc --noEmit` clean; all 400/404 validation paths, `/chat` and `/chat-stream` happy paths (incl. history persistence, cleaned up afterwards), and the bad-API-key failure paths (503 for `/chat`, `event: error` frame for the stream, same terminal error block) behave as before. The frontend was not touched.
 - **Git:** working branch is `Streaming-branch` (branched from `main`; last commit at time of writing: `0568597 gemini response conflict`). Shiv was opening a PR into `main`. The backend restructure (new `src/` files + the slimmed `index.ts`) and this file's latest edits were **uncommitted** when written — Shiv commits them himself. Run `git status` to see what's pending.
 - `topics/07-streaming-sse/NOTES.md` is still the empty template — Shiv fills it in himself.
@@ -108,13 +108,13 @@ Note: `/upload` and the read/delete routes are *not* wrapped in `withErrorHandli
 | `POST /upload` | multipart PDF → parse → `chunkText` (~500 words) → embed each → `insertChunk` (tagged `documentId`) → insert `documents` row |
 | `GET /documents` | list uploaded documents |
 | `DELETE /documents/:documentId` | delete chunks + all chat messages for it + the document row |
-| `POST /chat` | JSON `{ documentId, message, sessionId? }` → 7-step pipeline (below) → `{ sessionId, answer, sources }` |
-| `GET /chat-stream` | same pipeline, but SSE; query params `documentId`, `message`, `sessionId` |
+| `POST /chat` | JSON `{ documentId?, message, sessionId? }` → 7-step pipeline (below) → `{ sessionId, answer, sources }`. `documentId` omitted/empty/`'all'` = search every document; each source is `{ content, distance, documentId, filename }` |
+| `GET /chat-stream` | same pipeline, but SSE; query params `documentId?`, `message`, `sessionId` (a non-string/repeated `documentId` → 400) |
 | `GET /sessions` | one summary per session (`sessionId, documentId, filename, title, lastMessage, lastMessageAt, messageCount`), newest first |
 | `GET /sessions/:sessionId/messages` | full transcript, oldest first |
 | `DELETE /sessions/:sessionId` | delete one conversation's messages (document untouched) |
 
-Chat pipeline (both routes): embed question → `searchSimilar(top 3, scoped to documentId)` → load last `HISTORY_LIMIT = 8` messages → save user message → `buildChatPrompt(context, history, message)` → generate → save assistant reply.
+Chat pipeline (both routes): embed question → `searchSimilar(top 3, one document or all — see §8)` → load last `HISTORY_LIMIT = 8` messages → save user message → `buildChatPrompt(context, history, message)` → generate → save assistant reply.
 
 ### `/chat-stream` SSE protocol (the frontend depends on this exactly)
 
@@ -133,7 +133,9 @@ Only the last-stage failures are special: a failed DB save of the assistant repl
 - `chunks(id serial PK, content, embedding vector(3072), document_id text)`
 - `chat_messages(id serial PK, session_id, document_id NOT NULL, role 'user'|'assistant', content, created_at)`
 - **There is no `sessions` table.** A session is just a `session_id` shared by a group of `chat_messages` rows; history is *derived* (`listSessions()` groups and reduces). A session's `title` is its first user message.
-- Forward-looking constraints for Step 3.3: `searchSimilar`'s `documentId` param is currently required, and `chat_messages.document_id` is `NOT NULL` — both need to loosen for "all documents" mode. The retrieval change now belongs in **one place**: `prepareChat()` in `chat.service.ts` (plus its 400/404 validation, which currently requires a `documentId`).
+- **Scope (Step 3.3):** `chat_messages.document_id` holds either a real document id or the sentinel **`'all'`** (`ALL_DOCUMENTS` in `config.ts`) — chosen over making the column nullable so the live Neon table didn't need altering. A missing/empty `documentId` in a request also means "all". A session's scope is fixed by that value, so the frontend's scope dropdown starts a *new* chat when switched. `searchSimilar(embedding, limit, documentId?)` returns `{ content, distance, documentId, filename }` (`LEFT JOIN documents`); the all-mode branch lives in `prepareChat()` (`searchAll`).
+- **Orphan chunks:** the live database has 8 groups of `chunks` rows with no matching `documents` row (test uploads from before Step 2.2, some are resume text). They're invisible in the UI. All-documents search skips them (`documents.id IS NOT NULL` in `searchSimilar`); single-document mode does not, so an old session pinned to an orphan id still works. They have **not** been deleted — cleanup would be `DELETE FROM chunks WHERE document_id NOT IN (SELECT id FROM documents)`, Shiv's call.
+- **Known Step 3.3 tradeoff:** top-3 chunks are shared across all PDFs, and "meta" questions ("which documents do you have?") can't be answered by chunk search. Routing (Phase 7) is the real fix.
 
 ## 9. Decisions and gotchas worth remembering
 
@@ -176,6 +178,7 @@ Only the last-stage failures are special: a failed DB save of the assistant repl
 | [ai-backend-roadmap.md](ai-backend-roadmap.md) | The original learning plan with resources; done steps get ✅ + a "how it turned out" note | Claude, when a step is finished |
 | [PROGRESS.md](PROGRESS.md) | The tracker — single source of truth for "what next" | Claude, when a topic finishes |
 | [CODE_EXPLAINED.md](CODE_EXPLAINED.md) | Deep, line-linked explanation of every file and step (1.1 → 3.2): why, what, how. Written for Shiv to re-learn from. Link line numbers can drift as code changes — function names are the reliable anchor | Claude, when a step is finished (add the new step's section) and after big refactors (re-check links) |
+| [posts/](posts) | Shiv's daily "learning in public" record. `postN.md` = a **short** source-notes file for that day's work (what was done, a few numbers, quotable lessons, "don't overclaim", what's next), written so another Claude chat can turn it into a LinkedIn post and a Twitter/X post. Posts 1–7 aren't in the repo; `post8.md` is the first one here. Only write a new `postN.md` when Shiv asks; keep it to *that day's* work and brief (Shiv rejected a long, timeline-style first draft), don't mention which machine the work was on, and keep private data (resume text, keys, email) out | Claude, on request |
 | [README.md](README.md) | Short intro, setup, two-machine git workflow | Occasionally |
 | `topics/NN-*/README.md` / `NOTES.md` | Reading material / **Shiv's own notes (don't write)** | Shiv |
 
@@ -185,7 +188,8 @@ Shiv sometimes works on two laptops. Git is the only thing that carries code; `.
 
 ## 13. Work log (newest first — append an entry each session)
 
-- **2026-09-20 (latest)** — Wrote [CODE_EXPLAINED.md](CODE_EXPLAINED.md): the full line-linked walkthrough of Steps 1.1–3.2 (all backend + frontend files, the SSE protocol, error/logging design, a request traced end to end, known limitations). All 276 line links were machine-checked against the files. Found while writing it: `npm run step2` (`DROP TABLE chunks`) and `npm run step3` (`DELETE FROM chunks`) would wipe the real chunks table — documented as "don't re-run". `format.ts` helpers and the non-streaming `sendChatMessage` are currently unused.
+- **2026-09-20 (Step 3.3)** — Multi-document chat: `documentId` optional (omitted/`'all'` = every document), `searchSimilar` returns `documentId` + `filename`, `prepareChat` branches on `searchAll` (`[Source: file]`-labelled chunks + a citation instruction in `buildChatPrompt`), `listSessions` labels all-docs sessions "All documents"; frontend "All documents (N)" chip + "Searching in" header dropdown + filenames on sources. Found orphan chunks in the DB and excluded them from all-mode (see §8). Tested with real requests for every case and the real UI in a headless browser (no console errors); throwaway sessions deleted. Added the Step 3.3 section to CODE_EXPLAINED.md (298 links verified). Next: Phase 4 (Zod quiz).
+- **2026-09-20 (earlier)** — Wrote [CODE_EXPLAINED.md](CODE_EXPLAINED.md): the full line-linked walkthrough of Steps 1.1–3.2 (all backend + frontend files, the SSE protocol, error/logging design, a request traced end to end, known limitations). All 276 line links were machine-checked against the files. Found while writing it: `npm run step2` (`DROP TABLE chunks`) and `npm run step3` (`DELETE FROM chunks`) would wipe the real chunks table — documented as "don't re-run". `format.ts` helpers and the non-streaming `sendChatMessage` are currently unused.
 - **2026-09-20 (later)** — Split `index.ts` into routes/services/utils/app/config ahead of Step 3.3 (chat pipeline steps 1-5 now live once in `prepareChat()`; upload pipeline in `ingestPdf()`), kept all logging intact, smoke-tested every route and the failure paths. Decided: error logging stays terminal-only for now (file logging deferred); no more refactor passes — new features get their own route + service files. Next: Step 3.3.
 - **2026-09-20** — Finished Phase 3 streaming: `/chat-stream`, `streamAnswer()`, shared `buildChatPrompt()`, `withErrorHandling()`/`summarizeError()`, frontend `EventSource` wrapper + streaming chat UI. Fixed Gemini `\r\n` parsing and a stream-response conflict (`0568597`). Deleted the throwaway `/tick` route. Updated walkthrough, roadmap, PROGRESS, README (added the two-machine workflow section). Discussed git workflow (rebase vs merge, one branch per laptop). Created this file. Next: Step 3.3.
 - **2026-09-18** — Step 2.5: `GET /sessions`, `GET /sessions/:id/messages`, delete endpoints, ChatGPT-style frontend, `localStorage` session persistence, frontend folder restructure, tagged logger.

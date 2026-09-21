@@ -1,4 +1,4 @@
-# DocMind — Code Explained (Step 1.1 → Step 3.2)
+# DocMind — Code Explained (Step 1.1 → Step 3.3)
 
 A file-by-file, line-linked walkthrough of everything built so far: **why** each piece exists, **what** it does, and **how** it's implemented. Every `[file:lines]` link jumps to the exact code (Ctrl+Click in VS Code).
 
@@ -30,6 +30,7 @@ How this relates to the other docs:
    - [Step 3.1 — SSE mechanics (`/tick`, now deleted)](#step-31--sse-mechanics-tick-now-deleted)
    - [Step 3.2 — Streaming the real chat reply](#step-32--streaming-the-real-chat-reply)
    - [Step 3.2F — Streaming in the frontend](#step-32f--streaming-in-the-frontend)
+   - [Step 3.3 — Multi-document chat](#step-33--multi-document-chat)
 5. [Cross-cutting: errors, logging, and the backend restructure](#5-cross-cutting-errors-logging-and-the-backend-restructure)
 6. [One chat message, end to end](#6-one-chat-message-end-to-end)
 7. [Known limitations (honest list)](#7-known-limitations-honest-list)
@@ -107,7 +108,7 @@ Before any step, the project needed a place to live.
 - Dependencies, each with one job: `express` (HTTP server), `cors` (allow the browser at :5173 to call :3000), `multer` (file uploads), `pdf-parse` (PDF → text), `pg` (Postgres driver), `drizzle-orm` (typed queries), `dotenv` (load `.env`), `chalk` (coloured terminal logs). `drizzle-kit` is the CLI for Drizzle (configured in [drizzle.config.ts](drizzle.config.ts)).
 
 ### [tsconfig.json](tsconfig.json)
-`"strict": true` — TypeScript's strictest checking (no implicit `any`, null-safety). It's why you see things like `documentId: unknown` followed by a `typeof documentId !== 'string'` check in [chat.service.ts:63-71](src/services/chat.service.ts#L63-L71).
+`"strict": true` — TypeScript's strictest checking (no implicit `any`, null-safety). It's why you see things like `documentId: unknown` followed by a `typeof documentId !== 'string'` check in [chat.service.ts:80-93](src/services/chat.service.ts#L80-L93).
 
 ### `.env` (never committed) and [.env.example](.env.example)
 Three keys: `GEMINI_API_KEY`, `DATABASE_URL` (Neon connection string), `FRONTEND_URL` (allowed CORS origin). `.env.example` is the committed template with no real values. The frontend has its own `frontend/.env` with `VITE_API_URL` (read at [client.ts:3](frontend/src/api/client.ts#L3)).
@@ -228,10 +229,10 @@ Step 1.2 scattered raw SQL strings and a copy-pasted `getEmbedding` through the 
 
 **[repositories/chunks.repository.ts](src/repositories/chunks.repository.ts)**
 - `insertChunk(content, embedding, documentId)` — [L6-14](src/repositories/chunks.repository.ts#L6-L14): `db.insert(chunks).values(...)`. The SQL equivalent is in the comment at [L15-16](src/repositories/chunks.repository.ts#L15-L16).
-- `searchSimilar(queryEmbedding, limit, documentId)` — [L25-41](src/repositories/chunks.repository.ts#L25-L41):
-  - [L31](src/repositories/chunks.repository.ts#L31): `cosineDistance(chunks.embedding, queryEmbedding)` builds the same `<=>` expression as a reusable value; `.mapWith(Number)` makes sure the result comes back as a JS number.
-  - [L35-40](src/repositories/chunks.repository.ts#L35-L40): `select content + distance → where documentId matches → order by distance → limit`. It returns `{ content, distance }[]`, nearest first.
-  - The `where documentId = …` filter is what keeps one PDF's answers from mixing in another PDF's text (Step 2.2 added it).
+- `searchSimilar(queryEmbedding, limit, documentId?)` — [L36-66](src/repositories/chunks.repository.ts#L36-L66):
+  - [L42](src/repositories/chunks.repository.ts#L42): `cosineDistance(chunks.embedding, queryEmbedding)` builds the same `<=>` expression as a reusable value; `.mapWith(Number)` makes sure the result comes back as a JS number.
+  - [L46-65](src/repositories/chunks.repository.ts#L46-L65): `select content + distance (+ documentId, filename since Step 3.3) → where documentId matches → order by distance → limit`. It returns `SimilarChunk[]`, nearest first.
+  - The `where documentId = …` filter is what keeps one PDF's answers from mixing in another PDF's text (Step 2.2 added it). Step 3.3 made `documentId` **optional** — see [Step 3.3](#step-33--multi-document-chat).
 - `deleteChunksByDocumentId` — [L19-21](src/repositories/chunks.repository.ts#L19-L21): used when a document is deleted (Step 2.5).
 
 **[step3-drizzle.ts](src/step3-drizzle.ts) — proof it works**
@@ -276,7 +277,7 @@ Multer turns an HTTP file upload into a `Buffer`; `pdf-parse` turns the buffer i
 - [vite.config.ts](frontend/vite.config.ts): just the React plugin. Vite serves the app on `localhost:5173`.
 
 ### CORS — why the backend needs [app.ts:17-21](src/app.ts#L17-L21)
-The page is served from `:5173` and calls the API on `:3000`. Those are **different origins**, and browsers block cross-origin requests unless the server says it's OK. `cors({ origin: FRONTEND_URL })` sends the allow header for exactly the frontend's origin ([config.ts:14](src/config.ts#L14), defaulting to `http://localhost:5173`).
+The page is served from `:5173` and calls the API on `:3000`. Those are **different origins**, and browsers block cross-origin requests unless the server says it's OK. `cors({ origin: FRONTEND_URL })` sends the allow header for exactly the frontend's origin ([config.ts:21](src/config.ts#L21), defaulting to `http://localhost:5173`).
 
 ### The API layer — `frontend/src/api/` (fetch and nothing else)
 - [client.ts](frontend/src/api/client.ts): [L3](frontend/src/api/client.ts#L3) `API_URL` (from `VITE_API_URL`, falling back to `http://localhost:3000`); [L5-14](frontend/src/api/client.ts#L5-L14) `parseJsonOrThrow(res)` — parses the JSON, and if the status isn't OK, logs it and throws an `ApiError` carrying the server's `error` message. Every API function shares it, so error handling is written once.
@@ -342,7 +343,7 @@ Upload is an *offline* pipeline (nobody needs the result instantly), which is wh
 
 ## Step 2.3 — `POST /chat`, single turn
 
-**Files:** [chat.routes.ts:11-37](src/routes/chat.routes.ts#L11-L37), [chat.service.ts](src/services/chat.service.ts), [llm.service.ts:7-22](src/services/llm.service.ts#L7-L22), [chunks.repository.ts:25-41](src/repositories/chunks.repository.ts#L25-L41).
+**Files:** [chat.routes.ts:11-37](src/routes/chat.routes.ts#L11-L37), [chat.service.ts](src/services/chat.service.ts), [llm.service.ts:7-22](src/services/llm.service.ts#L7-L22), [chunks.repository.ts:36-66](src/repositories/chunks.repository.ts#L36-L66).
 
 ### Why we need it
 This is RAG itself: answer a question **from the PDF**, not from the model's memory.
@@ -351,17 +352,17 @@ This is RAG itself: answer a question **from the PDF**, not from the model's mem
 `POST /chat` with `{ documentId, message, sessionId? }` returns `{ sessionId, answer, sources }`, where `sources` are the chunks that were used (with their distances) so the UI can show where the answer came from.
 
 ### How it works
-The route is thin ([chat.routes.ts:11-37](src/routes/chat.routes.ts#L11-L37)); the shared pipeline is `prepareChat()` in [chat.service.ts:57-118](src/services/chat.service.ts#L57-L118):
+The route is thin ([chat.routes.ts:11-37](src/routes/chat.routes.ts#L11-L37)); the shared pipeline is `prepareChat()` in [chat.service.ts:74-165](src/services/chat.service.ts#L74-L165):
 
-1. **Validate** — [L63-71](src/services/chat.service.ts#L63-L71): `documentId` and `message` must be non-empty strings. They arrive typed `unknown` because they're raw request input; the `typeof` checks narrow them. Failure → returns `{ ok: false, status: 400, error }` (the *service never touches `res`* — the route sends the response).
-2. **Embed the question** — [L78-81](src/services/chat.service.ts#L78-L81): the **same model** that embedded the chunks (a question can only be compared to chunks embedded the same way).
-3. **Search** — [L83-86](src/services/chat.service.ts#L83-L86): `searchSimilar(questionEmbedding, 3, documentId)` — top **3** nearest chunks of this document.
-4. **No chunks?** — [L88-92](src/services/chat.service.ts#L88-L92): the `documentId` doesn't exist → `404`.
+1. **Validate** — [L80-93](src/services/chat.service.ts#L80-L93): `message` must be a non-empty string; `documentId` is a real id **or omitted/`'all'`** (search everything — see [Step 3.3](#step-33--multi-document-chat)); a non-string `documentId` is a `400`. They arrive typed `unknown` because they're raw request input; the `typeof` checks narrow them. Failure → returns `{ ok: false, status: 400, error }` (the *service never touches `res`* — the route sends the response).
+2. **Embed the question** — [L100-103](src/services/chat.service.ts#L100-L103): the **same model** that embedded the chunks (a question can only be compared to chunks embedded the same way).
+3. **Search** — [L105-115](src/services/chat.service.ts#L105-L115): `searchSimilar(questionEmbedding, 3, documentId)` — top **3** nearest chunks of this document (or, since Step 3.3, of every document when the scope is `'all'`).
+4. **No chunks?** — [L117-128](src/services/chat.service.ts#L117-L128): the `documentId` doesn't exist (or, in all-documents mode, nothing has been uploaded) → `404`.
 5. *(steps 4–5 of the pipeline — history and prompt — are covered next, in Step 2.4)*
 6. **Generate** — [chat.routes.ts:21-25](src/routes/chat.routes.ts#L21-L25): `generateAnswer(prompt)`.
 7. **Save + respond** — [L27-36](src/routes/chat.routes.ts#L27-L36).
 
-**The prompt — [buildChatPrompt, chat.service.ts:15-37](src/services/chat.service.ts#L15-L37)**
+**The prompt — [buildChatPrompt, chat.service.ts:15-49](src/services/chat.service.ts#L15-L49)**
 It tells the model to (a) use **only** the supplied context, no outside knowledge, no guessing; (b) answer naturally, not "Based on the provided context…"; (c) say so briefly if the answer isn't in the context; (d) use the conversation history to resolve follow-ups like "the first one". Then the layout is `Context:` (the chunks joined by blank lines) + optional `Conversation so far:` + `New question:`. Prompt wording lives in this **one** function, shared by `/chat` and `/chat-stream`.
 
 **Calling Gemini — [generateAnswer, llm.service.ts:7-22](src/services/llm.service.ts#L7-L22)**
@@ -381,18 +382,18 @@ It tells the model to (a) use **only** the supplied context, no outside knowledg
 
 - [ChatInputForm.tsx:11-40](frontend/src/components/chat/ChatInputForm.tsx#L11-L40): a controlled text input + send button. [L12-17](frontend/src/components/chat/ChatInputForm.tsx#L12-L17) prevents the page reload, trims, ignores empty messages, then calls `onSubmit`. The button is disabled while `disabled` (a reply is in flight) or the box is empty ([L33](frontend/src/components/chat/ChatInputForm.tsx#L33)).
 - [ChatTurn.tsx:8-22](frontend/src/components/chat/ChatTurn.tsx#L8-L22): one message bubble. The CSS class comes from `message.role` (`user`/`assistant`) and gets an error style if `isError` ([L11-15](frontend/src/components/chat/ChatTurn.tsx#L11-L15)). If the message has `sources`, it renders `ChatSources` under it.
-- [ChatSources.tsx:8-28](frontend/src/components/chat/ChatSources.tsx#L8-L28): a collapsible `<details>` listing the source chunks — each shows its `distance` and the first 220 characters. This is how you *see* what the model was given.
+- [ChatSources.tsx:8-31](frontend/src/components/chat/ChatSources.tsx#L8-L31): a collapsible `<details>` listing the source chunks — each shows its `distance` and the first 220 characters. This is how you *see* what the model was given.
 - [ChatPanel.tsx:15-57](frontend/src/components/chat/ChatPanel.tsx#L15-L57): the message list + input. Auto-scrolls to the bottom with a ref ([L16](frontend/src/components/chat/ChatPanel.tsx#L16), [L23-27](frontend/src/components/chat/ChatPanel.tsx#L23-L27)), shows a "Thinking…" bubble while waiting ([L44-49](frontend/src/components/chat/ChatPanel.tsx#L44-L49)). (Its streaming-specific logic is in [Step 3.2F](#step-32f--streaming-in-the-frontend).)
-- [ChatView.tsx:25-81](frontend/src/components/chat/ChatView.tsx#L25-L81): the right-hand pane. Header shows the active document's filename ([L48-54](frontend/src/components/chat/ChatView.tsx#L48-L54)); body is one of three states: **restoring** spinner ([L57-60](frontend/src/components/chat/ChatView.tsx#L57-L60)), **`ChatPanel`** if a document is active ([L61-68](frontend/src/components/chat/ChatView.tsx#L61-L68)), otherwise **`NewChatScreen`** ([L69-78](frontend/src/components/chat/ChatView.tsx#L69-L78)).
-- [NewChatScreen.tsx:14-67](frontend/src/components/chat/NewChatScreen.tsx#L14-L67): the landing screen — the upload dropzone ([L29](frontend/src/components/chat/NewChatScreen.tsx#L29)), an error banner ([L31-36](frontend/src/components/chat/NewChatScreen.tsx#L31-L36)), and "continue with a document you've uploaded before" chips with a delete button on each ([L38-64](frontend/src/components/chat/NewChatScreen.tsx#L38-L64)); `e.stopPropagation()` at [L52](frontend/src/components/chat/NewChatScreen.tsx#L52) stops a delete click from also selecting the chip.
-- [types/chat.ts](frontend/src/types/chat.ts): `ChatSource` ([L1-4](frontend/src/types/chat.ts#L1-L4)), `ChatMessage` ([L6-11](frontend/src/types/chat.ts#L6-L11), with optional `isError`/`sources`), `SessionSummary` ([L13-21](frontend/src/types/chat.ts#L13-L21)).
+- [ChatView.tsx:28-108](frontend/src/components/chat/ChatView.tsx#L28-L108): the right-hand pane. Header shows the active document's filename ([L53-80](frontend/src/components/chat/ChatView.tsx#L53-L80)); body is one of three states: **restoring** spinner ([L83-86](frontend/src/components/chat/ChatView.tsx#L83-L86)), **`ChatPanel`** if a document is active ([L87-94](frontend/src/components/chat/ChatView.tsx#L87-L94)), otherwise **`NewChatScreen`** ([L95-105](frontend/src/components/chat/ChatView.tsx#L95-L105)).
+- [NewChatScreen.tsx:15-79](frontend/src/components/chat/NewChatScreen.tsx#L15-L79): the landing screen — the upload dropzone ([L31](frontend/src/components/chat/NewChatScreen.tsx#L31)), an error banner ([L33-38](frontend/src/components/chat/NewChatScreen.tsx#L33-L38)), and "continue with a document you've uploaded before" chips with a delete button on each ([L40-76](frontend/src/components/chat/NewChatScreen.tsx#L40-L76)); `e.stopPropagation()` at [L64](frontend/src/components/chat/NewChatScreen.tsx#L64) stops a delete click from also selecting the chip.
+- [types/chat.ts](frontend/src/types/chat.ts): `ChatSource` ([L1-8](frontend/src/types/chat.ts#L1-L8)), `ChatMessage` ([L10-15](frontend/src/types/chat.ts#L10-L15), with optional `isError`/`sources`), `SessionSummary` ([L17-25](frontend/src/types/chat.ts#L17-L25)).
 - [api/chat.ts `sendChatMessage`, L11-28](frontend/src/api/chat.ts#L11-L28): the original non-streaming call (`POST /chat`, JSON body). **The UI no longer uses it** (it uses the streaming call since Step 3.2F), but it's kept as the simple reference implementation.
 
 ---
 
 ## Step 2.4 — Memory
 
-**Files:** [schema.ts:45-54](src/db/schema.ts#L45-L54), [chatMessages.repository.ts](src/repositories/chatMessages.repository.ts), [chat.service.ts:98-109](src/services/chat.service.ts#L98-L109), [config.ts:7](src/config.ts#L7), [useChat.ts:109-110](frontend/src/hooks/useChat.ts#L109-L110).
+**Files:** [schema.ts:45-54](src/db/schema.ts#L45-L54), [chatMessages.repository.ts](src/repositories/chatMessages.repository.ts), [chat.service.ts:136-151](src/services/chat.service.ts#L136-L151), [config.ts:7](src/config.ts#L7), [useChat.ts:109-110](frontend/src/hooks/useChat.ts#L109-L110).
 
 ### Why we need it
 Without memory, "what about the next part?" means nothing — each request is independent. A chatbot feels like a chatbot because it remembers what you just said.
@@ -402,13 +403,13 @@ The LLM itself remembers nothing. "Memory" = **we store every message, and repla
 
 ### How it works
 - **The table** — [schema.ts:45-54](src/db/schema.ts#L45-L54): `chat_messages(id, session_id, document_id, role, content, created_at)`. `session_id` groups messages into one conversation; `role` is `'user'` or `'assistant'`.
-- **Saving** — `insertMessage(sessionId, documentId, role, content)` — [chatMessages.repository.ts:16-23](src/repositories/chatMessages.repository.ts#L16-L23).
-- **Loading** — `getRecentMessages(sessionId, limit)` — [L29-41](src/repositories/chatMessages.repository.ts#L29-L41): selects the newest `limit` rows (`ORDER BY created_at DESC LIMIT n`), then **`.reverse()`** ([L40](src/repositories/chatMessages.repository.ts#L40)) so they read oldest-first, the order a conversation needs.
+- **Saving** — `insertMessage(sessionId, documentId, role, content)` — [chatMessages.repository.ts:17-24](src/repositories/chatMessages.repository.ts#L17-L24).
+- **Loading** — `getRecentMessages(sessionId, limit)` — [L30-42](src/repositories/chatMessages.repository.ts#L30-L42): selects the newest `limit` rows (`ORDER BY created_at DESC LIMIT n`), then **`.reverse()`** ([L41](src/repositories/chatMessages.repository.ts#L41)) so they read oldest-first, the order a conversation needs.
 - **The limit** — [`HISTORY_LIMIT = 8`, config.ts:7](src/config.ts#L7). You can't send unlimited history forever (cost + context-window limits), so it caps at the last 8. Real systems summarize older messages instead of dropping them (later topic).
-- **In the pipeline** — [chat.service.ts:98-109](src/services/chat.service.ts#L98-L109):
-  1. [L99](src/services/chat.service.ts#L99) load history **first**.
-  2. [L105](src/services/chat.service.ts#L105) *then* save the new user message.
-  3. [L107-109](src/services/chat.service.ts#L107-L109) build the prompt.
+- **In the pipeline** — [chat.service.ts:136-151](src/services/chat.service.ts#L136-L151):
+  1. [L137](src/services/chat.service.ts#L137) load history **first**.
+  2. [L143](src/services/chat.service.ts#L143) *then* save the new user message.
+  3. [L147-151](src/services/chat.service.ts#L147-L151) build the prompt.
   The order matters: history is loaded *before* the new message is saved, so the question isn't duplicated in the prompt (it's added separately as `New question:`), yet the *next* turn's history will include it.
 - **Assistant reply saved** after generation — [chat.routes.ts:27-28](src/routes/chat.routes.ts#L27-L28).
 - **Where `sessionId` comes from** — the frontend makes one with `crypto.randomUUID()` for a new thread ([useChat.ts:109-110](frontend/src/hooks/useChat.ts#L109-L110)) and reuses it for every message in that thread; the server falls back to its own `randomUUID()` if none is sent ([chat.routes.ts:14](src/routes/chat.routes.ts#L14)).
@@ -429,16 +430,16 @@ Step 2.4's frontend kept the `sessionId` only in React state, so **refreshing th
 
 **There is no `sessions` table.** A session is just a `session_id` shared by a group of `chat_messages` rows, so the session list is **derived** from the messages.
 
-- **`listSessions()`** — [chatMessages.repository.ts:70-113](src/repositories/chatMessages.repository.ts#L70-L113):
-  1. [L71-80](src/repositories/chatMessages.repository.ts#L71-L80): read all messages, oldest first.
-  2. [L82-83](src/repositories/chatMessages.repository.ts#L82-L83): read documents to build a `documentId → filename` map.
-  3. [L85-108](src/repositories/chatMessages.repository.ts#L85-L108): walk the messages, one `Map` entry per `sessionId`. The **first** message seen creates the summary — its content becomes the `title` ([L95-97](src/repositories/chatMessages.repository.ts#L95-L97), the ChatGPT trick of naming a thread after your first message); every later message updates `lastMessage`, `lastMessageAt` and `messageCount`.
-  4. [L110-112](src/repositories/chatMessages.repository.ts#L110-L112): sort newest-activity-first.
-  Returns a `SessionSummary` ([L5-13](src/repositories/chatMessages.repository.ts#L5-L13)).
-- **`getMessagesForSession()`** — [L51-63](src/repositories/chatMessages.repository.ts#L51-L63): the full transcript, oldest first.
+- **`listSessions()`** — [chatMessages.repository.ts:71-114](src/repositories/chatMessages.repository.ts#L71-L114):
+  1. [L72-81](src/repositories/chatMessages.repository.ts#L72-L81): read all messages, oldest first.
+  2. [L83-84](src/repositories/chatMessages.repository.ts#L83-L84): read documents to build a `documentId → filename` map.
+  3. [L86-109](src/repositories/chatMessages.repository.ts#L86-L109): walk the messages, one `Map` entry per `sessionId`. The **first** message seen creates the summary — its content becomes the `title` ([L101-103](src/repositories/chatMessages.repository.ts#L101-L103), the ChatGPT trick of naming a thread after your first message); every later message updates `lastMessage`, `lastMessageAt` and `messageCount`.
+  4. [L116-118](src/repositories/chatMessages.repository.ts#L116-L118): sort newest-activity-first.
+  Returns a `SessionSummary` ([L6-14](src/repositories/chatMessages.repository.ts#L6-L14)).
+- **`getMessagesForSession()`** — [L52-64](src/repositories/chatMessages.repository.ts#L52-L64): the full transcript, oldest first.
 - **Routes** — [sessions.routes.ts](src/routes/sessions.routes.ts): `GET /sessions` ([L10-13](src/routes/sessions.routes.ts#L10-L13)), `GET /sessions/:sessionId/messages` ([L15-18](src/routes/sessions.routes.ts#L15-L18)), `DELETE /sessions/:sessionId` ([L20-23](src/routes/sessions.routes.ts#L20-L23)).
-- **`deleteSession`** — [repository L116-118](src/repositories/chatMessages.repository.ts#L116-L118): deletes that conversation's messages; the document stays.
-- **`DELETE /documents/:documentId`** — [documents.routes.ts:21-27](src/routes/documents.routes.ts#L21-L27): deletes the chunks ([`deleteChunksByDocumentId`](src/repositories/chunks.repository.ts#L19-L21)), then every chat message for it ([`deleteMessagesByDocumentId`, L125-127](src/repositories/chatMessages.repository.ts#L125-L127)), then the document row ([`deleteDocument`](src/repositories/documents.repository.ts#L28-L30)) — so no rows are left pointing at a dead `document_id`.
+- **`deleteSession`** — [repository L122-124](src/repositories/chatMessages.repository.ts#L122-L124): deletes that conversation's messages; the document stays.
+- **`DELETE /documents/:documentId`** — [documents.routes.ts:21-27](src/routes/documents.routes.ts#L21-L27): deletes the chunks ([`deleteChunksByDocumentId`](src/repositories/chunks.repository.ts#L19-L21)), then every chat message for it ([`deleteMessagesByDocumentId`, L131-133](src/repositories/chatMessages.repository.ts#L131-L133)), then the document row ([`deleteDocument`](src/repositories/documents.repository.ts#L28-L30)) — so no rows are left pointing at a dead `document_id`.
 
 ### Frontend
 
@@ -452,8 +453,8 @@ Step 2.4's frontend kept the `sessionId` only in React state, so **refreshing th
 - `startNewChat` ([L62-69](frontend/src/hooks/useChat.ts#L62-L69)), `resetToWelcome` ([L71-77](frontend/src/hooks/useChat.ts#L71-L77)), `openSession` ([L79-96](frontend/src/hooks/useChat.ts#L79-L96)) — the three ways the active conversation changes.
 
 **Layout**
-- [App.tsx](frontend/src/App.tsx) is a **thin orchestrator**: it calls the three hooks ([L13-27](frontend/src/App.tsx#L13-L27)), holds sidebar open/collapsed flags ([L32-33](frontend/src/App.tsx#L32-L33)), defines handlers that connect them — `handleUpload` ([L35-44](frontend/src/App.tsx#L35-L44)), `handlePickDocument` ([L46-50](frontend/src/App.tsx#L46-L50)), `handleSelectSession` ([L52-56](frontend/src/App.tsx#L52-L56)), `handleNewChat` ([L58-62](frontend/src/App.tsx#L58-L62)) — and renders `<Sidebar>` + `<ChatView>` ([L99-134](frontend/src/App.tsx#L99-L134)).
-- **Deleting with a confirm step** — `handleDeleteDocument` ([L64-84](frontend/src/App.tsx#L64-L84)) and `handleDeleteSession` ([L86-97](frontend/src/App.tsx#L86-L97)) use `window.confirm` first; if the deleted item was the open one, they call `resetToWelcome()` (so you never stare at a dead conversation); deleting a document also calls `refreshSessions()` ([L81](frontend/src/App.tsx#L81)) because its sessions vanished server-side.
+- [App.tsx](frontend/src/App.tsx) is a **thin orchestrator**: it calls the three hooks ([L14-28](frontend/src/App.tsx#L14-L28)), holds sidebar open/collapsed flags ([L33-34](frontend/src/App.tsx#L33-L34)), defines handlers that connect them — `handleUpload` ([L36-45](frontend/src/App.tsx#L36-L45)), `handlePickDocument` ([L47-51](frontend/src/App.tsx#L47-L51)), `handleSelectSession` ([L72-76](frontend/src/App.tsx#L72-L76)), `handleNewChat` ([L78-82](frontend/src/App.tsx#L78-L82)) — and renders `<Sidebar>` + `<ChatView>` ([L119-156](frontend/src/App.tsx#L119-L156)).
+- **Deleting with a confirm step** — `handleDeleteDocument` ([L84-104](frontend/src/App.tsx#L84-L104)) and `handleDeleteSession` ([L106-117](frontend/src/App.tsx#L106-L117)) use `window.confirm` first; if the deleted item was the open one, they call `resetToWelcome()` (so you never stare at a dead conversation); deleting a document also calls `refreshSessions()` ([L101](frontend/src/App.tsx#L101)) because its sessions vanished server-side.
 - [components/sidebar/Sidebar.tsx:18-65](frontend/src/components/sidebar/Sidebar.tsx#L18-L65): brand + collapse toggle + "New chat" button + the history list; collapsed mode hides the labels/list ([L37](frontend/src/components/sidebar/Sidebar.tsx#L37), [L53](frontend/src/components/sidebar/Sidebar.tsx#L53), [L56-63](frontend/src/components/sidebar/Sidebar.tsx#L56-L63)).
 - [components/sidebar/HistoryList.tsx](frontend/src/components/sidebar/HistoryList.tsx): [`groupLabel` L11-22](frontend/src/components/sidebar/HistoryList.tsx#L11-L22) buckets a date into *Today / Yesterday / Previous 7 days / Older* by comparing calendar days; [L39-45](frontend/src/components/sidebar/HistoryList.tsx#L39-L45) groups the sessions; each item has a select button and a hover-revealed trash button ([L55-80](frontend/src/components/sidebar/HistoryList.tsx#L55-L80)); empty state at [L30-37](frontend/src/components/sidebar/HistoryList.tsx#L30-L37).
 - The old single 500+-line `App.tsx` was split into `api/`, `types/`, `hooks/`, `utils/`, `components/` — the layers in the [big-picture section](#0-the-big-picture).
@@ -614,11 +615,57 @@ The reply types out word by word in the chat bubble, sources appear immediately,
 
 ---
 
+## Step 3.3 — Multi-document chat
+
+**Files:** [config.ts:13-14](src/config.ts#L13-L14), [chunks.repository.ts:25-66](src/repositories/chunks.repository.ts#L25-L66), [chat.service.ts](src/services/chat.service.ts), [chatMessages.repository.ts:95-100](src/repositories/chatMessages.repository.ts#L95-L100), and on the frontend [types/document.ts](frontend/src/types/document.ts), [NewChatScreen.tsx](frontend/src/components/chat/NewChatScreen.tsx), [ChatView.tsx](frontend/src/components/chat/ChatView.tsx), [ChatSources.tsx](frontend/src/components/chat/ChatSources.tsx), [App.tsx](frontend/src/App.tsx).
+
+### Why we need it
+Until now every chat was pinned to **one** PDF. But a natural question is often about *all* your documents ("how do chunking and embeddings relate?" spans two guides). So the default becomes "search everything", and picking one PDF is the override.
+
+### The design in one paragraph
+`documentId` becomes optional. **Omitted, empty, or the sentinel `'all'` = search every document; a real id = search just that one.** The scope string is also what gets saved on the chat messages, so a session remembers which mode it was started in. No database change was needed (see below), and no new endpoint.
+
+### Backend
+
+- **The sentinel** — [config.ts:13-14](src/config.ts#L13-L14): `ALL_DOCUMENTS = 'all'` and a display label. Why a sentinel string instead of `NULL`? `chat_messages.document_id` is `NOT NULL`; making it nullable means altering the live Neon table. Storing `'all'` in the existing column needs no schema change at all.
+- **`searchSimilar` — [chunks.repository.ts:36-66](src/repositories/chunks.repository.ts#L36-L66)**:
+  - [`documentId?`](src/repositories/chunks.repository.ts#L36-L40) is now optional.
+  - It returns [`SimilarChunk`](src/repositories/chunks.repository.ts#L27-L32) = `{ content, distance, documentId, filename }`. To get the filename it does a [`LEFT JOIN documents`](src/repositories/chunks.repository.ts#L56) — *why the source document's name matters:* so the answer and the UI can say **which PDF** each piece came from.
+  - [The `where`](src/repositories/chunks.repository.ts#L63): a real `documentId` → `chunks.document_id = …`; otherwise → `documents.id IS NOT NULL`, i.e. **only chunks whose document exists in the `documents` table**. That last condition matters: older "orphan" chunks (test uploads from before Step 2.2, no `documents` row) would otherwise leak into answers as an "unknown document". Single-document mode is left untouched so an old session pinned to an orphan id still works.
+- **`prepareChat` — [chat.service.ts:74-165](src/services/chat.service.ts#L74-L165)** (the *one* place the change lives, thanks to the earlier restructure):
+  - [L80-88](src/services/chat.service.ts#L80-L88): absent/empty `documentId` → `ALL_DOCUMENTS`; a non-string (e.g. `?documentId=a&documentId=b` arrives as an array) → `400`. `searchAll` is the boolean the rest of the function branches on.
+  - [L105-115](src/services/chat.service.ts#L105-L115): logs "across ALL documents" vs "scoped to this documentId", and passes `undefined` to `searchSimilar` for all-mode.
+  - [L117-128](src/services/chat.service.ts#L117-L128): the 404 message differs ("No documents have been uploaded yet").
+  - [L147-151](src/services/chat.service.ts#L147-L151): in all-mode each chunk is prefixed `[Source: filename]` before being joined into the context.
+  - [L153-164](src/services/chat.service.ts#L153-L164): `sources` now include `documentId` and `filename`. Because `/chat-stream`'s `meta` event just forwards `prep.sources`, **the streaming route needed no change**.
+- **The prompt — [buildChatPrompt, chat.service.ts:15-49](src/services/chat.service.ts#L15-L49)**: a new `multiDocument` flag. When true, the intro says the context comes from the user's *documents* (each labelled), and an extra instruction tells the model to **name the document it used** ("According to rag_guide.pdf, …"). With it false the prompt is exactly what it was before.
+- **Session labels — [chatMessages.repository.ts:95-100](src/repositories/chatMessages.repository.ts#L95-L100)**: `listSessions()` labels an all-documents session "All documents" (there's no single file to look up).
+- The routes, `insertMessage`, `getRecentMessages` and the SSE protocol are **unchanged**.
+
+### Frontend
+
+- **Constants — [types/document.ts:15-16](frontend/src/types/document.ts#L15-L16):** `ALL_DOCUMENTS = 'all'` (must match the backend) and its label.
+- **`ChatSource` type — [types/chat.ts:1-8](frontend/src/types/chat.ts#L1-L8)**: gains `documentId` and `filename`.
+- **Sources show their file — [ChatSources.tsx:21-24](frontend/src/components/chat/ChatSources.tsx#L21-L24)**: a filename label next to the distance.
+- **Default choice on the landing screen — [NewChatScreen.tsx:44-53](frontend/src/components/chat/NewChatScreen.tsx#L44-L53)**: an "All documents (N)" chip, tinted as the default, shown only when there is more than one document to search. It calls `onPickAll`.
+- **The scope toggle — [ChatView.tsx:54-74](frontend/src/components/chat/ChatView.tsx#L54-L74)**: with 2+ documents the header shows **"Searching in [All documents ▾]"**, a `<select>` of *All documents* plus each PDF. `value` is the active scope's `documentId`; changing it calls `onChangeScope`.
+- **The handlers — [App.tsx:53-70](frontend/src/App.tsx#L53-L70)**: `handlePickAll` starts a new chat with `ALL_DOCUMENTS`; `handleChangeScope` starts a new chat for whichever scope was chosen. **Switching scope starts a *new* conversation on purpose**: a session's scope is fixed by the `documentId` its messages were saved with, so changing it mid-thread would make one conversation mix two scopes. The old one stays in the sidebar history.
+- **No streaming/hook changes**: `useChat`/`streamChatMessage` already send `documentId` as a string, and `'all'` is just another string; a restored "All documents" session comes back from `/sessions` with the right label.
+- Small wording changes: the empty-chat hint and the input placeholder no longer say "this document".
+
+### Verified
+Real requests against your data: single-document answers unchanged; omitted and `'all'` `documentId` both search everything; sources carry filenames; a cross-document question ("how do chunking and embeddings relate?") pulled chunks from `rag_guide.pdf` and `chunking_guide.pdf`; array `documentId` → 400; unknown id → 404; an old session pinned to an orphan id still answers; all test conversations deleted afterwards. In a real browser: the "All documents (5)" chip, the dropdown, filenames on sources, and scope switching all worked with no console errors.
+
+### Takeaway
+Adding this feature took *one function change plus a flag*, because the pipeline was already in one place. The honest tradeoff of "search everything" is dilution — the top 3 chunks are shared across all PDFs, so a vague or "meta" question can be answered from just one of them. Citing the source file per chunk is the mitigation, not a full fix.
+
+---
+
 ## 5. Cross-cutting: errors, logging, and the backend restructure
 
 ### Error handling on the backend — [utils/errors.ts](src/utils/errors.ts)
 Every chat step talks to the network (Gemini, Neon) and can fail on a bad connection. Without handling, that becomes a bare `500` and the real cause is buried in a stack trace.
-- **`withErrorHandling(label, handler, { sse })`** — [L36-64](src/utils/errors.ts#L36-L64): wraps a route handler in `try/catch`. On failure it logs the real cause to the terminal and sends the client a clear message ([config.ts:18-19](src/config.ts#L18-L19)): a plain route → `503 { error }`; a stream route → an `event: error` frame. If headers were already sent it just ends the response.
+- **`withErrorHandling(label, handler, { sse })`** — [L36-64](src/utils/errors.ts#L36-L64): wraps a route handler in `try/catch`. On failure it logs the real cause to the terminal and sends the client a clear message ([config.ts:25-26](src/config.ts#L25-L26)): a plain route → `503 { error }`; a stream route → an `event: error` frame. If headers were already sent it just ends the response.
 - **`summarizeError(err)`** — [L16-34](src/utils/errors.ts#L16-L34): Drizzle's failed-query errors embed the SQL **and every bound parameter** — for a vector search that's all 3072 numbers, drowning the real reason. This prints only: the first line of the message, the chain of `cause`s (where `ECONNRESET` etc. live), and the first stack frame inside *our* code (`where: …`). Never `console.error(err)` raw in a route.
 - **Where it's applied:** only `/chat` and `/chat-stream`. The upload and the read/delete routes are *not* wrapped (pre-existing behavior; Express's default handler answers those). Also note: a wrong API key currently shows the "check your internet connection" message, because the wrapper doesn't distinguish failure types.
 
@@ -653,12 +700,12 @@ Follow a single message from the keyboard to the screen (streaming version):
 2. **The user bubble appears immediately** ([useChat.ts:117](frontend/src/hooks/useChat.ts#L117)); loading = true → "Thinking…" ([ChatPanel.tsx:44](frontend/src/components/chat/ChatPanel.tsx#L44)).
 3. **`EventSource` opens** `GET /chat-stream?documentId=…&message=…&sessionId=…` ([api/chat.ts:46-53](frontend/src/api/chat.ts#L46-L53)). The browser first checks CORS ([app.ts:17-21](src/app.ts#L17-L21)).
 4. **Express routes it** — [app.ts:32](src/app.ts#L32) mounts `chatRouter`; [chat.routes.ts:42](src/routes/chat.routes.ts#L42) handles it inside `withErrorHandling`.
-5. **`prepareChat()`** ([chat.service.ts:57](src/services/chat.service.ts#L57)):
+5. **`prepareChat()`** ([chat.service.ts:74](src/services/chat.service.ts#L74)):
    - validates input → [embeddings.service.ts](src/services/embeddings.service.ts) calls Gemini to embed the question →
-   - [`searchSimilar`](src/repositories/chunks.repository.ts#L25-L41) runs the pgvector `<=>` query on Neon → top 3 chunks →
-   - [`getRecentMessages`](src/repositories/chatMessages.repository.ts#L29-L41) loads the last 8 messages →
-   - [`insertMessage`](src/repositories/chatMessages.repository.ts#L16-L23) saves your message →
-   - [`buildChatPrompt`](src/services/chat.service.ts#L15-L37) assembles context + history + question.
+   - [`searchSimilar`](src/repositories/chunks.repository.ts#L36-L66) runs the pgvector `<=>` query on Neon → top 3 chunks →
+   - [`getRecentMessages`](src/repositories/chatMessages.repository.ts#L30-L42) loads the last 8 messages →
+   - [`insertMessage`](src/repositories/chatMessages.repository.ts#L17-L24) saves your message →
+   - [`buildChatPrompt`](src/services/chat.service.ts#L15-L49) assembles context + history + question.
 6. **SSE opens**; `meta` (session id + sources) is sent ([chat.routes.ts:57-67](src/routes/chat.routes.ts#L57-L67)). The frontend adds the empty assistant bubble with sources ([useChat.ts:137-150](frontend/src/hooks/useChat.ts#L137-L150)).
 7. **[`streamAnswer`](src/services/llm.service.ts#L29-L73)** calls Gemini's streaming endpoint; each parsed piece is `yield`ed, and the route writes it as `data: {"text": …}` ([chat.routes.ts:74-77](src/routes/chat.routes.ts#L74-L77)).
 8. **Each piece reaches `onmessage`** ([api/chat.ts:61-64](frontend/src/api/chat.ts#L61-L64)) → `appendToAssistantBubble` → React re-renders; the bubble grows and the view scrolls ([ChatPanel.tsx:23-27](frontend/src/components/chat/ChatPanel.tsx#L23-L27)).
@@ -675,8 +722,10 @@ Things that work but are deliberately simple — good to know, and several are f
 - **Uploads embed chunks one at a time**, so big PDFs are slow → Phase 6 (BullMQ background jobs).
 - **`chunkText` is naive** (fixed 500 words, no overlap, flattens newlines) → advanced chunking topic.
 - **Search has no vector index**, so it compares against every chunk → fine now, see INDEXING-AT-SCALE for later.
-- **A chat is pinned to one document.** `searchSimilar` requires a `documentId` and `chat_messages.document_id` is `NOT NULL` → Step 3.3 (multi-document chat) loosens both, in [`prepareChat`](src/services/chat.service.ts#L57-L118).
-- **`listSessions()` loads *every* message** of every session and reduces them in JavaScript ([repository L70-113](src/repositories/chatMessages.repository.ts#L70-L113)) — fine for a learning project, wasteful at scale.
+- **A chat's scope is fixed when it starts** (one document *or* all documents), because messages are saved against one `documentId`. Switching scope in the header starts a new chat instead of changing the current one.
+- **"All documents" retrieval is only as good as top-3.** Chunks from several PDFs compete for the same 3 slots, and *meta* questions ("which documents do you have?") can't be answered by chunk search — the model only sees the 3 nearest chunks, often all from one file. A future routing step (Phase 7) is the real fix.
+- **Orphan chunks exist in the database**: 8 groups of chunks have no `documents` row (test uploads from before Step 2.2). They're invisible in the UI and can't be deleted from it. All-documents search deliberately skips them; they can be cleaned up with SQL (`DELETE FROM chunks WHERE document_id NOT IN (SELECT id FROM documents)`) — not done automatically.
+- **`listSessions()` loads *every* message** of every session and reduces them in JavaScript ([repository L71-114](src/repositories/chatMessages.repository.ts#L71-L114)) — fine for a learning project, wasteful at scale.
 - **`/chat-stream` puts the user's message in the URL** (because `EventSource` is GET-only): it can appear in server logs, and very long messages could hit URL length limits.
 - **The Gemini API key is sent in the URL** (`?key=`). Gemini also accepts it in an `x-goog-api-key` header, which keeps it out of URLs and logs.
 - **The upload's PDF check trusts the client's mimetype** ([documents.routes.ts:40](src/routes/documents.routes.ts#L40)).

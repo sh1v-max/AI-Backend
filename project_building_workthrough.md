@@ -144,13 +144,15 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 - `ChatPanel` keeps showing the "Thinking…" bubble until the assistant bubble has real text (retrieval + first token can take a moment), hides the empty placeholder so it doesn't render as a blank bubble, and auto-scrolls as the reply grows (`auto` while streaming, `smooth` otherwise), not just when a new message is added
 - Output: the chat UI shows the reply typing out word by word, the actual DocMind experience
 
-**Step 3.3 — Multi-document chat: "all PDFs" by default, one PDF as the override** *(planned, not built yet — see [ai-backend-roadmap.md](ai-backend-roadmap.md) Step 3.3 for the full breakdown)*
-- Make `searchSimilar(embedding, limit, documentId)`'s `documentId` optional — omit it to scan chunks across every document instead of one
-- `/chat` accepts `documentId: string | undefined` (`undefined`/`'all'` = search everything); sources carry `documentId` + filename so answers can cite which PDF they came from
-- Frontend: a toggle in the chat header ("All documents" default vs. picking one) rather than a separate screen
-- Do this right after 3.1/3.2, before moving on to Phase 4
+**Step 3.3 — Multi-document chat: "all PDFs" by default, one PDF as the override** *(done — line-linked explanation in [CODE_EXPLAINED.md](CODE_EXPLAINED.md#step-33--multi-document-chat))*
+- **Backend:** `documentId` is now optional everywhere. **Omitted / empty / `'all'` = search every document**; a real id = that one PDF. The change lives in one place, `prepareChat()` in `chat.service.ts`, so `/chat` and `/chat-stream` both got it for free
+- `searchSimilar(embedding, limit, documentId?)` — no `documentId` skips the filter. It now returns `{ content, distance, documentId, filename }` (a `LEFT JOIN documents`), so sources say which PDF each chunk came from. In all-documents mode it only searches chunks whose `documents` row exists (`documents.id IS NOT NULL`), because older "orphan" chunks (test uploads from before Step 2.2) have no row, aren't visible in the UI, and would otherwise show up in answers as an "unknown document"
+- **No schema change:** an all-documents session stores the sentinel `'all'` in the existing `NOT NULL` `chat_messages.document_id` column (`ALL_DOCUMENTS` in `config.ts`) instead of making it nullable — avoids altering the live table. `listSessions()` labels such a session "All documents"
+- **Prompt:** `buildChatPrompt(..., multiDocument)` — in all-mode each chunk is prefixed `[Source: filename]` and the model is told to name the document it used; the single-document prompt is unchanged
+- **Frontend:** an "All documents (N)" chip on the New Chat screen (only when there's more than one document) and a **"Searching in [All documents ▾]"** dropdown in the chat header; source cards show their filename. A conversation's scope is fixed when it starts, so switching the dropdown starts a *new* chat (the old one stays in history)
+- **Known tradeoff:** the top 3 chunks are shared across all PDFs, and "meta" questions like "which documents do you have?" can't be answered by chunk search — the model only sees the nearest 3 chunks, often from one file. Routing (Phase 7) is the real fix
 
-**Milestone:** the chat reply streams instead of arriving all at once, visibly in the browser, and history still works on the next turn. *(Reached — Steps 3.1, 3.2, 3.2F done; 3.3 is the remaining item in this phase.)*
+**Milestone:** the chat reply streams instead of arriving all at once, visibly in the browser, and history still works on the next turn. *(Reached — Steps 3.1, 3.2, 3.2F and 3.3 all done; Phase 3 is complete.)*
 
 ---
 
