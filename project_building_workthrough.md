@@ -160,11 +160,12 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 
 *Topic: [08-structured-output-zod](topics/08-structured-output-zod)*
 
-**Step 4.1 — Structured output with Zod**
-- Define a `QuizQuestion` Zod schema (question, 4 options, correct index) and a `Quiz` schema (array of 5)
-- Write a standalone script: pull a few chunks, prompt the LLM to return JSON matching the schema, parse with `Quiz.parse(...)`
-- Run it 3-4 times, notice occasional shape mismatches Zod catches
-- Output: a script proving you can force reliable JSON out of an LLM
+**Step 4.1 — Structured output with Zod** *(done — line-linked explanation in [CODE_EXPLAINED.md](CODE_EXPLAINED.md#step-41--structured-output-with-zod); run with `npm run step4`)*
+- `src/schemas/quiz.schema.ts`: `QuizQuestion` (question; **exactly 4** options; `correctIndex` a whole number 0–3; a `.refine()` rule that all 4 options differ) and `Quiz` (exactly 5 questions). `z.infer` gives the TypeScript type from the same schema. It also holds `quizResponseSchema`, the same shape in Gemini's structured-output format
+- `sampleChunks(documentId, count)` in `chunks.repository.ts`: chunks **evenly spaced across a document** in reading order — no search, because a quiz has no question and wants broad coverage. `generateAnswer(prompt, generationConfig?)` gained an optional config so it can switch on Gemini's JSON mode
+- `src/step4-quiz-zod.ts`: asks for the same quiz two ways (plain "respond with ONLY JSON" vs structured-output mode), several runs each, and checks every reply in two stages — `JSON.parse`, then `Quiz.safeParse` — reporting exactly why any reply fails. Also a **gallery of 11 hand-made replies** (10 wrong in realistic ways) run through the same checker with no API calls, so what Zod catches is visible every time
+- **Result:** the gallery caught all 10 bad replies with precise reasons. Real runs were **17/17 valid in both modes** — this model almost never goes off-shape, so Zod is insurance rather than something that visibly saves you here. Also found: across 50 questions the correct answer landed at position 0/1/2/3 in 22%/36%/32%/10% — *valid isn't the same as good*, so Step 4.2 should shuffle options in code
+- Output: a script proving you can force reliable JSON out of an LLM — and check it
 
 **Step 4.2 — `POST /quiz`**
 - Takes a `documentId`, pulls several stored chunks (broad coverage, not narrow relevance)

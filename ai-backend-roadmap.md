@@ -123,7 +123,7 @@ No auth, no queues, no multi-step agents, no deployment pressure. Just enough to
 
 This is the one genuinely "AI backend" skill in this whole simple project: forcing an LLM to return **reliable structured data** instead of free-form text — the same core idea used for any AI feature that has to plug into a database or UI, not just a chat bubble.
 
-**Step 4.1 — Structured output with Zod (3h)**
+**Step 4.1 — Structured output with Zod (3h)** ✅ *done — see `project_building_workthrough.md`*
 - You already know Zod for validating API request bodies — this is the exact same tool, applied to LLM output instead of user input. Docs: [Zod official docs](https://zod.dev/) (just as a refresher if needed)
 - Learn: [Gemini API docs – Structured output](https://ai.google.dev/gemini-api/docs/structured-output) — how to force a response to match a schema
 - Define a schema for one quiz question:
@@ -136,6 +136,7 @@ This is the one genuinely "AI backend" skill in this whole simple project: forci
   const Quiz = z.array(QuizQuestion).length(5);
   ```
 - Build: a standalone script that pulls a few chunks from your DB, prompts the LLM to "generate 5 multiple-choice questions based on this content, respond only in this JSON shape," parses the response with `Quiz.parse(...)`, and logs it. Try it 3-4 times — notice the LLM occasionally returns something slightly off-shape, and Zod catching that (rather than silently accepting garbage) is the entire point of this step.
+- **How it turned out:** with `gemini-flash-lite-latest` the model *didn't* slip — 17/17 replies were valid in both the plain-prompt and structured-output modes — so the "occasionally off-shape" part of the exercise didn't happen on its own. To still see Zod working, the script includes a gallery of 11 hand-made replies (fenced JSON, chatty preamble, 3 options, `"2"` as a string, out-of-range index, duplicate options, ...) run through the same checker with no API calls. Structured-output mode works with an OpenAPI-style `responseSchema` using uppercase types (`'ARRAY'`, `'OBJECT'`, `'STRING'`, `'INTEGER'`). Extra finding: valid ≠ good — the correct answer's position wasn't uniform (22/36/32/10%), so shuffle the options in code in Step 4.2.
 
 **Step 4.2 — POST /quiz endpoint (3h)**
 - Build: takes a `documentId` → pulls a handful of stored chunks for that document (not a search, just grab several — you want broad coverage of the doc for a quiz, not narrow relevance like `/chat`) → runs the Step 4.1 prompt+schema → returns the validated quiz as JSON.

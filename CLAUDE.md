@@ -21,13 +21,14 @@ Upload a PDF → chat with it (with memory) → the reply streams in live → ge
 
 Roadmap phases (details in the walkthrough): 1 Embeddings & vector search · 2 RAG (+ memory) · 3 Streaming · 4 Quiz/structured output · 5 Tie together · 6 Background jobs (BullMQ) · 7 Agents & tool calling · 8 Suspend/resume workflows · 9 Testing & observability · 10 Deploy · 11 Production web-layer reading (GraphQL, JWT, idempotency/multi-tenancy) · 12 Advanced pass.
 
-## 3. Current state (as of 2026-09-20)
+## 3. Current state (as of 2026-09-22)
 
-- **Done:** Phase 1 (embeddings, pgvector, Drizzle repositories), Phase 2 (PDF upload → chunk → embed → store; `/chat` RAG; conversation memory; session/document history + deletes; ChatGPT-style frontend), **Phase 3 Steps 3.1, 3.2, 3.2F** (SSE mechanics, streamed `/chat-stream`, frontend `EventSource`).
-- **Next up:** **Phase 4 — quiz generation with structured output (Zod)**, starting at Step 4.1. See [PROGRESS.md](PROGRESS.md) for the tracker and the walkthrough for step details. (Phase 3 is complete, including Step 3.3 multi-document chat.)
+- **Done:** Phase 1 (embeddings, pgvector, Drizzle repositories), Phase 2 (PDF upload → chunk → embed → store; `/chat` RAG; conversation memory; session/document history + deletes; ChatGPT-style frontend), **all of Phase 3** — Steps 3.1, 3.2, 3.2F (SSE mechanics, streamed `/chat-stream`, frontend `EventSource`) and 3.3 (multi-document chat).
+- **Step 4.1 done (2026-09-21):** Zod quiz schema (`src/schemas/quiz.schema.ts`), `sampleChunks()` in `chunks.repository.ts`, optional `generationConfig` on `generateAnswer()`, and the `npm run step4` experiment script (plain prompt vs Gemini structured-output mode, plus a no-API "bad-reply gallery"). Uncommitted when written — check `git status`.
+- **Next up:** **Step 4.2 — `POST /quiz`** (route + `quiz.service.ts` + reuse the schema and `sampleChunks`; validate → retry once → clean error; **shuffle the options in code and remap `correctIndex`** because the model's correct-answer position isn't uniform), then 4.2F (Generate-quiz button, shown only when a *single* document is selected) and optional 4.3. See [PROGRESS.md](PROGRESS.md) and the walkthrough. (Phase 3 is complete, including Step 3.3.)
 - **Backend restructure done (2026-09-20):** the 449-line `src/index.ts` was split into `app.ts` + `config.ts` + `routes/` + `services/` + `utils/` (see §6), with **no behavior change**. Verified: `tsc --noEmit` clean; all 400/404 validation paths, `/chat` and `/chat-stream` happy paths (incl. history persistence, cleaned up afterwards), and the bad-API-key failure paths (503 for `/chat`, `event: error` frame for the stream, same terminal error block) behave as before. The frontend was not touched.
-- **Git:** working branch is `Streaming-branch` (branched from `main`; last commit at time of writing: `0568597 gemini response conflict`). Shiv was opening a PR into `main`. The backend restructure (new `src/` files + the slimmed `index.ts`) and this file's latest edits were **uncommitted** when written — Shiv commits them himself. Run `git status` to see what's pending.
-- `topics/07-streaming-sse/NOTES.md` is still the empty template — Shiv fills it in himself.
+- **Git:** the checked-out branch is `zod-branch` (last commit when written: `62e2559`, 2026-09-22). `Streaming-branch` was merged into `main` through PR #1, and Step 3.3 is committed. **Still uncommitted when written:** all of Step 4.1's code (`zod` in `package.json`/lockfile, `src/schemas/`, `src/step4-quiz-zod.ts`, `sampleChunks`, the `generationConfig` parameter) and the latest docs updates. Shiv commits everything himself — run `git status` to see what's pending.
+- **Topic notes:** `topics/07-streaming-sse/NOTES.md` was written (short, in Shiv's voice) on 2026-09-21 at his request. READMEs now exist for topics 07, 08 (structured output) and 09 (BullMQ). NOTES.md for 08+ are still Shiv's to fill in.
 
 ## 4. Stack
 
@@ -39,6 +40,7 @@ Roadmap phases (details in the walkthrough): 1 Embeddings & vector search · 2 R
 | PDF | `pdf-parse` v2 (`new PDFParse(...)`, `getText()`) — needs a real text layer, no OCR |
 | LLM | Gemini REST API, called with plain `fetch` (no SDK): `gemini-flash-lite-latest` for generation (`generateContent` and `streamGenerateContent?alt=sse`) |
 | Embeddings | `gemini-embedding-001`, **3072 dimensions** |
+| Validation | **Zod 4** (`zod` ^4.6) — validates LLM output (the quiz), same idea as validating request bodies |
 | Frontend | React 19 + Vite 8 + TypeScript, `@phosphor-icons/react`, oxlint. No state library, no router |
 
 ⚠️ **Doc/code mismatch to remember:** the roadmap and walkthrough text still say `text-embedding-004` / 768 dimensions in Phase 1 (that's what Step 1.1/1.2 originally used). The **running code uses `gemini-embedding-001` and `vector(3072)`** ([schema.ts](src/db/schema.ts), [embeddings.service.ts](src/services/embeddings.service.ts)). Trust the code.
@@ -53,7 +55,7 @@ cd frontend && npm install && npm run dev   # UI on http://localhost:5173
 npx tsc --noEmit            # typecheck backend (dev script uses --transpile-only, so type errors don't stop it)
 ```
 
-`.env` keys: `GEMINI_API_KEY`, `DATABASE_URL` (Neon Postgres connection string), `FRONTEND_URL` (CORS origin; defaults to `http://localhost:5173`). `.env` is gitignored and **copied between machines by hand**. There are also `step1/2/3` scripts (`npm run step1`…) — the standalone Phase 1 learning scripts, not part of the app.
+`.env` keys: `GEMINI_API_KEY`, `DATABASE_URL` (Neon Postgres connection string), `FRONTEND_URL` (CORS origin; defaults to `http://localhost:5173`). `.env` is gitignored and **copied between machines by hand**. The `package.json` scripts are `dev`, `step3`, `step4` and `test` (`step1`/`step2` were deleted from it; run those files directly with `npx ts-node src/stepN-….ts` if needed). The `stepN` files are standalone learning scripts, not part of the app. **`step2` and `step3` are destructive** (they DROP/DELETE the `chunks` table) — never re-run them against the live database; note `step3` is *still* an npm script and is worth removing. `step1` and `step4` are safe (step4 is read-only). **`package.json` must stay strict JSON** — a `//` comment in it breaks every npm command (`EJSONPARSE`).
 
 Schema changes: `drizzle.config.ts` points at `src/db/schema.ts` (output `./drizzle`). There is no committed migrations folder in the repo right now; the tables were created against Neon directly, and equivalent SQL is kept in comments beside each table in `schema.ts`.
 
@@ -65,7 +67,7 @@ Tests: none yet (Phase 9).
 src/
   index.ts                     ~7 lines: load dotenv, app.listen(). Nothing else — don't grow it
   app.ts                       builds the Express app (json, cors, health route, mounts the routers); no listen(), so tests can import it
-  config.ts                    HISTORY_LIMIT, PORT, FRONTEND_URL, CONNECTION_ERROR_MESSAGE
+  config.ts                    HISTORY_LIMIT, PORT, FRONTEND_URL, CONNECTION_ERROR_MESSAGE, ALL_DOCUMENTS ('all') + ALL_DOCUMENTS_LABEL
   routes/                      thin: read the request, call a service/repository, write the response
     documents.routes.ts        GET /documents, DELETE /documents/:id, POST /upload (multer lives here)
     sessions.routes.ts         GET /sessions, GET /sessions/:id/messages, DELETE /sessions/:id
@@ -74,9 +76,9 @@ src/
     chat.service.ts            buildChatPrompt() + prepareChat() = steps 1-5 of the chat pipeline, shared by both chat routes
     ingestion.service.ts       ingestPdf(): parse -> chunk -> embed + store -> document row (steps 2-5 of upload)
     embeddings.service.ts      getEmbedding(text) -> number[3072]
-    llm.service.ts             generateAnswer(prompt) and streamAnswer(prompt) (async generator)
+    llm.service.ts             generateAnswer(prompt, generationConfig?) and streamAnswer(prompt) (async generator). generationConfig is how structured-output (JSON) mode is switched on
   repositories/
-    chunks.repository.ts       insertChunk, searchSimilar (cosine distance), deleteChunksByDocumentId
+    chunks.repository.ts       insertChunk, sampleChunks (evenly spaced chunks of one document, for quizzes — no search), searchSimilar (cosine distance), deleteChunksByDocumentId
     documents.repository.ts    insertDocument, listDocuments, deleteDocument
     chatMessages.repository.ts insertMessage, getRecentMessages, getMessagesForSession, listSessions, deleteSession, deleteMessagesByDocumentId
   db/client.ts                 Pool + drizzle instance (the `db` every repository imports)
@@ -85,7 +87,10 @@ src/
     errors.ts                  summarizeError(), withErrorHandling() (wraps /chat and /chat-stream)
     chunkText.ts               ~500-word splitter
     pipelineLogger.ts          chalk-coloured step/timing/preview logging used by every route
-  step1-embeddings.ts, step2-pgvector.ts, step3-drizzle.ts   Phase 1 learning scripts
+  schemas/
+    quiz.schema.ts             Zod QuizQuestion / Quiz (exactly 5 questions × exactly 4 options, correctIndex 0-3, options all different) + the same shape as Gemini's responseSchema
+  step1-embeddings.ts, step2-pgvector.ts, step3-drizzle.ts   Phase 1 learning scripts (⚠️ step2 DROPs and step3 DELETEs the chunks table — never re-run against the live DB)
+  step4-quiz-zod.ts            Step 4.1 experiment (`npm run step4 [documentId] [runs]`) — read-only, safe to re-run; spends a few Gemini calls
 frontend/src/
   api/         client.ts, documents.ts, chat.ts (sendChatMessage + streamChatMessage), sessions.ts
   types/       document.ts, chat.ts
@@ -158,6 +163,10 @@ Only the last-stage failures are special: a failed DB save of the assistant repl
 
 **Security hygiene**
 - `.env` and `.history/` (VS Code Local History snapshots every saved file, including `.env`) are gitignored. A real secret leak happened through `.history` earlier — never track either, never print `.env` contents. Rotate the Gemini key / DB password if they're ever exposed.
+**Structured output (Phase 4)**
+- **Structured output (Step 4.1):** two separate jobs — *ask* for a shape (prompt, or Gemini `generationConfig: { responseMimeType: 'application/json', responseSchema }`, which takes an OpenAPI-style schema with **uppercase** types) and *verify* it (Zod `safeParse`). Never skip the verify half. With `gemini-flash-lite-latest` the model was valid 17/17 times in both modes, so Zod is insurance here; the script's "bad-reply gallery" is what shows it working. **Valid ≠ good:** the correct answer's position across 50 questions was 22/36/32/10% (positions 0–3), so shuffle options in code. A quiz needs broad coverage of one document (`sampleChunks`), not a similarity search, and must not stream (half a JSON object is useless).
+**Environment gotchas**
+- **Network gotcha (seen 2026-09-21):** if DB calls fail with `getaddrinfo ENOTFOUND ...neon.tech` while other sites work, the *current network's DNS resolver* is refusing that hostname (it happened on a hotspot: resolver `Query refused`, while 8.8.8.8 resolved it fine). Not a code bug — switch network or set DNS to 8.8.8.8/1.1.1.1. For a one-off test without changing system settings, preload a small shim that resolves `*.neon.tech` via `dns.Resolver` (kept out of the repo).
 
 ## 10. Code conventions in this repo
 
@@ -177,8 +186,8 @@ Only the last-stage failures are special: a failed DB save of the assistant repl
 | [project_building_workthrough.md](project_building_workthrough.md) | Phase-by-phase build order + implementation details of what was built | Claude, when a step is finished |
 | [ai-backend-roadmap.md](ai-backend-roadmap.md) | The original learning plan with resources; done steps get ✅ + a "how it turned out" note | Claude, when a step is finished |
 | [PROGRESS.md](PROGRESS.md) | The tracker — single source of truth for "what next" | Claude, when a topic finishes |
-| [CODE_EXPLAINED.md](CODE_EXPLAINED.md) | Deep, line-linked explanation of every file and step (1.1 → 3.2): why, what, how. Written for Shiv to re-learn from. Link line numbers can drift as code changes — function names are the reliable anchor | Claude, when a step is finished (add the new step's section) and after big refactors (re-check links) |
-| [posts/](posts) | Shiv's daily "learning in public" record. `postN.md` = a **short** source-notes file for that day's work (what was done, a few numbers, quotable lessons, "don't overclaim", what's next), written so another Claude chat can turn it into a LinkedIn post and a Twitter/X post. Posts 1–7 aren't in the repo; `post8.md` is the first one here. Only write a new `postN.md` when Shiv asks; keep it to *that day's* work and brief (Shiv rejected a long, timeline-style first draft), don't mention which machine the work was on, and keep private data (resume text, keys, email) out | Claude, on request |
+| [CODE_EXPLAINED.md](CODE_EXPLAINED.md) | Deep, line-linked explanation of every file and step (1.1 → 4.1): why, what, how. Written for Shiv to re-learn from. Link line numbers can drift as code changes — function names are the reliable anchor | Claude, when a step is finished (add the new step's section) and after big refactors (re-check links) |
+| [posts/](posts) | Shiv's daily "learning in public" record. `postN.md` = a source-notes file for that day's work, handed to another Claude chat that turns it into a LinkedIn post and a Twitter/X post. `posts/` holds `post1.md`–`post9.md`. **Format to follow (Shiv's own posts 1–7, now also 8–9), ~4–7 KB, no longer than posts 4–5:** (1) title `# AI Backend Learning Journey — Day N Context (for LinkedIn + Twitter)`; (2) `## Instructions for Claude` — use the `post-writer-sms` skill, tone (genuine, technical but accessible, no buzzwords), who Shiv is, "see post1–post(N-1) for continuity" with a one-line series recap, LinkedIn = longer/narrative vs Twitter = tight thread, and the strongest angle; (3) `## What I built today` — first-person narrative sections with the *why*, small code snippets, and "a real gotcha, not a hypothetical one"; (4) `## The bigger takeaway` (one thesis paragraph); (5) `## What's next`; then short extras Shiv's 1–7 lack but are worth keeping: `## Numbers you can quote`, `## Don't overclaim`, `## Hook ideas`. Do **not** write a bullet-fragment "notes" file (the first draft of post 8 was rejected as too long/timeline-style, the second as too thin — the narrative + instructions block is what makes the writer chat useful). Only write a new `postN.md` when Shiv asks; scope it to *that day's* work, don't mention which machine the work was on, and keep private data (resume text, keys, email) out | Claude, on request |
 | [README.md](README.md) | Short intro, setup, two-machine git workflow | Occasionally |
 | `topics/NN-*/README.md` / `NOTES.md` | Reading material / **Shiv's own notes (don't write)** | Shiv |
 
@@ -188,6 +197,9 @@ Shiv sometimes works on two laptops. Git is the only thing that carries code; `.
 
 ## 13. Work log (newest first — append an entry each session)
 
+- **2026-09-22 (posts)** — Compared Shiv's posts 1–7 with my first drafts of 8–9: 1–7's skeleton (instructions-for-the-writer block, narrative with the why, "bigger takeaway", "what's next") is better for the writer chat; my drafts lacked the instructions and story arc but had useful numbers / don't-overclaim / hook-ideas sections. Rewrote `post8.md` and `post9.md` as a hybrid and recorded the format in the §11 doc-map row.
+- **2026-09-22** — Wrote `posts/post9.md` (short source notes, same format as post8). Fixed `package.json`: `//` comments Shiv added around `step1`/`step2` made npm fail with `EJSONPARSE`; removed those two lines (kept valid JSON). Audited CLAUDE.md and CODE_EXPLAINED.md against the code and fixed what had drifted: stale npm-script mentions, git/branch state, `config.ts` description, missing `zod`/`schemas/` in the file map, the `generationConfig` note, glossary. All 321 CODE_EXPLAINED links re-verified.
+- **2026-09-21 (Step 4.1)** — Structured output with Zod. Installed `zod` (4.6.5); added `src/schemas/quiz.schema.ts`, `sampleChunks()`, optional `generationConfig` on `generateAnswer()`, `npm run step4` (plain vs structured-output mode, two-stage check `JSON.parse` → `Quiz.safeParse`, a no-API bad-reply gallery of 11 samples, and a correct-answer-position tally). Results: gallery caught 10/10 bad replies; real runs 17/17 valid in both modes; correct-answer positions 22/36/32/10% → shuffle in 4.2. Hit a DNS problem mid-step (network resolver refusing the Neon hostname; not a code bug — see §9). Wrote topic READMEs for 08 and 09 and a short 07 NOTES.md at Shiv's request; added the Step 4.1 section to CODE_EXPLAINED.md (321 links verified). Next: Step 4.2.
 - **2026-09-20 (Step 3.3)** — Multi-document chat: `documentId` optional (omitted/`'all'` = every document), `searchSimilar` returns `documentId` + `filename`, `prepareChat` branches on `searchAll` (`[Source: file]`-labelled chunks + a citation instruction in `buildChatPrompt`), `listSessions` labels all-docs sessions "All documents"; frontend "All documents (N)" chip + "Searching in" header dropdown + filenames on sources. Found orphan chunks in the DB and excluded them from all-mode (see §8). Tested with real requests for every case and the real UI in a headless browser (no console errors); throwaway sessions deleted. Added the Step 3.3 section to CODE_EXPLAINED.md (298 links verified). Next: Phase 4 (Zod quiz).
 - **2026-09-20 (earlier)** — Wrote [CODE_EXPLAINED.md](CODE_EXPLAINED.md): the full line-linked walkthrough of Steps 1.1–3.2 (all backend + frontend files, the SSE protocol, error/logging design, a request traced end to end, known limitations). All 276 line links were machine-checked against the files. Found while writing it: `npm run step2` (`DROP TABLE chunks`) and `npm run step3` (`DELETE FROM chunks`) would wipe the real chunks table — documented as "don't re-run". `format.ts` helpers and the non-streaming `sendChatMessage` are currently unused.
 - **2026-09-20 (later)** — Split `index.ts` into routes/services/utils/app/config ahead of Step 3.3 (chat pipeline steps 1-5 now live once in `prepareChat()`; upload pipeline in `ingestPdf()`), kept all logging intact, smoke-tested every route and the failure paths. Decided: error logging stays terminal-only for now (file logging deferred); no more refactor passes — new features get their own route + service files. Next: Step 3.3.

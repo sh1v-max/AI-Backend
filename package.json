@@ -4,9 +4,8 @@
   "description": "Learning project for building AI backends from scratch, following ai-backend-roadmap.md",
   "main": "index.js",
   "scripts": {
-    "step1": "ts-node src/step1-embeddings.ts",
-    "step2": "ts-node src/step2-pgvector.ts",
     "step3": "ts-node src/step3-drizzle.ts",
+    "step4": "ts-node src/step4-quiz-zod.ts",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -30,7 +29,8 @@
     "express": "^5.2.1",
     "multer": "^2.3.0",
     "pdf-parse": "^2.4.5",
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
