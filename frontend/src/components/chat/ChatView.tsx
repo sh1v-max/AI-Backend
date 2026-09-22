@@ -1,4 +1,4 @@
-import { SidebarSimple, Spinner } from '@phosphor-icons/react'
+import { ClipboardText, SidebarSimple, Spinner } from '@phosphor-icons/react'
 import { IconButton } from '../common/IconButton'
 import { ChatPanel } from './ChatPanel'
 import { NewChatScreen } from './NewChatScreen'
@@ -23,6 +23,8 @@ interface ChatViewProps {
   onPickAll: () => void
   onChangeScope: (documentId: string) => void
   onDeleteDocument: (doc: UploadedDocument) => void
+  onGenerateQuiz: () => void
+  quizLoading: boolean
 }
 
 export function ChatView({
@@ -42,6 +44,8 @@ export function ChatView({
   onPickAll,
   onChangeScope,
   onDeleteDocument,
+  onGenerateQuiz,
+  quizLoading,
 }: ChatViewProps) {
   return (
     <main className="chat-main">
@@ -78,6 +82,22 @@ export function ChatView({
             <span className="chat-main-subtitle chat-main-subtitle--muted">New chat</span>
           )}
         </div>
+
+        {/* Step 4.2F — a quiz needs one document's worth of chunks in reading
+            order (see quiz.service.ts), so this is hidden for "All documents"
+            and for the New Chat screen (no activeDocument yet). */}
+        {activeDocument && activeDocument.documentId !== ALL_DOCUMENTS && (
+          <button
+            type="button"
+            className="quiz-generate-button"
+            onClick={onGenerateQuiz}
+            disabled={quizLoading}
+            title="Generate a quiz from this document"
+          >
+            <ClipboardText size={15} weight="regular" aria-hidden />
+            <span className="quiz-generate-button-label">Generate quiz</span>
+          </button>
+        )}
       </header>
 
       {restoring ? (

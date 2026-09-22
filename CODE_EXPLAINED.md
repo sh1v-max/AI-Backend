@@ -1,4 +1,4 @@
-# DocMind — Code Explained (Step 1.1 → Step 4.2)
+# DocMind — Code Explained (Step 1.1 → Step 4.2F)
 
 A file-by-file, line-linked walkthrough of everything built so far: **why** each piece exists, **what** it does, and **how** it's implemented. Every `[file:lines]` link jumps to the exact code (Ctrl+Click in VS Code).
 
@@ -31,7 +31,7 @@ How this relates to the other docs:
    - [Step 3.2 — Streaming the real chat reply](#step-32--streaming-the-real-chat-reply)
    - [Step 3.2F — Streaming in the frontend](#step-32f--streaming-in-the-frontend)
    - [Step 3.3 — Multi-document chat](#step-33--multi-document-chat)
-   - **Phase 4 — Quiz generation:** [Step 4.1 — Structured output with Zod](#step-41--structured-output-with-zod) · [Step 4.2 — `POST /quiz`](#step-42--post-quiz)
+   - **Phase 4 — Quiz generation:** [Step 4.1 — Structured output with Zod](#step-41--structured-output-with-zod) · [Step 4.2 — `POST /quiz`](#step-42--post-quiz) · [Step 4.2F — Frontend: quiz UI](#step-42f--frontend-quiz-ui)
 5. [Cross-cutting: errors, logging, and the backend restructure](#5-cross-cutting-errors-logging-and-the-backend-restructure)
 6. [One chat message, end to end](#6-one-chat-message-end-to-end)
 7. [Known limitations (honest list)](#7-known-limitations-honest-list)
@@ -766,6 +766,62 @@ Tested live on a spare port against real documents and Gemini:
 
 ### Takeaway
 Two production habits from the Step 4.1 topic notes, both real code now: **retry once, then fail cleanly** (never trust one reply, never loop forever), and **don't leave "must be reliable" to the model** — shuffling in code is a direct, load-bearing response to a real measurement from Step 4.1, not a hypothetical improvement.
+
+---
+
+## Step 4.2F — Frontend: quiz UI
+
+**Files:** [types/quiz.ts](frontend/src/types/quiz.ts), [api/quiz.ts](frontend/src/api/quiz.ts), [hooks/useQuiz.ts](frontend/src/hooks/useQuiz.ts), [components/quiz/QuizModal.tsx](frontend/src/components/quiz/QuizModal.tsx), and edits to [ChatView.tsx](frontend/src/components/chat/ChatView.tsx), [App.tsx](frontend/src/App.tsx), [App.css](frontend/src/App.css).
+
+### Why we need it
+Step 4.2 made a quiz exist as a JSON response. Nobody actually takes a quiz through Postman — this step is what turns it into something you can see and click through in the browser, the same way Step 2.3F turned `/chat`'s JSON into a real chat UI.
+
+### What it does
+A **"Generate quiz"** button appears in the chat header whenever a single real document is open. Clicking it opens an overlay showing a loading state, then the 5 questions with their 4 options each as selectable radio buttons — or a clean error with a retry button if generation failed.
+
+### How it works
+
+**The type — [types/quiz.ts](frontend/src/types/quiz.ts)**
+`QuizQuestion` / `Quiz` mirror the backend's Zod shape exactly (`question`, `options: string[]`, `correctIndex`) — no validation on this side, since the backend already validated it with Zod before sending it; the frontend just needs the matching TypeScript shape.
+
+**The API call — [`generateQuiz`, api/quiz.ts:13-26](frontend/src/api/quiz.ts#L13-L26)**
+A plain `fetch` + `await`, the same shape as `sendChatMessage`. **Not streamed**, on purpose — same reasoning as the backend not streaming `/quiz`: a half-received quiz can't be validated or rendered, so there's nothing to gain from streaming it and it would only add complexity.
+
+**The hook — [`useQuiz`, hooks/useQuiz.ts](frontend/src/hooks/useQuiz.ts)**
+Deliberately its **own** hook, not folded into `useChat` — a quiz isn't a message in the conversation, it's a one-off request the button triggers, rendered in its own overlay on top of whatever chat happens to be open.
+- State: `open` (is the modal showing), `loading`, `error`, `quiz`, plus `documentId`/`filename` kept around so `regenerate()` knows what to re-request.
+- `generate(docId, docFilename)` ([L18-36](frontend/src/hooks/useQuiz.ts#L18-L36)): opens the modal immediately (`setOpen(true)`) and shows loading *before* the request even starts, so the button feels responsive; on success sets `quiz`, on failure sets `error` — same try/catch/finally shape as `useDocuments.uploadFile`.
+- `regenerate()` ([L40-42](frontend/src/hooks/useQuiz.ts#L40-L42)): re-runs `generate()` for the same document — used by both the modal's "Try again" (after an error) and "Regenerate" (a fresh set of questions) buttons, since they're the same action from two different starting states.
+- `close()` ([L44-46](frontend/src/hooks/useQuiz.ts#L44-L46)): just hides the modal; the last quiz/error is left in state rather than cleared, though nothing currently reopens without calling `generate()` again, which resets it anyway.
+
+**The modal — [QuizModal.tsx](frontend/src/components/quiz/QuizModal.tsx)**
+- [L30](frontend/src/components/quiz/QuizModal.tsx#L30): renders nothing at all when `open` is false — simplest possible way to keep an always-mounted component out of the way.
+- Three body states, each gated on `loading`/`error`/`quiz` ([L46-88](frontend/src/components/quiz/QuizModal.tsx#L46-L88)): a spinner while waiting (with a "usually 10–30 seconds" hint, since a silent multi-second wait feels broken otherwise), a red error state with a retry button, or the question list.
+- **Answer selection — [L22](frontend/src/components/quiz/QuizModal.tsx#L22), [L72-84](frontend/src/components/quiz/QuizModal.tsx#L72-L84)**: `selected` is a `Record<questionIndex, optionIndex>`, kept **local to this component** — nothing is sent anywhere yet, because there's no grading endpoint to send it to (that's the optional Step 4.3). Real `<input type="radio">` elements grouped by `name={quiz-question-${qi}}` so each question's options behave as one radio group, same as native HTML forms.
+- **Resetting on a fresh quiz — [L24-28](frontend/src/components/quiz/QuizModal.tsx#L24-L28)**: a `useEffect` clears `selected` whenever the `quiz` array reference changes (i.e. a new `generate()`/`regenerate()` call finished) — otherwise old answers would visually linger against new questions.
+- **A progress counter — [L91-101](frontend/src/components/quiz/QuizModal.tsx#L91-L101)**: `"N of 5 answered"`, purely informational (there's no submit step yet), plus the regenerate button.
+
+**Wiring the button — [ChatView.tsx:86-100](frontend/src/components/chat/ChatView.tsx#L86-L100)**
+Shown only when `activeDocument && activeDocument.documentId !== ALL_DOCUMENTS` ([L89](frontend/src/components/chat/ChatView.tsx#L89)) — hidden on the New Chat screen (no `activeDocument` yet) and under "All documents" scope, because [`sampleChunks`](src/repositories/chunks.repository.ts#L23-L34) reads one document's chunks in reading order and there's no such order across every PDF. `disabled={quizLoading}` stops a second click from firing a second Gemini request while one is already running.
+
+**Wiring in `App.tsx`**
+- [L31](frontend/src/App.tsx#L31): `const quiz = useQuiz()`.
+- `handleGenerateQuiz()` — [L79-83](frontend/src/App.tsx#L79-L83): re-checks the same precondition the button's visibility already enforces (never trust that a handler is only reachable the way the UI intends) before calling `quiz.generate(...)`.
+- `<QuizModal ... />` — [L171-179](frontend/src/App.tsx#L171-L179): rendered once at the top level of `app-shell`, alongside `<ChatView>`, so it overlays the whole app regardless of what's currently on screen underneath.
+
+**CSS — [App.css](frontend/src/App.css)**
+New rules for the header button ([L677-705](frontend/src/App.css#L677-L705)) and the modal (`.quiz-overlay` [L707-717](frontend/src/App.css#L707-L717), `.quiz-modal` [L719-728](frontend/src/App.css#L719-L728), question/option styling [L781-832](frontend/src/App.css#L781-L832)) — all built from the same design tokens (`--color-*`, `--space-*`, `--radius-*`) the rest of the app uses, so dark mode and the existing visual language (card shapes, the green accent on a selected option) carry over automatically with no extra work. The mobile media query gained an icon-only variant of the button ([L916-918](frontend/src/App.css#L916-L918)) and a full-screen modal on small viewports, matching how the sidebar already becomes a drawer below 900px.
+
+### What actually happened
+Tested live in a headless browser against the real running app:
+- The button was **absent** on the New Chat screen, **present** after picking a single document, and **disappeared again** after switching the header's scope dropdown to "All documents".
+- Clicking it showed the loading state, then a real 5-question quiz with 4 options each rendered from the backend.
+- Selecting one option per question updated the progress counter correctly (`5 of 5 answered`); clicking **Regenerate** produced a fresh quiz and reset the counter to `0 of 5 answered`, confirming the reset effect works.
+- Closing via the **X** button removed the overlay.
+- **Zero console errors**, and a screenshot confirmed the modal's colors, card shapes and spacing visually match the rest of the app (same green accent used for a selected radio option as elsewhere for a selected/active state).
+
+### Takeaway
+Same pattern as every earlier `*F` step (2.1F, 2.3F, 3.2F): the backend endpoint existing isn't the finish line — a feature isn't "done, done" until it's something you can actually click through. Keeping the quiz's state in its own hook, separate from `useChat`, is what made wiring it in almost mechanical: `App.tsx` just holds one more hook and renders one more always-present overlay component, without touching how chat or sessions work at all.
 
 ---
 

@@ -177,9 +177,12 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 - **Tested live:** happy path (5 valid, shuffled questions, all logged `[1/4]`–`[4/4]`, attempt `1/2` succeeded both times tried); all four bad-input cases (missing, `'all'`, unknown id, non-string) returned the right status; `npm run step4` re-run after the refactor to confirm sharing the functions didn't break the experiment script (gallery still 10/10, a real run still produced a valid quiz)
 - Output: a working quiz-generation endpoint with real production habits (validate → retry → shuffle) built in
 
-**Step 4.2F — Frontend: quiz UI**
-- A "Generate Quiz" button (per selected document) that POSTs to `/quiz`, renders each question with its 4 options as selectable radio buttons
-- Output: quizzes are visible and answerable, not just JSON in a response
+**Step 4.2F — Frontend: quiz UI** *(done — line-linked explanation in [CODE_EXPLAINED.md](CODE_EXPLAINED.md#step-42f--frontend-quiz-ui))*
+- A **"Generate quiz"** button in the chat header, next to the "Searching in" dropdown — shown only when a single real document is active (hidden on the New Chat screen and on "All documents", since a quiz needs one document's chunks in order)
+- Clicking it opens an overlay modal: a loading state while `POST /quiz` runs (10–30s), then each question rendered with its 4 options as selectable radio buttons, or a clean error with a "Try again" button if generation failed
+- A **"Regenerate"** button gets a fresh quiz for the same document (clears previous selections); closing and reopening starts over
+- New files: `types/quiz.ts`, `api/quiz.ts` (not streamed — same reasoning as the backend: a partial quiz can't be rendered), `hooks/useQuiz.ts` (its own hook — a quiz isn't part of the conversation), `components/quiz/QuizModal.tsx`
+- Output: quizzes are visible and answerable in the real UI, not just JSON in a response — verified in a real browser (button hidden/shown correctly, 5 questions × 4 options rendered, answers selectable, regenerate resets selections, closes cleanly, zero console errors)
 
 **Step 4.3 — `POST /quiz/check`** *(optional, closes the loop)*
 - Takes `{questionIndex, chosenIndex}` against a generated quiz, returns correct/incorrect
