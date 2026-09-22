@@ -143,8 +143,9 @@ This is the one genuinely "AI backend" skill in this whole simple project: forci
 - Add basic retry logic: if `Quiz.parse()` throws (bad shape from the LLM), retry the LLM call once before giving up. This one small habit — validate, and retry on failure, rather than trusting the model blindly — is a real production pattern worth being able to explain in an interview.
 - **How it turned out:** used Gemini's structured-output mode (not just the plain prompt) since Step 4.1 showed it's at least as reliable. `Quiz.safeParse` instead of `.parse()` + try/catch — same idea, no exception to catch. One addition beyond the plan: options are **shuffled in code after validating** (Fisher–Yates, remapping `correctIndex`), because Step 4.1's own data showed the model doesn't place the correct answer uniformly. `documentId: 'all'` is explicitly rejected (400) — a quiz needs one document's chunks in order, not a mix across PDFs. `buildQuizPrompt`/the checker moved into `quiz.service.ts` so the Step 4.1 script (`npm run step4`) and the real endpoint share one implementation.
 
-**Step 4.3 — (Optional) simple quiz-taking response check (1h)**
+**Step 4.3 — (Optional) simple quiz-taking response check (1h)** ✅ *done — see `project_building_workthrough.md`*
 - Build: a tiny `POST /quiz/check` that takes `{questionIndex, chosenIndex}` against a quiz you generated and returns correct/incorrect. This isn't really "AI" — it's just closing the loop so the feature feels complete end to end.
+- **How it turned out — deliberately no endpoint:** `correctIndex` is already sitting in the `/quiz` response the browser holds. A `POST /quiz/check` here would just be the server comparing two numbers the client already knows, with nothing stopping the client from lying to it anyway — quizzes aren't stored server-side (no `quizId`, no table), so the server has no independent truth to check against. Grading happens entirely in `QuizModal.tsx`'s own state, no network round trip. A *real* `/quiz/check` would only be meaningful once quizzes are persisted server-side (a later phase) — that's the honest reason to skip it now rather than build a fake security boundary.
 
 ---
 

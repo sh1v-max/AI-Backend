@@ -184,15 +184,14 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 - New files: `types/quiz.ts`, `api/quiz.ts` (not streamed — same reasoning as the backend: a partial quiz can't be rendered), `hooks/useQuiz.ts` (its own hook — a quiz isn't part of the conversation), `components/quiz/QuizModal.tsx`
 - Output: quizzes are visible and answerable in the real UI, not just JSON in a response — verified in a real browser (button hidden/shown correctly, 5 questions × 4 options rendered, answers selectable, regenerate resets selections, closes cleanly, zero console errors)
 
-**Step 4.3 — `POST /quiz/check`** *(optional, closes the loop)*
-- Takes `{questionIndex, chosenIndex}` against a generated quiz, returns correct/incorrect
-- Output: the quiz feature feels complete end to end
+**Step 4.3 + 4.3F — Grading, done together, client-side** *(done — line-linked explanation in [CODE_EXPLAINED.md](CODE_EXPLAINED.md#step-43--43f--checking-answers))*
+- **No `POST /quiz/check` was built, on purpose.** `correctIndex` already travels down in the `/quiz` response the browser holds — the server has no separate stored copy of the quiz to check against (no `quizId`, nothing persisted), so a round trip would just be the server comparing two numbers the client already has, with the client fully able to lie about them either way. A trustworthy check needs server-stored quizzes, which is a bigger change than this optional step is meant to be — see the "how it turned out" note in [ai-backend-roadmap.md](ai-backend-roadmap.md) Step 4.3.
+- Instead, `QuizModal.tsx` grades entirely in its own state: a **"Check answers"** button locks the radios (`disabled`) and marks every option — the correct one always green (even if unpicked), a wrong pick red — plus a `"N of 5 correct"` score in the footer
+- **Regenerate clears grading too** (same effect that already reset picks on a new quiz now also resets `checked`)
+- **A real CSS bug found and fixed while testing:** the "you selected this" green highlight (`:has(input:checked)`) has higher specificity than the plain `.quiz-option--incorrect` class, so a wrong-but-selected answer showed green *and* a red ✕ icon at the same time — confusing. Fixed by scoping the selected-highlight to `:has(input:checked:not(:disabled))`, so it steps aside once grading locks the radios and only the correct/incorrect colors apply. Caught by actually looking at a screenshot, not just reading the code.
+- Output: DocMind's full loop — upload, chat, quiz, check — all usable end to end in the browser, verified live (locked radios after checking, correct score count, colors correct after the fix, cleared on regenerate, 0 console errors)
 
-**Step 4.3F — Frontend: answer checking**
-- Wire the quiz UI's option selection to `/quiz/check`, show correct/incorrect feedback per question
-- Output: DocMind's full loop — upload, chat, quiz, check — all usable end to end in the browser
-
-**Milestone:** DocMind can generate a quiz from the PDF and grade an answer against it, all through the React UI.
+**Milestone:** DocMind can generate a quiz from the PDF and grade an answer against it, all through the React UI. *(Reached — 2026-09-23.)*
 
 ---
 

@@ -1,4 +1,4 @@
-# DocMind — Code Explained (Step 1.1 → Step 4.2F)
+# DocMind — Code Explained (Step 1.1 → Step 4.3F)
 
 A file-by-file, line-linked walkthrough of everything built so far: **why** each piece exists, **what** it does, and **how** it's implemented. Every `[file:lines]` link jumps to the exact code (Ctrl+Click in VS Code).
 
@@ -31,7 +31,7 @@ How this relates to the other docs:
    - [Step 3.2 — Streaming the real chat reply](#step-32--streaming-the-real-chat-reply)
    - [Step 3.2F — Streaming in the frontend](#step-32f--streaming-in-the-frontend)
    - [Step 3.3 — Multi-document chat](#step-33--multi-document-chat)
-   - **Phase 4 — Quiz generation:** [Step 4.1 — Structured output with Zod](#step-41--structured-output-with-zod) · [Step 4.2 — `POST /quiz`](#step-42--post-quiz) · [Step 4.2F — Frontend: quiz UI](#step-42f--frontend-quiz-ui)
+   - **Phase 4 — Quiz generation:** [Step 4.1 — Structured output with Zod](#step-41--structured-output-with-zod) · [Step 4.2 — `POST /quiz`](#step-42--post-quiz) · [Step 4.2F — Frontend: quiz UI](#step-42f--frontend-quiz-ui) · [Step 4.3 + 4.3F — checking answers](#step-43--43f--checking-answers)
 5. [Cross-cutting: errors, logging, and the backend restructure](#5-cross-cutting-errors-logging-and-the-backend-restructure)
 6. [One chat message, end to end](#6-one-chat-message-end-to-end)
 7. [Known limitations (honest list)](#7-known-limitations-honest-list)
@@ -822,6 +822,64 @@ Tested live in a headless browser against the real running app:
 
 ### Takeaway
 Same pattern as every earlier `*F` step (2.1F, 2.3F, 3.2F): the backend endpoint existing isn't the finish line — a feature isn't "done, done" until it's something you can actually click through. Keeping the quiz's state in its own hook, separate from `useChat`, is what made wiring it in almost mechanical: `App.tsx` just holds one more hook and renders one more always-present overlay component, without touching how chat or sessions work at all.
+
+---
+
+## Step 4.3 + 4.3F — checking answers
+
+**Files:** [components/quiz/QuizModal.tsx](frontend/src/components/quiz/QuizModal.tsx), [App.css:826-909](frontend/src/App.css#L826-L909). No backend files — see below for why.
+
+### Why we need it
+Step 4.2F let you *see and answer* a quiz. It never told you if you got anything right. This step closes that loop.
+
+### The decision that shapes everything here: no `POST /quiz/check`
+The roadmap describes a tiny endpoint that takes `{ questionIndex, chosenIndex }` and returns correct/incorrect. It wasn't built, on purpose. Here's the reasoning:
+- Quizzes aren't stored anywhere server-side — there's no `quizId`, no `quiz_runs` table, nothing. `POST /quiz` generates one, sends it down, and forgets it.
+- So a `/quiz/check` endpoint would have **no independent truth to check against**. Either the client sends `correctIndex` along with its guess (the server just compares two numbers the client already had), or the endpoint doesn't really exist in any meaningful sense.
+- A round trip that can't actually catch a lying client isn't a real security boundary — it's just extra network latency dressed up as one. Building a *trustworthy* check would mean persisting quizzes server-side, which is a bigger change than this optional step is meant to be.
+- So grading happens **entirely in `QuizModal.tsx`**, using the `correctIndex` values already sitting in the `quiz` prop from Step 4.2F.
+
+### How it works
+
+**New state — [QuizModal.tsx:30](frontend/src/components/quiz/QuizModal.tsx#L30)**
+`checked` (boolean). Before it's true, the modal behaves exactly as it did in Step 4.2F — pick an option per question, nothing graded. Once true, radios lock and colors appear.
+
+**Reset alongside the existing effect — [L35-38](frontend/src/components/quiz/QuizModal.tsx#L35-L38)**
+The `useEffect` that already cleared `selected` on a fresh `quiz` array now also resets `checked` — so Regenerate doesn't just get you new questions, it also un-grades the modal back to answerable.
+
+**The score — [L42](frontend/src/components/quiz/QuizModal.tsx#L42)**
+`quiz.filter((q, qi) => selected[qi] === q.correctIndex).length` — computed on every render (cheap, `quiz` is only 5 items), not stored in its own state. No need to persist a value that's fully derivable from `selected` and `quiz`.
+
+**Per-option grading — [L89-105](frontend/src/components/quiz/QuizModal.tsx#L89-L105)**
+Two booleans per option, both gated on `checked`:
+- `isCorrectOption` ([L89](frontend/src/components/quiz/QuizModal.tsx#L89)): true for the actually-correct option, **regardless of what was picked** — so the right answer is always revealed, not just "was your pick right".
+- `isWrongPick` ([L90](frontend/src/components/quiz/QuizModal.tsx#L90)): true only for a selected option that wasn't correct.
+
+These map to CSS classes appended to `.quiz-option` ([L94](frontend/src/components/quiz/QuizModal.tsx#L94)), plus a `CheckCircle`/`XCircle` icon rendered inline ([L104-105](frontend/src/components/quiz/QuizModal.tsx#L104-L105)). `disabled={checked}` on the radio input itself ([L100](frontend/src/components/quiz/QuizModal.tsx#L100)) is what actually locks answers in — not just a visual state, the input genuinely can't be changed anymore.
+
+**The footer — [L118-138](frontend/src/components/quiz/QuizModal.tsx#L118-L138)**
+Swaps between "N of 5 answered" + a **Check answers** button (before grading) and "N of 5 correct" (after). Check answers just does `setChecked(true)` — no request, no async, the data was already there.
+
+### A real bug, found by looking at a screenshot, not by reading the code
+
+The first version looked right in the code and typechecked cleanly, but a screenshot showed a wrong-but-selected option rendered with a **green background and a red ✕ icon at the same time** — confusing, and wrong.
+
+The cause: [`.quiz-option:has(input:checked)`, added back in Step 4.2F](frontend/src/App.css#L826), gives the "you picked this" highlight. Once grading locks the radio, `input:checked` is still true for whichever option was picked, so that rule kept firing — and `:has()` gives it *higher specificity* than the plain `.quiz-option--incorrect` class, so the old green styling won even though the incorrect-red rule appeared later in the file. CSS specificity, not React state, was the actual bug.
+
+**The fix — [App.css:826](frontend/src/App.css#L826)**: `.quiz-option:has(input:checked:not(:disabled))`. Since grading disables the radio ([QuizModal.tsx:100](frontend/src/components/quiz/QuizModal.tsx#L100)), this selector stops matching the instant `checked` becomes true, and only [`.quiz-option--correct`](frontend/src/App.css#L841)/[`.quiz-option--incorrect`](frontend/src/App.css#L848) apply from then on. One word (`:not(:disabled)`) fixed it.
+
+**The rest of the CSS** ([`.quiz-modal-score`](frontend/src/App.css#L883), [`.quiz-modal-footer-actions`](frontend/src/App.css#L889), [`.quiz-check-button`](frontend/src/App.css#L895)) is unremarkable layout work using the same design tokens as everything else in the app.
+
+### What actually happened
+Tested live in a headless browser, twice — once before the CSS fix (to confirm the bug was real, not imagined) and once after:
+- Answered all 5 questions, clicked **Check answers**: radios locked (confirmed by attempting to click a different option afterward — the score didn't change), the score read `"2 of 5 correct"`, 5 options were marked correct (one per question) and 3 were marked incorrect (the wrong picks).
+- **Before the fix:** a screenshot showed a wrong pick with a green background and a red icon simultaneously.
+- **After the fix:** the same wrong pick showed solid red; the actually-correct option showed solid green even though it hadn't been picked.
+- **Regenerate** produced a new quiz, and both the score and every correct/incorrect class disappeared — confirming the shared reset effect works for grading too.
+- Zero console errors throughout.
+
+### Takeaway
+Not every "endpoint the roadmap describes" is worth building — sometimes the honest engineering call is recognizing an endpoint would be theater (no real data behind it) and building the simpler, equally-correct version instead. And a screenshot caught a bug that reading the code, and even `tsc`, didn't: CSS specificity bugs are invisible in TypeScript and only show up when you actually look at the rendered page.
 
 ---
 
