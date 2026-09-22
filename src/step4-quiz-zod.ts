@@ -3,6 +3,10 @@ import { listDocuments } from './repositories/documents.repository'
 import { sampleChunks } from './repositories/chunks.repository'
 import { generateAnswer } from './services/llm.service'
 import { Quiz, quizResponseSchema, QUIZ_LENGTH, OPTIONS_PER_QUESTION } from './schemas/quiz.schema'
+// Step 4.2 — buildQuizPrompt() and checkQuizReply() now live in quiz.service.ts
+// (the real /quiz endpoint), so this experiment script and the production
+// code share one implementation instead of two copies.
+import { buildQuizPrompt, checkQuizReply, CHUNKS_FOR_QUIZ } from './services/quiz.service'
 
 // Step 4.1 — force an LLM to return reliable structured data.
 //
@@ -16,51 +20,7 @@ import { Quiz, quizResponseSchema, QUIZ_LENGTH, OPTIONS_PER_QUESTION } from './s
 // it's to SEE the ways a reply can be wrong, and that Zod catches all of them
 // instead of letting garbage flow into a UI.
 
-const CHUNKS_FOR_QUIZ = 5
 const RUNS = Number(process.argv[3]) || 4
-
-function buildQuizPrompt(context: string): string {
-  return `Generate exactly ${QUIZ_LENGTH} multiple-choice questions based ONLY on the content below. Cover different parts of the content, and don't ask about anything the content doesn't say.
-
-Respond with ONLY a JSON array — no markdown, no explanation, no text before or after — where each item is:
-{ "question": string, "options": [exactly ${OPTIONS_PER_QUESTION} different strings], "correctIndex": number from 0 to ${OPTIONS_PER_QUESTION - 1} (the position of the correct option) }
-
-Content:
-${context}`
-}
-
-type Outcome = { ok: true; quiz: Quiz } | { ok: false; reason: string }
-
-// The two-stage check every LLM response should go through:
-//   1. is it even JSON?   (JSON.parse)
-//   2. is it the RIGHT JSON?   (Zod)
-function checkQuiz(raw: string): Outcome {
-  let json: unknown
-  try {
-    json = JSON.parse(raw)
-  } catch {
-    // The classic: valid JSON wrapped in a ```json fence. JSON.parse chokes on
-    // the backticks, so note whether stripping them would have saved it.
-    const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
-    try {
-      JSON.parse(stripped)
-      return { ok: false, reason: 'valid JSON, but wrapped in ``` fences (JSON.parse rejects it as-is)' }
-    } catch {
-      return { ok: false, reason: `not JSON at all — starts with: ${JSON.stringify(raw.slice(0, 70))}` }
-    }
-  }
-
-  // safeParse never throws — it returns a result we can branch on.
-  const result = Quiz.safeParse(json)
-  if (result.success) return { ok: true, quiz: result.data }
-
-  // Zod reports every problem with the exact path to it, e.g. "3.options: ..."
-  const problems = result.error.issues
-    .slice(0, 3)
-    .map((issue) => `${issue.path.join('.') || '(whole quiz)'}: ${issue.message}`)
-  const more = result.error.issues.length > 3 ? ` (+${result.error.issues.length - 3} more)` : ''
-  return { ok: false, reason: `wrong shape — ${problems.join(' | ')}${more}` }
-}
 
 // A modern model is usually right, so waiting for it to slip up teaches slowly.
 // Instead, feed the checker replies that are deliberately wrong in the ways
@@ -90,7 +50,7 @@ function showBadReplyGallery() {
 
   console.log('── Bad-reply gallery (no API calls) — what the checker does with each ──')
   for (const { label, raw } of samples) {
-    const outcome = checkQuiz(raw)
+    const outcome = checkQuizReply(raw)
     console.log(`  ${outcome.ok ? '✅' : '❌'} ${label}`)
     if (!outcome.ok) console.log(`       ↳ ${outcome.reason}`)
   }
@@ -137,7 +97,7 @@ async function main() {
         continue
       }
 
-      const outcome = checkQuiz(raw)
+      const outcome = checkQuizReply(raw)
       if (outcome.ok) {
         tally[mode.name].pass++
         firstGoodQuiz ??= outcome.quiz

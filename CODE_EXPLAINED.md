@@ -1,4 +1,4 @@
-# DocMind — Code Explained (Step 1.1 → Step 4.1)
+# DocMind — Code Explained (Step 1.1 → Step 4.2)
 
 A file-by-file, line-linked walkthrough of everything built so far: **why** each piece exists, **what** it does, and **how** it's implemented. Every `[file:lines]` link jumps to the exact code (Ctrl+Click in VS Code).
 
@@ -31,7 +31,7 @@ How this relates to the other docs:
    - [Step 3.2 — Streaming the real chat reply](#step-32--streaming-the-real-chat-reply)
    - [Step 3.2F — Streaming in the frontend](#step-32f--streaming-in-the-frontend)
    - [Step 3.3 — Multi-document chat](#step-33--multi-document-chat)
-   - **Phase 4 — Quiz generation:** [Step 4.1 — Structured output with Zod](#step-41--structured-output-with-zod)
+   - **Phase 4 — Quiz generation:** [Step 4.1 — Structured output with Zod](#step-41--structured-output-with-zod) · [Step 4.2 — `POST /quiz`](#step-42--post-quiz)
 5. [Cross-cutting: errors, logging, and the backend restructure](#5-cross-cutting-errors-logging-and-the-backend-restructure)
 6. [One chat message, end to end](#6-one-chat-message-end-to-end)
 7. [Known limitations (honest list)](#7-known-limitations-honest-list)
@@ -699,16 +699,16 @@ It gained one optional parameter, [`generationConfig`](src/services/llm.service.
 1. **Is it JSON at all?** `JSON.parse`. If that fails, it also tries stripping ` ``` ` fences, purely to *tell you* whether that common habit was the cause.
 2. **Is it the right JSON?** [`Quiz.safeParse`, L54](src/step4-quiz-zod.ts#L54) — `safeParse` never throws; it returns `{ success, data }` or `{ success: false, error }`, so the code can branch (retry, or report). On failure, Zod lists **every problem with the exact path**, like `0.options: expected array to have exactly 4 items`.
 
-**The experiment — [`main`, step4-quiz-zod.ts:100-177](src/step4-quiz-zod.ts#L100-L177)**
+**The experiment — [`main`, step4-quiz-zod.ts:60-137](src/step4-quiz-zod.ts#L60-L137)**
 - Picks your newest document (or the id you pass), samples 5 chunks ([L110](src/step4-quiz-zod.ts#L110)), and builds one prompt used for both modes ([`buildQuizPrompt`, L22](src/step4-quiz-zod.ts#L22)).
 - [L114-120](src/step4-quiz-zod.ts#L114-L120): the two modes — plain (no config) vs structured (with the response schema).
 - [L133](src/step4-quiz-zod.ts#L133): each run calls the model; an API error is counted as a failure rather than crashing the script.
-- [L154](src/step4-quiz-zod.ts#L154): a pass/fail summary per mode.
+- [L114](src/step4-quiz-zod.ts#L114): a pass/fail summary per mode.
 
 **The bad-reply gallery — [`showBadReplyGallery`, step4-quiz-zod.ts:68-98](src/step4-quiz-zod.ts#L68-L98)**
 Modern models rarely slip, so waiting for a real failure teaches slowly. Instead, 11 hand-made replies — one good, ten wrong in the ways real models go wrong (fenced JSON, a chatty sentence before the JSON, only 3 questions, 3 options, `"2"` as a string, index out of range, `1.5`, duplicate options, a missing field, an object instead of an array) — go through the same checker, with **no API calls**. Each shows which check caught it and why.
 
-**Valid ≠ good — [the answer-position tally, step4-quiz-zod.ts:161-168](src/step4-quiz-zod.ts#L161-L168)**
+**Valid ≠ good — [the answer-position tally, step4-quiz-zod.ts:121-127](src/step4-quiz-zod.ts#L121-L127)**
 Zod proves the *shape*, not the *sense*. So the script also counts where the model puts the correct answer across every valid quiz.
 
 ### Run it
@@ -721,6 +721,51 @@ Zod proves the *shape*, not the *sense*. So the script also counts where the mod
 
 ### Takeaway
 Two separate jobs: **ask** for the shape (prompt, or the API's structured-output mode) and **verify** it (Zod). Trust nothing until it has passed the second one. Next, Step 4.2 turns this script into `POST /quiz`, adding the validate → retry-once habit.
+
+---
+
+## Step 4.2 — `POST /quiz`
+
+**Files:** [services/quiz.service.ts](src/services/quiz.service.ts), [routes/quiz.routes.ts](src/routes/quiz.routes.ts), [app.ts:7](src/app.ts#L7) + [L34](src/app.ts#L34), [utils/pipelineLogger.ts:14](src/utils/pipelineLogger.ts#L14) + [L61-63](src/utils/pipelineLogger.ts#L61-L63).
+
+### Why we need it
+Step 4.1 proved the approach in a throwaway script. A real feature needs it as an endpoint the frontend can call, with the two production habits the topic README calls for: retry once instead of trusting a single reply, and don't leave "where the correct answer sits" up to the model's own habits — Step 4.1 measured that habit wasn't uniform.
+
+### What it does
+`POST /quiz` with `{ documentId }` returns `{ documentId, quiz }` — a validated 5-question quiz whose options have been shuffled so the correct answer's position is unpredictable.
+
+### How it works
+
+**`generateQuiz()` — [quiz.service.ts:96-159](src/services/quiz.service.ts#L96-L159)**
+Mirrors `prepareChat()`'s shape: takes raw request input (`documentId: unknown`), never touches `req`/`res`, and returns `{ ok: false, status, error }` or `{ ok: true, ... }`.
+1. **Validate** — [L99-102](src/services/quiz.service.ts#L99-L102): missing/non-string `documentId` → `400`. [L107-110](src/services/quiz.service.ts#L107-L110): the sentinel `'all'` is explicitly rejected → `400` — *why*: `sampleChunks` reads one document's chunks in reading order, and there's no single reading order across every PDF, so "all documents" has no sensible quiz to build.
+2. **Sample** — [L117](src/services/quiz.service.ts#L117): `sampleChunks(documentId, CHUNKS_FOR_QUIZ)`, the same function and count (5, [L17](src/services/quiz.service.ts#L17)) as Step 4.1's script. Empty result → `404` ([L120-124](src/services/quiz.service.ts#L120-L124)).
+3. **Prompt** — [L126](src/services/quiz.service.ts#L126): `buildQuizPrompt()`.
+4. **Generate + validate + retry** — [L136-151](src/services/quiz.service.ts#L136-L151): a loop bounded by `MAX_ATTEMPTS = 2` ([L22](src/services/quiz.service.ts#L22)) — one real attempt plus one retry, never more. Each attempt calls `generateAnswer(prompt, generationConfig)` in **structured-output mode** ([L133](src/services/quiz.service.ts#L133): `{ responseMimeType: 'application/json', responseSchema: quizResponseSchema }` — chosen over the plain prompt because Step 4.1 showed it's at least as reliable), then `checkQuizReply(raw)`. The first valid reply shuffles and returns immediately ([L142-147](src/services/quiz.service.ts#L142-L147)); on failure the loop just tries again, logging the reason ([L149-150](src/services/quiz.service.ts#L149-L150)).
+5. **Give up cleanly** — [L153-158](src/services/quiz.service.ts#L153-L158): if both attempts fail, `failed()` logs it and the function returns `{ ok: false, status: 502, error: '...' }` — a message a UI can show, not a crash. Step 4.1's real runs were 17/17 valid, so this path is rarely hit, but the code doesn't assume that.
+
+**`buildQuizPrompt()` and `checkQuizReply()` — [quiz.service.ts:26-34](src/services/quiz.service.ts#L26-L34) and [L41-67](src/services/quiz.service.ts#L41-L67)**
+Moved here from the Step 4.1 script, unchanged, so `npm run step4` and the real endpoint share one implementation instead of two copies — the same reasoning as `buildChatPrompt()` being shared by `/chat` and `/chat-stream`. [step4-quiz-zod.ts](src/step4-quiz-zod.ts) now imports them (see the Step 4.1 section above for what they do).
+
+**Shuffling — [`shuffleQuiz`/`shuffleQuestion`, quiz.service.ts:71-87](src/services/quiz.service.ts#L71-L87)**
+A Fisher–Yates shuffle per question: [L72-76](src/services/quiz.service.ts#L72-L76) builds an `order` array (`order[newPosition] = originalIndex`) and shuffles it in place, then [L78-82](src/services/quiz.service.ts#L78-L82) rebuilds `options` in that order and remaps `correctIndex` to `order.indexOf(q.correctIndex)` — wherever the originally-correct option ended up. *Why in code, not the prompt:* Step 4.1 measured the model's own placement across 50 questions — 22% / 36% / 32% / 10% for positions 0–3 — not uniform, and not something a prompt instruction can reliably fix. Zod proves the *shape* is right; this is the part of "make it good, not just valid" that has to live in code.
+
+**The route — [quiz.routes.ts](src/routes/quiz.routes.ts)**
+Thin, same shape as the other routes: [L11](src/routes/quiz.routes.ts#L11) `withErrorHandling('POST /quiz', ...)` catches real exceptions (network/DB) the same way `/chat` does; [L15-16](src/routes/quiz.routes.ts#L15-L16) calls `generateQuiz` and forwards its status/error unchanged; [L18](src/routes/quiz.routes.ts#L18) sends the quiz. **Deliberately not streamed** — unlike `/chat-stream`, half a JSON object is useless, so the client waits for the complete, checked result.
+
+**Wiring** — [app.ts:7](src/app.ts#L7) imports `quizRouter`, [L34](src/app.ts#L34) mounts it, same pattern as the other three routers.
+
+**A new log theme and a new helper — [pipelineLogger.ts:14](src/utils/pipelineLogger.ts#L14), [L61-63](src/utils/pipelineLogger.ts#L61-L63)**
+`quiz` got its own color (`chalk.blueBright`), so its terminal trace is easy to tell apart from uploads (cyan) and chats (magenta). [`failed(reason)`](src/utils/pipelineLogger.ts#L61-L63) is a new red-line helper, deliberately distinct from `rejected()` (bad input) and `notFound()` (missing resource): "the request was valid, the work just never produced a usable result."
+
+### What actually happened
+Tested live on a spare port against real documents and Gemini:
+- **Happy path:** a real 5-question quiz came back, options shuffled (correct answers landed at positions 2, 0, 1, 1, 3 across the five questions in one run — not clustered), a full `[1/4]`–`[4/4]` pipeline trace in the terminal, `attempt 1/2` succeeded both times it was tried.
+- **All four bad-input cases** returned the right status: missing `documentId` → `400`, `documentId: 'all'` → `400`, an unknown id → `404`, a non-string (array) `documentId` → `400`.
+- **Regression-checked the refactor:** re-ran `npm run step4` after moving `buildQuizPrompt`/`checkQuizReply` into `quiz.service.ts` — the bad-reply gallery still caught all 10 broken samples, and real runs still produced valid quizzes. One run hit a transient network `fetch failed` — not a shape problem, and a good reminder that a thrown network error (bubbles up, not retried by this loop) and an invalid-shape reply (retried) are handled differently on purpose.
+
+### Takeaway
+Two production habits from the Step 4.1 topic notes, both real code now: **retry once, then fail cleanly** (never trust one reply, never loop forever), and **don't leave "must be reliable" to the model** — shuffling in code is a direct, load-bearing response to a real measurement from Step 4.1, not a hypothetical improvement.
 
 ---
 

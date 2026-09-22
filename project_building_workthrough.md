@@ -167,11 +167,15 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 - **Result:** the gallery caught all 10 bad replies with precise reasons. Real runs were **17/17 valid in both modes** — this model almost never goes off-shape, so Zod is insurance rather than something that visibly saves you here. Also found: across 50 questions the correct answer landed at position 0/1/2/3 in 22%/36%/32%/10% — *valid isn't the same as good*, so Step 4.2 should shuffle options in code
 - Output: a script proving you can force reliable JSON out of an LLM — and check it
 
-**Step 4.2 — `POST /quiz`**
-- Takes a `documentId`, pulls several stored chunks (broad coverage, not narrow relevance)
-- Runs the Step 4.1 prompt+schema, returns the validated quiz
-- Add one retry: if `Quiz.parse()` throws, retry the LLM call once before failing
-- Output: a working quiz-generation endpoint with a real production habit (validate → retry) built in
+**Step 4.2 — `POST /quiz`** *(done — line-linked explanation in [CODE_EXPLAINED.md](CODE_EXPLAINED.md#step-42--post-quiz))*
+- `src/services/quiz.service.ts`: `buildQuizPrompt()` and `checkQuizReply()` moved here from the Step 4.1 script (one implementation, shared by the script and the real endpoint), plus new `generateQuiz(documentId)` — samples 5 chunks (`sampleChunks`, same as 4.1), builds the prompt, calls Gemini in **structured-output mode**, validates with `Quiz.safeParse`
+- **Retry:** one real attempt + one retry (`MAX_ATTEMPTS = 2`) — if both fail, a clean `502` instead of looping or crashing
+- **Shuffle:** every validated quiz's options are shuffled per question (Fisher–Yates) and `correctIndex` remapped, because Step 4.1 found the model's own placement wasn't uniform (22/36/32/10% across positions 0–3) — corrected in code, not left to the model
+- **Validation:** `documentId` required (400 if missing/not a string); rejects the `'all'` sentinel with 400 (a quiz needs one document's chunks in reading order, not a mix); unknown/empty document → 404
+- `src/routes/quiz.routes.ts`: thin — `POST /quiz` calls `generateQuiz`, mounted in `app.ts`. Not streamed on purpose (half a JSON object is useless)
+- Added a `quiz` pipeline color (blue) and a `failed()` logger (distinct from `rejected`/`notFound`) to `pipelineLogger.ts`
+- **Tested live:** happy path (5 valid, shuffled questions, all logged `[1/4]`–`[4/4]`, attempt `1/2` succeeded both times tried); all four bad-input cases (missing, `'all'`, unknown id, non-string) returned the right status; `npm run step4` re-run after the refactor to confirm sharing the functions didn't break the experiment script (gallery still 10/10, a real run still produced a valid quiz)
+- Output: a working quiz-generation endpoint with real production habits (validate → retry → shuffle) built in
 
 **Step 4.2F — Frontend: quiz UI**
 - A "Generate Quiz" button (per selected document) that POSTs to `/quiz`, renders each question with its 4 options as selectable radio buttons
