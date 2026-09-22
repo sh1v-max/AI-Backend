@@ -1,4 +1,4 @@
-import { cosineDistance, eq, isNotNull } from 'drizzle-orm'
+import { asc, cosineDistance, eq, isNotNull } from 'drizzle-orm'
 import { db } from '../db/client'
 import { chunks, documents } from '../db/schema'
 
@@ -14,6 +14,26 @@ export async function insertChunk(
 }
 // instead of this, we can also write the same above code in SQL as:
 // INSERT INTO chunks (content, embedding, document_id) VALUES ($1, $2, $3)
+
+// Step 4.1 — `count` chunks spread evenly across one document, in reading
+// order. Not a search: chat asks "which chunks are relevant to this question?",
+// but a quiz has no question, so it wants broad coverage of the whole PDF
+// instead of the few chunks nearest to something. (Chunk ids are serial and
+// assigned in document order at upload time, so ordering by id = page order.)
+export async function sampleChunks(documentId: string, count: number): Promise<string[]> {
+  const rows = await db
+    .select({ content: chunks.content })
+    .from(chunks)
+    .where(eq(chunks.documentId, documentId))
+    .orderBy(asc(chunks.id))
+
+  if (rows.length <= count) return rows.map((r) => r.content)
+
+  // pick `count` evenly spaced positions, e.g. 8 chunks / 4 wanted -> 0, 2, 4, 6
+  return Array.from({ length: count }, (_, i) => rows[Math.floor((i * rows.length) / count)].content)
+}
+// equivalent sql query (the spacing is done in TypeScript afterwards):
+// SELECT content FROM chunks WHERE document_id = $1 ORDER BY id
 
 // this function deletes all chunks for one document
 export async function deleteChunksByDocumentId(documentId: string): Promise<void> {
