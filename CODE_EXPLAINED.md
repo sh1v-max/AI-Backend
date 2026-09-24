@@ -1,4 +1,4 @@
-# DocMind — Code Explained (Step 1.1 → Step 3.3)
+# DocMind — Code Explained (Step 1.1 → Step 4.3F)
 
 A file-by-file, line-linked walkthrough of everything built so far: **why** each piece exists, **what** it does, and **how** it's implemented. Every `[file:lines]` link jumps to the exact code (Ctrl+Click in VS Code).
 
@@ -31,6 +31,7 @@ How this relates to the other docs:
    - [Step 3.2 — Streaming the real chat reply](#step-32--streaming-the-real-chat-reply)
    - [Step 3.2F — Streaming in the frontend](#step-32f--streaming-in-the-frontend)
    - [Step 3.3 — Multi-document chat](#step-33--multi-document-chat)
+   - **Phase 4 — Quiz generation:** [Step 4.1 — Structured output with Zod](#step-41--structured-output-with-zod) · [Step 4.2 — `POST /quiz`](#step-42--post-quiz) · [Step 4.2F — Frontend: quiz UI](#step-42f--frontend-quiz-ui) · [Step 4.3 + 4.3F — checking answers](#step-43--43f--checking-answers)
 5. [Cross-cutting: errors, logging, and the backend restructure](#5-cross-cutting-errors-logging-and-the-backend-restructure)
 6. [One chat message, end to end](#6-one-chat-message-end-to-end)
 7. [Known limitations (honest list)](#7-known-limitations-honest-list)
@@ -73,13 +74,14 @@ Browser (React, :5173) ──HTTP──► Express API (:3000) ──► Gemini 
 
 | Area | Files |
 |---|---|
-| Learning scripts (Phase 1) | [step1-embeddings.ts](src/step1-embeddings.ts), [step2-pgvector.ts](src/step2-pgvector.ts), [step3-drizzle.ts](src/step3-drizzle.ts) |
+| Learning scripts | [step1-embeddings.ts](src/step1-embeddings.ts), [step2-pgvector.ts](src/step2-pgvector.ts), [step3-drizzle.ts](src/step3-drizzle.ts) (Phase 1) · [step4-quiz-zod.ts](src/step4-quiz-zod.ts) (Phase 4) |
 | Server bootstrap | [index.ts](src/index.ts), [app.ts](src/app.ts), [config.ts](src/config.ts) |
 | Routes (HTTP layer) | [documents.routes.ts](src/routes/documents.routes.ts), [sessions.routes.ts](src/routes/sessions.routes.ts), [chat.routes.ts](src/routes/chat.routes.ts) |
 | Services (the actual work) | [chat.service.ts](src/services/chat.service.ts), [ingestion.service.ts](src/services/ingestion.service.ts), [embeddings.service.ts](src/services/embeddings.service.ts), [llm.service.ts](src/services/llm.service.ts) |
 | Repositories (all SQL lives here) | [chunks.repository.ts](src/repositories/chunks.repository.ts), [documents.repository.ts](src/repositories/documents.repository.ts), [chatMessages.repository.ts](src/repositories/chatMessages.repository.ts) |
 | Database | [db/client.ts](src/db/client.ts), [db/schema.ts](src/db/schema.ts) |
 | Utils | [utils/chunkText.ts](src/utils/chunkText.ts), [utils/errors.ts](src/utils/errors.ts), [utils/pipelineLogger.ts](src/utils/pipelineLogger.ts) |
+| Schemas (Phase 4) | [schemas/quiz.schema.ts](src/schemas/quiz.schema.ts) — the Zod shape of a quiz |
 | Frontend API layer | [api/client.ts](frontend/src/api/client.ts), [api/documents.ts](frontend/src/api/documents.ts), [api/chat.ts](frontend/src/api/chat.ts), [api/sessions.ts](frontend/src/api/sessions.ts) |
 | Frontend state (hooks) | [useDocuments.ts](frontend/src/hooks/useDocuments.ts), [useSessions.ts](frontend/src/hooks/useSessions.ts), [useChat.ts](frontend/src/hooks/useChat.ts) |
 | Frontend UI | [App.tsx](frontend/src/App.tsx) + `components/` (sidebar, chat, documents, common) |
@@ -104,8 +106,8 @@ Before any step, the project needed a place to live.
 ### [package.json](package.json)
 - `"type": "commonjs"` — Node loads files with `require`. TypeScript `import` statements are compiled to `require` calls, and **import order = load order** (this matters for `dotenv`, see below).
 - `npm run dev` = `ts-node-dev --respawn --transpile-only src/index.ts`. `ts-node-dev` runs TypeScript directly and **restarts the server on every file save** (`--respawn`). `--transpile-only` skips type-checking to make restarts fast — the price is that **type errors don't stop the server**, so run `npx tsc --noEmit` yourself to catch them.
-- `npm run step1 / step2 / step3` run the three Phase 1 learning scripts.
-- Dependencies, each with one job: `express` (HTTP server), `cors` (allow the browser at :5173 to call :3000), `multer` (file uploads), `pdf-parse` (PDF → text), `pg` (Postgres driver), `drizzle-orm` (typed queries), `dotenv` (load `.env`), `chalk` (coloured terminal logs). `drizzle-kit` is the CLI for Drizzle (configured in [drizzle.config.ts](drizzle.config.ts)).
+- The npm scripts are now `dev`, `step3`, `step4` and `test`. `step1` and `step2` were **removed** from `package.json` (`step2` is destructive) — run those files directly with `npx ts-node src/step1-embeddings.ts` if you ever need them. Also: `package.json` must be strict JSON — a `//` comment in it makes *every* npm command fail with `EJSONPARSE`.
+- Dependencies, each with one job: `express` (HTTP server), `cors` (allow the browser at :5173 to call :3000), `multer` (file uploads), `pdf-parse` (PDF → text), `pg` (Postgres driver), `drizzle-orm` (typed queries), `dotenv` (load `.env`), `chalk` (coloured terminal logs), `zod` (checks that the LLM's output has the right shape — Phase 4). `drizzle-kit` is the CLI for Drizzle (configured in [drizzle.config.ts](drizzle.config.ts)).
 
 ### [tsconfig.json](tsconfig.json)
 `"strict": true` — TypeScript's strictest checking (no implicit `any`, null-safety). It's why you see things like `documentId: unknown` followed by a `typeof documentId !== 'string'` check in [chat.service.ts:80-93](src/services/chat.service.ts#L80-L93).
@@ -132,7 +134,7 @@ Tells `drizzle-kit` where the schema is (`./src/db/schema.ts`) and which databas
 
 ## Step 1.1 — Embeddings + cosine similarity
 
-**Script:** [src/step1-embeddings.ts](src/step1-embeddings.ts) — run with `npm run step1`.
+**Script:** [src/step1-embeddings.ts](src/step1-embeddings.ts) — run with `npx ts-node src/step1-embeddings.ts` (no longer an npm script).
 
 ### Why we need it
 Everything later (search, chat, memory-aware retrieval) rests on one fact: *similar text → similar vectors*. This step proves it by hand, with no database and no libraries, so it's not magic later.
@@ -171,7 +173,7 @@ An embedding is just an array of numbers where **distance ≈ difference in mean
 
 ## Step 1.2 — Postgres + pgvector
 
-**Script:** [src/step2-pgvector.ts](src/step2-pgvector.ts) — run with `npm run step2`.
+**Script:** [src/step2-pgvector.ts](src/step2-pgvector.ts) — run with `npx ts-node src/step2-pgvector.ts` (no longer an npm script, because it is destructive — see the warning below).
 
 ### Why we need it
 Step 1.1 compared two vectors in JavaScript. A real system has *thousands* of stored vectors and needs "give me the closest 3 to this one". Looping in JS over everything doesn't scale, so we let a **database** do the math. **pgvector** is a Postgres extension that adds a `vector` column type and distance operators. Hosted for free on **Neon**.
@@ -229,11 +231,11 @@ Step 1.2 scattered raw SQL strings and a copy-pasted `getEmbedding` through the 
 
 **[repositories/chunks.repository.ts](src/repositories/chunks.repository.ts)**
 - `insertChunk(content, embedding, documentId)` — [L6-14](src/repositories/chunks.repository.ts#L6-L14): `db.insert(chunks).values(...)`. The SQL equivalent is in the comment at [L15-16](src/repositories/chunks.repository.ts#L15-L16).
-- `searchSimilar(queryEmbedding, limit, documentId?)` — [L36-66](src/repositories/chunks.repository.ts#L36-L66):
-  - [L42](src/repositories/chunks.repository.ts#L42): `cosineDistance(chunks.embedding, queryEmbedding)` builds the same `<=>` expression as a reusable value; `.mapWith(Number)` makes sure the result comes back as a JS number.
-  - [L46-65](src/repositories/chunks.repository.ts#L46-L65): `select content + distance (+ documentId, filename since Step 3.3) → where documentId matches → order by distance → limit`. It returns `SimilarChunk[]`, nearest first.
+- `searchSimilar(queryEmbedding, limit, documentId?)` — [L56-86](src/repositories/chunks.repository.ts#L56-L86):
+  - [L62](src/repositories/chunks.repository.ts#L62): `cosineDistance(chunks.embedding, queryEmbedding)` builds the same `<=>` expression as a reusable value; `.mapWith(Number)` makes sure the result comes back as a JS number.
+  - [L66-85](src/repositories/chunks.repository.ts#L66-L85): `select content + distance (+ documentId, filename since Step 3.3) → where documentId matches → order by distance → limit`. It returns `SimilarChunk[]`, nearest first.
   - The `where documentId = …` filter is what keeps one PDF's answers from mixing in another PDF's text (Step 2.2 added it). Step 3.3 made `documentId` **optional** — see [Step 3.3](#step-33--multi-document-chat).
-- `deleteChunksByDocumentId` — [L19-21](src/repositories/chunks.repository.ts#L19-L21): used when a document is deleted (Step 2.5).
+- `deleteChunksByDocumentId` — [L39-41](src/repositories/chunks.repository.ts#L39-L41): used when a document is deleted (Step 2.5).
 
 **[step3-drizzle.ts](src/step3-drizzle.ts) — proof it works**
 Same experiment as Step 1.2 but through `insertChunk()` / `searchSimilar()` ([L34-41](src/step3-drizzle.ts#L34-L41)) — the caller never writes SQL. ⚠️ [L18](src/step3-drizzle.ts#L18) runs `DELETE FROM chunks` — **it wipes every chunk in the table, including your real PDFs'**. Don't re-run it against the live database.
@@ -343,7 +345,7 @@ Upload is an *offline* pipeline (nobody needs the result instantly), which is wh
 
 ## Step 2.3 — `POST /chat`, single turn
 
-**Files:** [chat.routes.ts:11-37](src/routes/chat.routes.ts#L11-L37), [chat.service.ts](src/services/chat.service.ts), [llm.service.ts:7-22](src/services/llm.service.ts#L7-L22), [chunks.repository.ts:36-66](src/repositories/chunks.repository.ts#L36-L66).
+**Files:** [chat.routes.ts:11-37](src/routes/chat.routes.ts#L11-L37), [chat.service.ts](src/services/chat.service.ts), [llm.service.ts:10-29](src/services/llm.service.ts#L10-L29), [chunks.repository.ts:56-86](src/repositories/chunks.repository.ts#L56-L86).
 
 ### Why we need it
 This is RAG itself: answer a question **from the PDF**, not from the model's memory.
@@ -365,11 +367,12 @@ The route is thin ([chat.routes.ts:11-37](src/routes/chat.routes.ts#L11-L37)); t
 **The prompt — [buildChatPrompt, chat.service.ts:15-49](src/services/chat.service.ts#L15-L49)**
 It tells the model to (a) use **only** the supplied context, no outside knowledge, no guessing; (b) answer naturally, not "Based on the provided context…"; (c) say so briefly if the answer isn't in the context; (d) use the conversation history to resolve follow-ups like "the first one". Then the layout is `Context:` (the chunks joined by blank lines) + optional `Conversation so far:` + `New question:`. Prompt wording lives in this **one** function, shared by `/chat` and `/chat-stream`.
 
-**Calling Gemini — [generateAnswer, llm.service.ts:7-22](src/services/llm.service.ts#L7-L22)**
+**Calling Gemini — [generateAnswer, llm.service.ts:10-29](src/services/llm.service.ts#L10-L29)**
 - [L2-3](src/services/llm.service.ts#L2-L3): the `gemini-flash-lite-latest:generateContent` endpoint.
-- [L8-14](src/services/llm.service.ts#L8-L14): POST with body `{ contents: [{ parts: [{ text: prompt }] }] }`.
-- [L16-18](src/services/llm.service.ts#L16-L18): non-OK status → throw with the API's error body.
-- [L21](src/services/llm.service.ts#L21): the reply text is at `data.candidates[0].content.parts[0].text`.
+- [L14-21](src/services/llm.service.ts#L14-L21): POST with body `{ contents: [{ parts: [{ text: prompt }] }] }`.
+- [L23-25](src/services/llm.service.ts#L23-L25): non-OK status → throw with the API's error body.
+- [L28](src/services/llm.service.ts#L28): the reply text is at `data.candidates[0].content.parts[0].text`.
+- *Added in Step 4.1:* an optional `generationConfig` parameter ([L11-12](src/services/llm.service.ts#L11-L12), spread into the body at [L19](src/services/llm.service.ts#L19)) that switches on Gemini's JSON / structured-output mode. Chat never passes it, so chat behaves exactly as described above.
 
 ### Takeaway
 "Instead of the model guessing from memory, I hand it the relevant text right before asking." That sentence *is* RAG. At this point the bot answers from the PDF but forgets everything after each request.
@@ -439,7 +442,7 @@ Step 2.4's frontend kept the `sessionId` only in React state, so **refreshing th
 - **`getMessagesForSession()`** — [L52-64](src/repositories/chatMessages.repository.ts#L52-L64): the full transcript, oldest first.
 - **Routes** — [sessions.routes.ts](src/routes/sessions.routes.ts): `GET /sessions` ([L10-13](src/routes/sessions.routes.ts#L10-L13)), `GET /sessions/:sessionId/messages` ([L15-18](src/routes/sessions.routes.ts#L15-L18)), `DELETE /sessions/:sessionId` ([L20-23](src/routes/sessions.routes.ts#L20-L23)).
 - **`deleteSession`** — [repository L122-124](src/repositories/chatMessages.repository.ts#L122-L124): deletes that conversation's messages; the document stays.
-- **`DELETE /documents/:documentId`** — [documents.routes.ts:21-27](src/routes/documents.routes.ts#L21-L27): deletes the chunks ([`deleteChunksByDocumentId`](src/repositories/chunks.repository.ts#L19-L21)), then every chat message for it ([`deleteMessagesByDocumentId`, L131-133](src/repositories/chatMessages.repository.ts#L131-L133)), then the document row ([`deleteDocument`](src/repositories/documents.repository.ts#L28-L30)) — so no rows are left pointing at a dead `document_id`.
+- **`DELETE /documents/:documentId`** — [documents.routes.ts:21-27](src/routes/documents.routes.ts#L21-L27): deletes the chunks ([`deleteChunksByDocumentId`](src/repositories/chunks.repository.ts#L39-L41)), then every chat message for it ([`deleteMessagesByDocumentId`, L131-133](src/repositories/chatMessages.repository.ts#L131-L133)), then the document row ([`deleteDocument`](src/repositories/documents.repository.ts#L28-L30)) — so no rows are left pointing at a dead `document_id`.
 
 ### Frontend
 
@@ -517,24 +520,24 @@ Streaming is nothing more than "write pieces into a response that stays open, in
 
 ## Step 3.2 — Streaming the real chat reply
 
-**Files:** [chat.routes.ts:42-101](src/routes/chat.routes.ts#L42-L101) (`GET /chat-stream`), [llm.service.ts:24-73](src/services/llm.service.ts#L24-L73) (`streamAnswer`), [utils/errors.ts](src/utils/errors.ts), shared [chat.service.ts](src/services/chat.service.ts).
+**Files:** [chat.routes.ts:42-101](src/routes/chat.routes.ts#L42-L101) (`GET /chat-stream`), [llm.service.ts:31-80](src/services/llm.service.ts#L31-L80) (`streamAnswer`), [utils/errors.ts](src/utils/errors.ts), shared [chat.service.ts](src/services/chat.service.ts).
 
 ### Why GET, not POST?
 The browser's `EventSource` can **only send GET requests**. So `/chat-stream` takes `documentId`, `message`, `sessionId` as **query parameters** ([chat.routes.ts:44-46](src/routes/chat.routes.ts#L44-L46)) instead of a JSON body. (Trade-off: the message ends up in the URL — see [§7](#7-known-limitations-honest-list).)
 
-### Part 1 — `streamAnswer()`: reading Gemini's stream — [llm.service.ts:29-73](src/services/llm.service.ts#L29-L73)
+### Part 1 — `streamAnswer()`: reading Gemini's stream — [llm.service.ts:36-80](src/services/llm.service.ts#L36-L80)
 
 It's an **async generator** (`async function*`): instead of returning one value, it **`yield`s many** values over time, and the caller loops over them with `for await`.
 
 - [L4-5](src/services/llm.service.ts#L4-L5): a different Gemini method, `streamGenerateContent` (there's no `stream: true` flag on `generateContent`).
-- [L30-36](src/services/llm.service.ts#L30-L36): POST with `?alt=sse` — that switches Gemini's reply to real SSE (`data: {json}\n\n`).
-- [L38-40](src/services/llm.service.ts#L38-L40): check `res.ok` and that a body exists.
-- [L42-44](src/services/llm.service.ts#L42-L44): `res.body.getReader()` gives raw byte chunks as they arrive; `TextDecoder` turns bytes into text; `buffer` accumulates text.
-- [L46-72](src/services/llm.service.ts#L46-L72): the read loop.
-  - [L48-49](src/services/llm.service.ts#L48-L49): `reader.read()` → `{ done, value }`; stop when `done`.
-  - [L55](src/services/llm.service.ts#L55): decode the bytes (`{ stream: true }` handles multi-byte characters split across chunks) and **normalize `\r\n` → `\n`**. Gemini ends SSE lines with `\r\n`, so without this the blank-line split below would never match. It's done on the *whole buffer* so a `\r\n` split across two network chunks is still caught. *(This was a real bug that was fixed.)*
-  - [L61-62](src/services/llm.service.ts#L61-L62): split on `\n\n` (event boundary). `events.pop()` takes the **last piece back into `buffer`** — it may be a *partial* event; network chunks don't end neatly on event boundaries.
-  - [L64-71](src/services/llm.service.ts#L64-L71): for each complete event: skip anything not starting with `data: `, `JSON.parse` the rest, pull `candidates[0].content.parts[0].text`, and `yield text`.
+- [L37-43](src/services/llm.service.ts#L37-L43): POST with `?alt=sse` — that switches Gemini's reply to real SSE (`data: {json}\n\n`).
+- [L45-47](src/services/llm.service.ts#L45-L47): check `res.ok` and that a body exists.
+- [L49-51](src/services/llm.service.ts#L49-L51): `res.body.getReader()` gives raw byte chunks as they arrive; `TextDecoder` turns bytes into text; `buffer` accumulates text.
+- [L53-79](src/services/llm.service.ts#L53-L79): the read loop.
+  - [L55-56](src/services/llm.service.ts#L55-L56): `reader.read()` → `{ done, value }`; stop when `done`.
+  - [L62](src/services/llm.service.ts#L62): decode the bytes (`{ stream: true }` handles multi-byte characters split across chunks) and **normalize `\r\n` → `\n`**. Gemini ends SSE lines with `\r\n`, so without this the blank-line split below would never match. It's done on the *whole buffer* so a `\r\n` split across two network chunks is still caught. *(This was a real bug that was fixed.)*
+  - [L68-69](src/services/llm.service.ts#L68-L69): split on `\n\n` (event boundary). `events.pop()` takes the **last piece back into `buffer`** — it may be a *partial* event; network chunks don't end neatly on event boundaries.
+  - [L71-78](src/services/llm.service.ts#L71-L78): for each complete event: skip anything not starting with `data: `, `JSON.parse` the rest, pull `candidates[0].content.parts[0].text`, and `yield text`.
 
 ### Part 2 — the route: writing our own SSE — [chat.routes.ts:42-101](src/routes/chat.routes.ts#L42-L101)
 
@@ -617,7 +620,7 @@ The reply types out word by word in the chat bubble, sources appear immediately,
 
 ## Step 3.3 — Multi-document chat
 
-**Files:** [config.ts:13-14](src/config.ts#L13-L14), [chunks.repository.ts:25-66](src/repositories/chunks.repository.ts#L25-L66), [chat.service.ts](src/services/chat.service.ts), [chatMessages.repository.ts:95-100](src/repositories/chatMessages.repository.ts#L95-L100), and on the frontend [types/document.ts](frontend/src/types/document.ts), [NewChatScreen.tsx](frontend/src/components/chat/NewChatScreen.tsx), [ChatView.tsx](frontend/src/components/chat/ChatView.tsx), [ChatSources.tsx](frontend/src/components/chat/ChatSources.tsx), [App.tsx](frontend/src/App.tsx).
+**Files:** [config.ts:13-14](src/config.ts#L13-L14), [chunks.repository.ts:45-86](src/repositories/chunks.repository.ts#L45-L86), [chat.service.ts](src/services/chat.service.ts), [chatMessages.repository.ts:95-100](src/repositories/chatMessages.repository.ts#L95-L100), and on the frontend [types/document.ts](frontend/src/types/document.ts), [NewChatScreen.tsx](frontend/src/components/chat/NewChatScreen.tsx), [ChatView.tsx](frontend/src/components/chat/ChatView.tsx), [ChatSources.tsx](frontend/src/components/chat/ChatSources.tsx), [App.tsx](frontend/src/App.tsx).
 
 ### Why we need it
 Until now every chat was pinned to **one** PDF. But a natural question is often about *all* your documents ("how do chunking and embeddings relate?" spans two guides). So the default becomes "search everything", and picking one PDF is the override.
@@ -628,10 +631,10 @@ Until now every chat was pinned to **one** PDF. But a natural question is often 
 ### Backend
 
 - **The sentinel** — [config.ts:13-14](src/config.ts#L13-L14): `ALL_DOCUMENTS = 'all'` and a display label. Why a sentinel string instead of `NULL`? `chat_messages.document_id` is `NOT NULL`; making it nullable means altering the live Neon table. Storing `'all'` in the existing column needs no schema change at all.
-- **`searchSimilar` — [chunks.repository.ts:36-66](src/repositories/chunks.repository.ts#L36-L66)**:
-  - [`documentId?`](src/repositories/chunks.repository.ts#L36-L40) is now optional.
-  - It returns [`SimilarChunk`](src/repositories/chunks.repository.ts#L27-L32) = `{ content, distance, documentId, filename }`. To get the filename it does a [`LEFT JOIN documents`](src/repositories/chunks.repository.ts#L56) — *why the source document's name matters:* so the answer and the UI can say **which PDF** each piece came from.
-  - [The `where`](src/repositories/chunks.repository.ts#L63): a real `documentId` → `chunks.document_id = …`; otherwise → `documents.id IS NOT NULL`, i.e. **only chunks whose document exists in the `documents` table**. That last condition matters: older "orphan" chunks (test uploads from before Step 2.2, no `documents` row) would otherwise leak into answers as an "unknown document". Single-document mode is left untouched so an old session pinned to an orphan id still works.
+- **`searchSimilar` — [chunks.repository.ts:56-86](src/repositories/chunks.repository.ts#L56-L86)**:
+  - [`documentId?`](src/repositories/chunks.repository.ts#L56-L60) is now optional.
+  - It returns [`SimilarChunk`](src/repositories/chunks.repository.ts#L47-L52) = `{ content, distance, documentId, filename }`. To get the filename it does a [`LEFT JOIN documents`](src/repositories/chunks.repository.ts#L76) — *why the source document's name matters:* so the answer and the UI can say **which PDF** each piece came from.
+  - [The `where`](src/repositories/chunks.repository.ts#L83): a real `documentId` → `chunks.document_id = …`; otherwise → `documents.id IS NOT NULL`, i.e. **only chunks whose document exists in the `documents` table**. That last condition matters: older "orphan" chunks (test uploads from before Step 2.2, no `documents` row) would otherwise leak into answers as an "unknown document". Single-document mode is left untouched so an old session pinned to an orphan id still works.
 - **`prepareChat` — [chat.service.ts:74-165](src/services/chat.service.ts#L74-L165)** (the *one* place the change lives, thanks to the earlier restructure):
   - [L80-88](src/services/chat.service.ts#L80-L88): absent/empty `documentId` → `ALL_DOCUMENTS`; a non-string (e.g. `?documentId=a&documentId=b` arrives as an array) → `400`. `searchAll` is the boolean the rest of the function branches on.
   - [L105-115](src/services/chat.service.ts#L105-L115): logs "across ALL documents" vs "scoped to this documentId", and passes `undefined` to `searchSimilar` for all-mode.
@@ -658,6 +661,225 @@ Real requests against your data: single-document answers unchanged; omitted and 
 
 ### Takeaway
 Adding this feature took *one function change plus a flag*, because the pipeline was already in one place. The honest tradeoff of "search everything" is dilution — the top 3 chunks are shared across all PDFs, so a vague or "meta" question can be answered from just one of them. Citing the source file per chunk is the mitigation, not a full fix.
+
+---
+
+# Phase 4 — Quiz generation (structured output)
+
+**The whole phase in one paragraph:** so far the LLM has returned *prose* for a human to read. A quiz has to be *data* — five questions, four options each, one marked correct — that code can turn into a UI. LLMs are good at text and only *usually* right about exact shapes, so the rule is: **never use model output until it has been checked.** Zod, the tool you already use to validate request bodies, does the checking here — the model is just another untrusted client.
+
+---
+
+## Step 4.1 — Structured output with Zod
+
+**Files:** [schemas/quiz.schema.ts](src/schemas/quiz.schema.ts), [step4-quiz-zod.ts](src/step4-quiz-zod.ts) (run with `npm run step4`), [chunks.repository.ts `sampleChunks`](src/repositories/chunks.repository.ts#L23-L34), [llm.service.ts `generateAnswer`](src/services/llm.service.ts#L10-L29). Reading material: [topics/08-structured-output-zod/README.md](topics/08-structured-output-zod/README.md).
+
+### Why we need it
+A chat reply can be slightly off and nobody is hurt. A quiz that comes back with 3 options, or with `correctIndex: "2"` (a string), or wrapped in ` ```json ` fences, crashes the UI far away from the real cause. Step 4.1 builds the safety net *first*, in a throwaway script, before any endpoint exists.
+
+### What it does
+Asks Gemini for a 5-question quiz about one stored PDF, in **two ways, several times each** — a plain "respond with ONLY JSON" prompt, and Gemini's structured-output mode — runs every reply through the same checker, and reports which passed and, for failures, exactly why.
+
+### How it works
+
+**The schema — [schemas/quiz.schema.ts](src/schemas/quiz.schema.ts)** (in its own file so Step 4.2's endpoint can reuse it)
+- [L10-23](src/schemas/quiz.schema.ts#L10-L23) `QuizQuestion`: `question` is a non-empty string; `options` is an array with **exactly 4** entries ([L14](src/schemas/quiz.schema.ts#L14)); `correctIndex` is a **whole number from 0 to 3** ([L16](src/schemas/quiz.schema.ts#L16)) — so the string `"2"`, `1.5` and `4` are all rejected.
+- [L18-23](src/schemas/quiz.schema.ts#L18-L23) `.refine(...)`: a **custom rule** the basic types can't express — all four options must be different. Without it, four identical options would pass the shape check and still be a useless question.
+- [L25](src/schemas/quiz.schema.ts#L25) `Quiz` = an array of exactly 5 questions.
+- [L29-30](src/schemas/quiz.schema.ts#L29-L30): `z.infer` gives the **TypeScript type from the same schema**, so the runtime check and the compile-time type can never drift apart.
+- [L36-54](src/schemas/quiz.schema.ts#L36-L54) `quizResponseSchema`: the same shape written the way *Gemini's* structured-output mode wants it (an OpenAPI-style schema with uppercase types like `'ARRAY'`). It **asks** the model to follow the shape; Zod is what **verifies** it. They're two separate jobs, and the second is not optional.
+
+**Picking chunks — [`sampleChunks`, chunks.repository.ts:23-34](src/repositories/chunks.repository.ts#L23-L34)**
+Chat asks "which chunks are most relevant to this *question*?" A quiz has no question, so it needs **broad coverage** instead: this function loads a document's chunks in order (ids are serial, so id order = page order) and picks `count` **evenly spaced** ones (`0, 2, 4, 6` out of 8, for example). It's a new repository function, so SQL still lives only in repositories.
+
+**Asking Gemini — [`generateAnswer`, llm.service.ts:10-29](src/services/llm.service.ts#L10-L29)**
+It gained one optional parameter, [`generationConfig`](src/services/llm.service.ts#L11-L12), spread into the request body only when given ([L19](src/services/llm.service.ts#L19)). Chat leaves it out (unchanged behavior); the quiz passes `{ responseMimeType: 'application/json', responseSchema }` to switch on structured-output mode.
+
+**The checker — [`checkQuiz`, step4-quiz-zod.ts:37-63](src/step4-quiz-zod.ts#L37-L63)** — the two-stage check every LLM response should go through:
+1. **Is it JSON at all?** `JSON.parse`. If that fails, it also tries stripping ` ``` ` fences, purely to *tell you* whether that common habit was the cause.
+2. **Is it the right JSON?** [`Quiz.safeParse`, L54](src/step4-quiz-zod.ts#L54) — `safeParse` never throws; it returns `{ success, data }` or `{ success: false, error }`, so the code can branch (retry, or report). On failure, Zod lists **every problem with the exact path**, like `0.options: expected array to have exactly 4 items`.
+
+**The experiment — [`main`, step4-quiz-zod.ts:60-137](src/step4-quiz-zod.ts#L60-L137)**
+- Picks your newest document (or the id you pass), samples 5 chunks ([L110](src/step4-quiz-zod.ts#L110)), and builds one prompt used for both modes ([`buildQuizPrompt`, L22](src/step4-quiz-zod.ts#L22)).
+- [L114-120](src/step4-quiz-zod.ts#L114-L120): the two modes — plain (no config) vs structured (with the response schema).
+- [L133](src/step4-quiz-zod.ts#L133): each run calls the model; an API error is counted as a failure rather than crashing the script.
+- [L114](src/step4-quiz-zod.ts#L114): a pass/fail summary per mode.
+
+**The bad-reply gallery — [`showBadReplyGallery`, step4-quiz-zod.ts:68-98](src/step4-quiz-zod.ts#L68-L98)**
+Modern models rarely slip, so waiting for a real failure teaches slowly. Instead, 11 hand-made replies — one good, ten wrong in the ways real models go wrong (fenced JSON, a chatty sentence before the JSON, only 3 questions, 3 options, `"2"` as a string, index out of range, `1.5`, duplicate options, a missing field, an object instead of an array) — go through the same checker, with **no API calls**. Each shows which check caught it and why.
+
+**Valid ≠ good — [the answer-position tally, step4-quiz-zod.ts:121-127](src/step4-quiz-zod.ts#L121-L127)**
+Zod proves the *shape*, not the *sense*. So the script also counts where the model puts the correct answer across every valid quiz.
+
+### Run it
+`npm run step4` — optionally `npm run step4 -- <documentId> <runs-per-mode>`. (Don't confuse it with the Phase 1 `step2`/`step3` scripts — those wipe the chunks table; `step4` only *reads*.)
+
+### What actually happened
+- The gallery caught **all 10 bad replies**, each with a precise reason.
+- Real runs: across three runs of the script, **every reply was valid in both modes — 17/17 plain and 17/17 structured**. This model almost never goes off-shape, so structured mode wasn't needed to get valid output here. That's a real finding, not a failure of the experiment: Zod is **insurance**, and you only see its value on the day the model slips.
+- In the last run (50 questions), the correct answer landed at position 0/1/2/3 in **22% / 36% / 32% / 10%** of them — not stuck on the first option, but position 3 is under-used. A quiz with a predictable answer position is a weaker quiz, so Step 4.2 should **shuffle the options in code** (and remap `correctIndex`) after validating. Code, not the model, controls anything that must be reliable.
+
+### Takeaway
+Two separate jobs: **ask** for the shape (prompt, or the API's structured-output mode) and **verify** it (Zod). Trust nothing until it has passed the second one. Next, Step 4.2 turns this script into `POST /quiz`, adding the validate → retry-once habit.
+
+---
+
+## Step 4.2 — `POST /quiz`
+
+**Files:** [services/quiz.service.ts](src/services/quiz.service.ts), [routes/quiz.routes.ts](src/routes/quiz.routes.ts), [app.ts:7](src/app.ts#L7) + [L34](src/app.ts#L34), [utils/pipelineLogger.ts:14](src/utils/pipelineLogger.ts#L14) + [L61-63](src/utils/pipelineLogger.ts#L61-L63).
+
+### Why we need it
+Step 4.1 proved the approach in a throwaway script. A real feature needs it as an endpoint the frontend can call, with the two production habits the topic README calls for: retry once instead of trusting a single reply, and don't leave "where the correct answer sits" up to the model's own habits — Step 4.1 measured that habit wasn't uniform.
+
+### What it does
+`POST /quiz` with `{ documentId }` returns `{ documentId, quiz }` — a validated 5-question quiz whose options have been shuffled so the correct answer's position is unpredictable.
+
+### How it works
+
+**`generateQuiz()` — [quiz.service.ts:96-159](src/services/quiz.service.ts#L96-L159)**
+Mirrors `prepareChat()`'s shape: takes raw request input (`documentId: unknown`), never touches `req`/`res`, and returns `{ ok: false, status, error }` or `{ ok: true, ... }`.
+1. **Validate** — [L99-102](src/services/quiz.service.ts#L99-L102): missing/non-string `documentId` → `400`. [L107-110](src/services/quiz.service.ts#L107-L110): the sentinel `'all'` is explicitly rejected → `400` — *why*: `sampleChunks` reads one document's chunks in reading order, and there's no single reading order across every PDF, so "all documents" has no sensible quiz to build.
+2. **Sample** — [L117](src/services/quiz.service.ts#L117): `sampleChunks(documentId, CHUNKS_FOR_QUIZ)`, the same function and count (5, [L17](src/services/quiz.service.ts#L17)) as Step 4.1's script. Empty result → `404` ([L120-124](src/services/quiz.service.ts#L120-L124)).
+3. **Prompt** — [L126](src/services/quiz.service.ts#L126): `buildQuizPrompt()`.
+4. **Generate + validate + retry** — [L136-151](src/services/quiz.service.ts#L136-L151): a loop bounded by `MAX_ATTEMPTS = 2` ([L22](src/services/quiz.service.ts#L22)) — one real attempt plus one retry, never more. Each attempt calls `generateAnswer(prompt, generationConfig)` in **structured-output mode** ([L133](src/services/quiz.service.ts#L133): `{ responseMimeType: 'application/json', responseSchema: quizResponseSchema }` — chosen over the plain prompt because Step 4.1 showed it's at least as reliable), then `checkQuizReply(raw)`. The first valid reply shuffles and returns immediately ([L142-147](src/services/quiz.service.ts#L142-L147)); on failure the loop just tries again, logging the reason ([L149-150](src/services/quiz.service.ts#L149-L150)).
+5. **Give up cleanly** — [L153-158](src/services/quiz.service.ts#L153-L158): if both attempts fail, `failed()` logs it and the function returns `{ ok: false, status: 502, error: '...' }` — a message a UI can show, not a crash. Step 4.1's real runs were 17/17 valid, so this path is rarely hit, but the code doesn't assume that.
+
+**`buildQuizPrompt()` and `checkQuizReply()` — [quiz.service.ts:26-34](src/services/quiz.service.ts#L26-L34) and [L41-67](src/services/quiz.service.ts#L41-L67)**
+Moved here from the Step 4.1 script, unchanged, so `npm run step4` and the real endpoint share one implementation instead of two copies — the same reasoning as `buildChatPrompt()` being shared by `/chat` and `/chat-stream`. [step4-quiz-zod.ts](src/step4-quiz-zod.ts) now imports them (see the Step 4.1 section above for what they do).
+
+**Shuffling — [`shuffleQuiz`/`shuffleQuestion`, quiz.service.ts:71-87](src/services/quiz.service.ts#L71-L87)**
+A Fisher–Yates shuffle per question: [L72-76](src/services/quiz.service.ts#L72-L76) builds an `order` array (`order[newPosition] = originalIndex`) and shuffles it in place, then [L78-82](src/services/quiz.service.ts#L78-L82) rebuilds `options` in that order and remaps `correctIndex` to `order.indexOf(q.correctIndex)` — wherever the originally-correct option ended up. *Why in code, not the prompt:* Step 4.1 measured the model's own placement across 50 questions — 22% / 36% / 32% / 10% for positions 0–3 — not uniform, and not something a prompt instruction can reliably fix. Zod proves the *shape* is right; this is the part of "make it good, not just valid" that has to live in code.
+
+**The route — [quiz.routes.ts](src/routes/quiz.routes.ts)**
+Thin, same shape as the other routes: [L11](src/routes/quiz.routes.ts#L11) `withErrorHandling('POST /quiz', ...)` catches real exceptions (network/DB) the same way `/chat` does; [L15-16](src/routes/quiz.routes.ts#L15-L16) calls `generateQuiz` and forwards its status/error unchanged; [L18](src/routes/quiz.routes.ts#L18) sends the quiz. **Deliberately not streamed** — unlike `/chat-stream`, half a JSON object is useless, so the client waits for the complete, checked result.
+
+**Wiring** — [app.ts:7](src/app.ts#L7) imports `quizRouter`, [L34](src/app.ts#L34) mounts it, same pattern as the other three routers.
+
+**A new log theme and a new helper — [pipelineLogger.ts:14](src/utils/pipelineLogger.ts#L14), [L61-63](src/utils/pipelineLogger.ts#L61-L63)**
+`quiz` got its own color (`chalk.blueBright`), so its terminal trace is easy to tell apart from uploads (cyan) and chats (magenta). [`failed(reason)`](src/utils/pipelineLogger.ts#L61-L63) is a new red-line helper, deliberately distinct from `rejected()` (bad input) and `notFound()` (missing resource): "the request was valid, the work just never produced a usable result."
+
+### What actually happened
+Tested live on a spare port against real documents and Gemini:
+- **Happy path:** a real 5-question quiz came back, options shuffled (correct answers landed at positions 2, 0, 1, 1, 3 across the five questions in one run — not clustered), a full `[1/4]`–`[4/4]` pipeline trace in the terminal, `attempt 1/2` succeeded both times it was tried.
+- **All four bad-input cases** returned the right status: missing `documentId` → `400`, `documentId: 'all'` → `400`, an unknown id → `404`, a non-string (array) `documentId` → `400`.
+- **Regression-checked the refactor:** re-ran `npm run step4` after moving `buildQuizPrompt`/`checkQuizReply` into `quiz.service.ts` — the bad-reply gallery still caught all 10 broken samples, and real runs still produced valid quizzes. One run hit a transient network `fetch failed` — not a shape problem, and a good reminder that a thrown network error (bubbles up, not retried by this loop) and an invalid-shape reply (retried) are handled differently on purpose.
+
+### Takeaway
+Two production habits from the Step 4.1 topic notes, both real code now: **retry once, then fail cleanly** (never trust one reply, never loop forever), and **don't leave "must be reliable" to the model** — shuffling in code is a direct, load-bearing response to a real measurement from Step 4.1, not a hypothetical improvement.
+
+---
+
+## Step 4.2F — Frontend: quiz UI
+
+**Files:** [types/quiz.ts](frontend/src/types/quiz.ts), [api/quiz.ts](frontend/src/api/quiz.ts), [hooks/useQuiz.ts](frontend/src/hooks/useQuiz.ts), [components/quiz/QuizModal.tsx](frontend/src/components/quiz/QuizModal.tsx), and edits to [ChatView.tsx](frontend/src/components/chat/ChatView.tsx), [App.tsx](frontend/src/App.tsx), [App.css](frontend/src/App.css).
+
+### Why we need it
+Step 4.2 made a quiz exist as a JSON response. Nobody actually takes a quiz through Postman — this step is what turns it into something you can see and click through in the browser, the same way Step 2.3F turned `/chat`'s JSON into a real chat UI.
+
+### What it does
+A **"Generate quiz"** button appears in the chat header whenever a single real document is open. Clicking it opens an overlay showing a loading state, then the 5 questions with their 4 options each as selectable radio buttons — or a clean error with a retry button if generation failed.
+
+### How it works
+
+**The type — [types/quiz.ts](frontend/src/types/quiz.ts)**
+`QuizQuestion` / `Quiz` mirror the backend's Zod shape exactly (`question`, `options: string[]`, `correctIndex`) — no validation on this side, since the backend already validated it with Zod before sending it; the frontend just needs the matching TypeScript shape.
+
+**The API call — [`generateQuiz`, api/quiz.ts:13-26](frontend/src/api/quiz.ts#L13-L26)**
+A plain `fetch` + `await`, the same shape as `sendChatMessage`. **Not streamed**, on purpose — same reasoning as the backend not streaming `/quiz`: a half-received quiz can't be validated or rendered, so there's nothing to gain from streaming it and it would only add complexity.
+
+**The hook — [`useQuiz`, hooks/useQuiz.ts](frontend/src/hooks/useQuiz.ts)**
+Deliberately its **own** hook, not folded into `useChat` — a quiz isn't a message in the conversation, it's a one-off request the button triggers, rendered in its own overlay on top of whatever chat happens to be open.
+- State: `open` (is the modal showing), `loading`, `error`, `quiz`, plus `documentId`/`filename` kept around so `regenerate()` knows what to re-request.
+- `generate(docId, docFilename)` ([L18-36](frontend/src/hooks/useQuiz.ts#L18-L36)): opens the modal immediately (`setOpen(true)`) and shows loading *before* the request even starts, so the button feels responsive; on success sets `quiz`, on failure sets `error` — same try/catch/finally shape as `useDocuments.uploadFile`.
+- `regenerate()` ([L40-42](frontend/src/hooks/useQuiz.ts#L40-L42)): re-runs `generate()` for the same document — used by both the modal's "Try again" (after an error) and "Regenerate" (a fresh set of questions) buttons, since they're the same action from two different starting states.
+- `close()` ([L44-46](frontend/src/hooks/useQuiz.ts#L44-L46)): just hides the modal; the last quiz/error is left in state rather than cleared, though nothing currently reopens without calling `generate()` again, which resets it anyway.
+
+**The modal — [QuizModal.tsx](frontend/src/components/quiz/QuizModal.tsx)**
+- [L30](frontend/src/components/quiz/QuizModal.tsx#L30): renders nothing at all when `open` is false — simplest possible way to keep an always-mounted component out of the way.
+- Three body states, each gated on `loading`/`error`/`quiz` ([L46-88](frontend/src/components/quiz/QuizModal.tsx#L46-L88)): a spinner while waiting (with a "usually 10–30 seconds" hint, since a silent multi-second wait feels broken otherwise), a red error state with a retry button, or the question list.
+- **Answer selection — [L22](frontend/src/components/quiz/QuizModal.tsx#L22), [L72-84](frontend/src/components/quiz/QuizModal.tsx#L72-L84)**: `selected` is a `Record<questionIndex, optionIndex>`, kept **local to this component** — nothing is sent anywhere yet, because there's no grading endpoint to send it to (that's the optional Step 4.3). Real `<input type="radio">` elements grouped by `name={quiz-question-${qi}}` so each question's options behave as one radio group, same as native HTML forms.
+- **Resetting on a fresh quiz — [L24-28](frontend/src/components/quiz/QuizModal.tsx#L24-L28)**: a `useEffect` clears `selected` whenever the `quiz` array reference changes (i.e. a new `generate()`/`regenerate()` call finished) — otherwise old answers would visually linger against new questions.
+- **A progress counter — [L91-101](frontend/src/components/quiz/QuizModal.tsx#L91-L101)**: `"N of 5 answered"`, purely informational (there's no submit step yet), plus the regenerate button.
+
+**Wiring the button — [ChatView.tsx:86-100](frontend/src/components/chat/ChatView.tsx#L86-L100)**
+Shown only when `activeDocument && activeDocument.documentId !== ALL_DOCUMENTS` ([L89](frontend/src/components/chat/ChatView.tsx#L89)) — hidden on the New Chat screen (no `activeDocument` yet) and under "All documents" scope, because [`sampleChunks`](src/repositories/chunks.repository.ts#L23-L34) reads one document's chunks in reading order and there's no such order across every PDF. `disabled={quizLoading}` stops a second click from firing a second Gemini request while one is already running.
+
+**Wiring in `App.tsx`**
+- [L31](frontend/src/App.tsx#L31): `const quiz = useQuiz()`.
+- `handleGenerateQuiz()` — [L79-83](frontend/src/App.tsx#L79-L83): re-checks the same precondition the button's visibility already enforces (never trust that a handler is only reachable the way the UI intends) before calling `quiz.generate(...)`.
+- `<QuizModal ... />` — [L171-179](frontend/src/App.tsx#L171-L179): rendered once at the top level of `app-shell`, alongside `<ChatView>`, so it overlays the whole app regardless of what's currently on screen underneath.
+
+**CSS — [App.css](frontend/src/App.css)**
+New rules for the header button ([L677-705](frontend/src/App.css#L677-L705)) and the modal (`.quiz-overlay` [L707-717](frontend/src/App.css#L707-L717), `.quiz-modal` [L719-728](frontend/src/App.css#L719-L728), question/option styling [L781-832](frontend/src/App.css#L781-L832)) — all built from the same design tokens (`--color-*`, `--space-*`, `--radius-*`) the rest of the app uses, so dark mode and the existing visual language (card shapes, the green accent on a selected option) carry over automatically with no extra work. The mobile media query gained an icon-only variant of the button ([L916-918](frontend/src/App.css#L916-L918)) and a full-screen modal on small viewports, matching how the sidebar already becomes a drawer below 900px.
+
+### What actually happened
+Tested live in a headless browser against the real running app:
+- The button was **absent** on the New Chat screen, **present** after picking a single document, and **disappeared again** after switching the header's scope dropdown to "All documents".
+- Clicking it showed the loading state, then a real 5-question quiz with 4 options each rendered from the backend.
+- Selecting one option per question updated the progress counter correctly (`5 of 5 answered`); clicking **Regenerate** produced a fresh quiz and reset the counter to `0 of 5 answered`, confirming the reset effect works.
+- Closing via the **X** button removed the overlay.
+- **Zero console errors**, and a screenshot confirmed the modal's colors, card shapes and spacing visually match the rest of the app (same green accent used for a selected radio option as elsewhere for a selected/active state).
+
+### Takeaway
+Same pattern as every earlier `*F` step (2.1F, 2.3F, 3.2F): the backend endpoint existing isn't the finish line — a feature isn't "done, done" until it's something you can actually click through. Keeping the quiz's state in its own hook, separate from `useChat`, is what made wiring it in almost mechanical: `App.tsx` just holds one more hook and renders one more always-present overlay component, without touching how chat or sessions work at all.
+
+---
+
+## Step 4.3 + 4.3F — checking answers
+
+**Files:** [components/quiz/QuizModal.tsx](frontend/src/components/quiz/QuizModal.tsx), [App.css:826-909](frontend/src/App.css#L826-L909). No backend files — see below for why.
+
+### Why we need it
+Step 4.2F let you *see and answer* a quiz. It never told you if you got anything right. This step closes that loop.
+
+### The decision that shapes everything here: no `POST /quiz/check`
+The roadmap describes a tiny endpoint that takes `{ questionIndex, chosenIndex }` and returns correct/incorrect. It wasn't built, on purpose. Here's the reasoning:
+- Quizzes aren't stored anywhere server-side — there's no `quizId`, no `quiz_runs` table, nothing. `POST /quiz` generates one, sends it down, and forgets it.
+- So a `/quiz/check` endpoint would have **no independent truth to check against**. Either the client sends `correctIndex` along with its guess (the server just compares two numbers the client already had), or the endpoint doesn't really exist in any meaningful sense.
+- A round trip that can't actually catch a lying client isn't a real security boundary — it's just extra network latency dressed up as one. Building a *trustworthy* check would mean persisting quizzes server-side, which is a bigger change than this optional step is meant to be.
+- So grading happens **entirely in `QuizModal.tsx`**, using the `correctIndex` values already sitting in the `quiz` prop from Step 4.2F.
+
+### How it works
+
+**New state — [QuizModal.tsx:30](frontend/src/components/quiz/QuizModal.tsx#L30)**
+`checked` (boolean). Before it's true, the modal behaves exactly as it did in Step 4.2F — pick an option per question, nothing graded. Once true, radios lock and colors appear.
+
+**Reset alongside the existing effect — [L35-38](frontend/src/components/quiz/QuizModal.tsx#L35-L38)**
+The `useEffect` that already cleared `selected` on a fresh `quiz` array now also resets `checked` — so Regenerate doesn't just get you new questions, it also un-grades the modal back to answerable.
+
+**The score — [L42](frontend/src/components/quiz/QuizModal.tsx#L42)**
+`quiz.filter((q, qi) => selected[qi] === q.correctIndex).length` — computed on every render (cheap, `quiz` is only 5 items), not stored in its own state. No need to persist a value that's fully derivable from `selected` and `quiz`.
+
+**Per-option grading — [L89-105](frontend/src/components/quiz/QuizModal.tsx#L89-L105)**
+Two booleans per option, both gated on `checked`:
+- `isCorrectOption` ([L89](frontend/src/components/quiz/QuizModal.tsx#L89)): true for the actually-correct option, **regardless of what was picked** — so the right answer is always revealed, not just "was your pick right".
+- `isWrongPick` ([L90](frontend/src/components/quiz/QuizModal.tsx#L90)): true only for a selected option that wasn't correct.
+
+These map to CSS classes appended to `.quiz-option` ([L94](frontend/src/components/quiz/QuizModal.tsx#L94)), plus a `CheckCircle`/`XCircle` icon rendered inline ([L104-105](frontend/src/components/quiz/QuizModal.tsx#L104-L105)). `disabled={checked}` on the radio input itself ([L100](frontend/src/components/quiz/QuizModal.tsx#L100)) is what actually locks answers in — not just a visual state, the input genuinely can't be changed anymore.
+
+**The footer — [L118-138](frontend/src/components/quiz/QuizModal.tsx#L118-L138)**
+Swaps between "N of 5 answered" + a **Check answers** button (before grading) and "N of 5 correct" (after). Check answers just does `setChecked(true)` — no request, no async, the data was already there.
+
+### A real bug, found by looking at a screenshot, not by reading the code
+
+The first version looked right in the code and typechecked cleanly, but a screenshot showed a wrong-but-selected option rendered with a **green background and a red ✕ icon at the same time** — confusing, and wrong.
+
+The cause: [`.quiz-option:has(input:checked)`, added back in Step 4.2F](frontend/src/App.css#L826), gives the "you picked this" highlight. Once grading locks the radio, `input:checked` is still true for whichever option was picked, so that rule kept firing — and `:has()` gives it *higher specificity* than the plain `.quiz-option--incorrect` class, so the old green styling won even though the incorrect-red rule appeared later in the file. CSS specificity, not React state, was the actual bug.
+
+**The fix — [App.css:826](frontend/src/App.css#L826)**: `.quiz-option:has(input:checked:not(:disabled))`. Since grading disables the radio ([QuizModal.tsx:100](frontend/src/components/quiz/QuizModal.tsx#L100)), this selector stops matching the instant `checked` becomes true, and only [`.quiz-option--correct`](frontend/src/App.css#L841)/[`.quiz-option--incorrect`](frontend/src/App.css#L848) apply from then on. One word (`:not(:disabled)`) fixed it.
+
+**The rest of the CSS** ([`.quiz-modal-score`](frontend/src/App.css#L883), [`.quiz-modal-footer-actions`](frontend/src/App.css#L889), [`.quiz-check-button`](frontend/src/App.css#L895)) is unremarkable layout work using the same design tokens as everything else in the app.
+
+### What actually happened
+Tested live in a headless browser, twice — once before the CSS fix (to confirm the bug was real, not imagined) and once after:
+- Answered all 5 questions, clicked **Check answers**: radios locked (confirmed by attempting to click a different option afterward — the score didn't change), the score read `"2 of 5 correct"`, 5 options were marked correct (one per question) and 3 were marked incorrect (the wrong picks).
+- **Before the fix:** a screenshot showed a wrong pick with a green background and a red icon simultaneously.
+- **After the fix:** the same wrong pick showed solid red; the actually-correct option showed solid green even though it hadn't been picked.
+- **Regenerate** produced a new quiz, and both the score and every correct/incorrect class disappeared — confirming the shared reset effect works for grading too.
+- Zero console errors throughout.
+
+### Takeaway
+Not every "endpoint the roadmap describes" is worth building — sometimes the honest engineering call is recognizing an endpoint would be theater (no real data behind it) and building the simpler, equally-correct version instead. And a screenshot caught a bug that reading the code, and even `tsc`, didn't: CSS specificity bugs are invisible in TypeScript and only show up when you actually look at the rendered page.
 
 ---
 
@@ -702,12 +924,12 @@ Follow a single message from the keyboard to the screen (streaming version):
 4. **Express routes it** — [app.ts:32](src/app.ts#L32) mounts `chatRouter`; [chat.routes.ts:42](src/routes/chat.routes.ts#L42) handles it inside `withErrorHandling`.
 5. **`prepareChat()`** ([chat.service.ts:74](src/services/chat.service.ts#L74)):
    - validates input → [embeddings.service.ts](src/services/embeddings.service.ts) calls Gemini to embed the question →
-   - [`searchSimilar`](src/repositories/chunks.repository.ts#L36-L66) runs the pgvector `<=>` query on Neon → top 3 chunks →
+   - [`searchSimilar`](src/repositories/chunks.repository.ts#L56-L86) runs the pgvector `<=>` query on Neon → top 3 chunks →
    - [`getRecentMessages`](src/repositories/chatMessages.repository.ts#L30-L42) loads the last 8 messages →
    - [`insertMessage`](src/repositories/chatMessages.repository.ts#L17-L24) saves your message →
    - [`buildChatPrompt`](src/services/chat.service.ts#L15-L49) assembles context + history + question.
 6. **SSE opens**; `meta` (session id + sources) is sent ([chat.routes.ts:57-67](src/routes/chat.routes.ts#L57-L67)). The frontend adds the empty assistant bubble with sources ([useChat.ts:137-150](frontend/src/hooks/useChat.ts#L137-L150)).
-7. **[`streamAnswer`](src/services/llm.service.ts#L29-L73)** calls Gemini's streaming endpoint; each parsed piece is `yield`ed, and the route writes it as `data: {"text": …}` ([chat.routes.ts:74-77](src/routes/chat.routes.ts#L74-L77)).
+7. **[`streamAnswer`](src/services/llm.service.ts#L36-L80)** calls Gemini's streaming endpoint; each parsed piece is `yield`ed, and the route writes it as `data: {"text": …}` ([chat.routes.ts:74-77](src/routes/chat.routes.ts#L74-L77)).
 8. **Each piece reaches `onmessage`** ([api/chat.ts:61-64](frontend/src/api/chat.ts#L61-L64)) → `appendToAssistantBubble` → React re-renders; the bubble grows and the view scrolls ([ChatPanel.tsx:23-27](frontend/src/components/chat/ChatPanel.tsx#L23-L27)).
 9. **The stream ends**: the server saves the full reply ([chat.routes.ts:88-95](src/routes/chat.routes.ts#L88-L95)) and sends `event: done`; the browser closes the connection and `onDone` refreshes the sidebar ([useChat.ts:152-157](frontend/src/hooks/useChat.ts#L152-L157)).
 
@@ -731,7 +953,7 @@ Things that work but are deliberately simple — good to know, and several are f
 - **The upload's PDF check trusts the client's mimetype** ([documents.routes.ts:40](src/routes/documents.routes.ts#L40)).
 - **Errors are terminal-only** — writing them to a file (`logs/errors.log`) was discussed and intentionally deferred.
 - **No automated tests yet** (Phase 9).
-- **Don't re-run `npm run step2` / `step3` against the real database** — they drop/clear the `chunks` table (see the warnings in Phase 1).
+- **Don't re-run the `step2` / `step3` scripts against the real database** — they drop/clear the `chunks` table (see the warnings in Phase 1). `step3` is still an npm script; `step2` no longer is.
 
 ---
 
@@ -754,3 +976,7 @@ Things that work but are deliberately simple — good to know, and several are f
 - **Async generator** — an `async function*` that `yield`s values over time; consumed with `for await`.
 - **StrictMode** — React dev mode that double-invokes some code to expose impure logic.
 - **Optimistic update** — showing the result in the UI *before* the server confirms (the user's message bubble).
+- **Structured output** — getting an LLM to return data in an exact shape (JSON) instead of prose, so code can use it.
+- **Zod schema** — a description of the shape data must have; `safeParse` checks data against it, and `z.infer` gives the matching TypeScript type.
+- **Sentinel value** — a special value standing for a case (here `'all'` for "every document"), used instead of a schema change.
+- **Orphan chunk** — a stored chunk whose `documents` row doesn't exist, so it's invisible in the UI.

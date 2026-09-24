@@ -11,6 +11,7 @@ chalk.level = 1
 const THEMES = {
   upload: chalk.cyan,
   chat: chalk.magenta,
+  quiz: chalk.blueBright,
 }
 
 type Pipeline = keyof typeof THEMES
@@ -52,4 +53,11 @@ export function rejected(reason: string) {
 
 export function notFound(reason: string) {
   console.log(chalk.red.bold('✗ ') + chalk.red(reason))
+}
+
+// Step 4.2 — distinct from rejected() (bad input) and notFound() (missing
+// resource): this is "the request was valid, but the work never produced a
+// usable result" — e.g. every retry attempt still failed validation.
+export function failed(reason: string) {
+  console.log(chalk.red.bold('✗ Failed: ') + chalk.red(reason))
 }

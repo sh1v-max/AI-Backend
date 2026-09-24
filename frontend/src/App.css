@@ -672,6 +672,265 @@
   cursor: not-allowed;
 }
 
+/* ---------- quiz button (chat header) ---------- */
+
+.quiz-generate-button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  padding: 6px var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-foreground);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.quiz-generate-button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  background: var(--color-accent-bg);
+  color: var(--color-accent-hover);
+}
+
+.quiz-generate-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------- quiz modal (Step 4.2F) ---------- */
+
+.quiz-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgba(15, 23, 42, 0.45);
+  /* above the sidebar (30) and its mobile scrim (20) */
+  z-index: 40;
+}
+
+.quiz-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: min(80vh, 720px);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.quiz-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.quiz-modal-heading h2 {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 17px;
+}
+
+.quiz-modal-subtitle {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.quiz-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4);
+}
+
+.quiz-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+  color: var(--color-muted);
+}
+
+.quiz-state p {
+  margin: 0;
+}
+
+.quiz-state-hint {
+  font-size: 12px;
+}
+
+.quiz-state-error-icon {
+  color: var(--color-destructive);
+}
+
+.quiz-question-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.quiz-question-text {
+  margin: 0 0 var(--space-2);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--color-foreground);
+}
+
+.quiz-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.quiz-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--color-foreground);
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.quiz-option:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-bg);
+}
+
+/* :not(:disabled) matters once grading is on (Step 4.3F): radios get
+   disabled at that point, so this "you picked this" highlight steps aside
+   and only the correct/incorrect rules below apply — otherwise a wrong pick
+   would show green (selected) AND red (wrong) at the same time. */
+.quiz-option:has(input:checked:not(:disabled)) {
+  border-color: var(--color-accent);
+  background: var(--color-accent-bg);
+  color: var(--color-accent-hover);
+}
+
+.quiz-option input {
+  accent-color: var(--color-accent);
+  flex-shrink: 0;
+}
+
+/* Step 4.3F — grading. Once checked, .quiz-option:has(input:checked) above
+   still applies to whichever option was picked; these two add the
+   right/wrong tint on top (an incorrect pick still shows the checked-accent
+   ring, which is fine — it's clearly overridden by the red below). */
+.quiz-option--correct {
+  border-color: var(--color-accent);
+  background: var(--color-accent-bg);
+  color: var(--color-accent-hover);
+  cursor: default;
+}
+
+.quiz-option--incorrect {
+  border-color: var(--color-destructive);
+  background: var(--color-destructive-bg);
+  color: var(--color-destructive);
+  cursor: default;
+}
+
+.quiz-option-icon {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.quiz-option--correct .quiz-option-icon {
+  color: var(--color-accent-hover);
+}
+
+.quiz-option--incorrect .quiz-option-icon {
+  color: var(--color-destructive);
+}
+
+.quiz-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.quiz-modal-progress {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.quiz-modal-score {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-accent-hover);
+}
+
+.quiz-modal-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.quiz-check-button {
+  padding: 6px var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: var(--color-on-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+.quiz-check-button:hover {
+  background: var(--color-accent-hover);
+}
+
+.quiz-retry-button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 6px var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-foreground);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.quiz-retry-button:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-bg);
+  color: var(--color-accent-hover);
+}
+
 /* ---------- mobile (<900px): sidebar becomes a drawer ---------- */
 
 @media (max-width: 899px) {
@@ -713,5 +972,23 @@
     inset: 0;
     background: rgba(15, 23, 42, 0.4);
     z-index: 20;
+  }
+
+  /* Icon-only on a narrow header, same pattern as the sidebar's mobile-only
+     icon buttons — there isn't room for the label next to the sidebar
+     toggle and a possibly-long document name. */
+  .quiz-generate-button-label {
+    display: none;
+  }
+
+  .quiz-overlay {
+    padding: 0;
+  }
+
+  .quiz-modal {
+    width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
   }
 }

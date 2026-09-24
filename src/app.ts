@@ -4,6 +4,7 @@ import { FRONTEND_URL } from './config'
 import { documentsRouter } from './routes/documents.routes'
 import { sessionsRouter } from './routes/sessions.routes'
 import { chatRouter } from './routes/chat.routes'
+import { quizRouter } from './routes/quiz.routes'
 
 // The app is built here and started in index.ts — keeping `listen()` out of
 // this file means tests (Phase 9) can import the app without opening a port.
@@ -30,3 +31,4 @@ app.get('/', (_req, res) => {
 app.use(documentsRouter)
 app.use(sessionsRouter)
 app.use(chatRouter)
+app.use(quizRouter)

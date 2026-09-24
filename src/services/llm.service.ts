@@ -4,12 +4,19 @@ const GENERATE_URL =
 const STREAM_URL =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:streamGenerateContent'
 
-export async function generateAnswer(prompt: string): Promise<string> {
+// `generationConfig` is optional (Step 4.1): plain chat leaves it out, while
+// structured output passes { responseMimeType: 'application/json',
+// responseSchema } to make Gemini return JSON in a given shape.
+export async function generateAnswer(
+  prompt: string,
+  generationConfig?: Record<string, unknown>,
+): Promise<string> {
   const res = await fetch(`${GENERATE_URL}?key=${API_KEY}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
+      ...(generationConfig && { generationConfig }),
     }),
   })
 

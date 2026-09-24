@@ -160,31 +160,38 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 
 *Topic: [08-structured-output-zod](topics/08-structured-output-zod)*
 
-**Step 4.1 — Structured output with Zod**
-- Define a `QuizQuestion` Zod schema (question, 4 options, correct index) and a `Quiz` schema (array of 5)
-- Write a standalone script: pull a few chunks, prompt the LLM to return JSON matching the schema, parse with `Quiz.parse(...)`
-- Run it 3-4 times, notice occasional shape mismatches Zod catches
-- Output: a script proving you can force reliable JSON out of an LLM
+**Step 4.1 — Structured output with Zod** *(done — line-linked explanation in [CODE_EXPLAINED.md](CODE_EXPLAINED.md#step-41--structured-output-with-zod); run with `npm run step4`)*
+- `src/schemas/quiz.schema.ts`: `QuizQuestion` (question; **exactly 4** options; `correctIndex` a whole number 0–3; a `.refine()` rule that all 4 options differ) and `Quiz` (exactly 5 questions). `z.infer` gives the TypeScript type from the same schema. It also holds `quizResponseSchema`, the same shape in Gemini's structured-output format
+- `sampleChunks(documentId, count)` in `chunks.repository.ts`: chunks **evenly spaced across a document** in reading order — no search, because a quiz has no question and wants broad coverage. `generateAnswer(prompt, generationConfig?)` gained an optional config so it can switch on Gemini's JSON mode
+- `src/step4-quiz-zod.ts`: asks for the same quiz two ways (plain "respond with ONLY JSON" vs structured-output mode), several runs each, and checks every reply in two stages — `JSON.parse`, then `Quiz.safeParse` — reporting exactly why any reply fails. Also a **gallery of 11 hand-made replies** (10 wrong in realistic ways) run through the same checker with no API calls, so what Zod catches is visible every time
+- **Result:** the gallery caught all 10 bad replies with precise reasons. Real runs were **17/17 valid in both modes** — this model almost never goes off-shape, so Zod is insurance rather than something that visibly saves you here. Also found: across 50 questions the correct answer landed at position 0/1/2/3 in 22%/36%/32%/10% — *valid isn't the same as good*, so Step 4.2 should shuffle options in code
+- Output: a script proving you can force reliable JSON out of an LLM — and check it
 
-**Step 4.2 — `POST /quiz`**
-- Takes a `documentId`, pulls several stored chunks (broad coverage, not narrow relevance)
-- Runs the Step 4.1 prompt+schema, returns the validated quiz
-- Add one retry: if `Quiz.parse()` throws, retry the LLM call once before failing
-- Output: a working quiz-generation endpoint with a real production habit (validate → retry) built in
+**Step 4.2 — `POST /quiz`** *(done — line-linked explanation in [CODE_EXPLAINED.md](CODE_EXPLAINED.md#step-42--post-quiz))*
+- `src/services/quiz.service.ts`: `buildQuizPrompt()` and `checkQuizReply()` moved here from the Step 4.1 script (one implementation, shared by the script and the real endpoint), plus new `generateQuiz(documentId)` — samples 5 chunks (`sampleChunks`, same as 4.1), builds the prompt, calls Gemini in **structured-output mode**, validates with `Quiz.safeParse`
+- **Retry:** one real attempt + one retry (`MAX_ATTEMPTS = 2`) — if both fail, a clean `502` instead of looping or crashing
+- **Shuffle:** every validated quiz's options are shuffled per question (Fisher–Yates) and `correctIndex` remapped, because Step 4.1 found the model's own placement wasn't uniform (22/36/32/10% across positions 0–3) — corrected in code, not left to the model
+- **Validation:** `documentId` required (400 if missing/not a string); rejects the `'all'` sentinel with 400 (a quiz needs one document's chunks in reading order, not a mix); unknown/empty document → 404
+- `src/routes/quiz.routes.ts`: thin — `POST /quiz` calls `generateQuiz`, mounted in `app.ts`. Not streamed on purpose (half a JSON object is useless)
+- Added a `quiz` pipeline color (blue) and a `failed()` logger (distinct from `rejected`/`notFound`) to `pipelineLogger.ts`
+- **Tested live:** happy path (5 valid, shuffled questions, all logged `[1/4]`–`[4/4]`, attempt `1/2` succeeded both times tried); all four bad-input cases (missing, `'all'`, unknown id, non-string) returned the right status; `npm run step4` re-run after the refactor to confirm sharing the functions didn't break the experiment script (gallery still 10/10, a real run still produced a valid quiz)
+- Output: a working quiz-generation endpoint with real production habits (validate → retry → shuffle) built in
 
-**Step 4.2F — Frontend: quiz UI**
-- A "Generate Quiz" button (per selected document) that POSTs to `/quiz`, renders each question with its 4 options as selectable radio buttons
-- Output: quizzes are visible and answerable, not just JSON in a response
+**Step 4.2F — Frontend: quiz UI** *(done — line-linked explanation in [CODE_EXPLAINED.md](CODE_EXPLAINED.md#step-42f--frontend-quiz-ui))*
+- A **"Generate quiz"** button in the chat header, next to the "Searching in" dropdown — shown only when a single real document is active (hidden on the New Chat screen and on "All documents", since a quiz needs one document's chunks in order)
+- Clicking it opens an overlay modal: a loading state while `POST /quiz` runs (10–30s), then each question rendered with its 4 options as selectable radio buttons, or a clean error with a "Try again" button if generation failed
+- A **"Regenerate"** button gets a fresh quiz for the same document (clears previous selections); closing and reopening starts over
+- New files: `types/quiz.ts`, `api/quiz.ts` (not streamed — same reasoning as the backend: a partial quiz can't be rendered), `hooks/useQuiz.ts` (its own hook — a quiz isn't part of the conversation), `components/quiz/QuizModal.tsx`
+- Output: quizzes are visible and answerable in the real UI, not just JSON in a response — verified in a real browser (button hidden/shown correctly, 5 questions × 4 options rendered, answers selectable, regenerate resets selections, closes cleanly, zero console errors)
 
-**Step 4.3 — `POST /quiz/check`** *(optional, closes the loop)*
-- Takes `{questionIndex, chosenIndex}` against a generated quiz, returns correct/incorrect
-- Output: the quiz feature feels complete end to end
+**Step 4.3 + 4.3F — Grading, done together, client-side** *(done — line-linked explanation in [CODE_EXPLAINED.md](CODE_EXPLAINED.md#step-43--43f--checking-answers))*
+- **No `POST /quiz/check` was built, on purpose.** `correctIndex` already travels down in the `/quiz` response the browser holds — the server has no separate stored copy of the quiz to check against (no `quizId`, nothing persisted), so a round trip would just be the server comparing two numbers the client already has, with the client fully able to lie about them either way. A trustworthy check needs server-stored quizzes, which is a bigger change than this optional step is meant to be — see the "how it turned out" note in [ai-backend-roadmap.md](ai-backend-roadmap.md) Step 4.3.
+- Instead, `QuizModal.tsx` grades entirely in its own state: a **"Check answers"** button locks the radios (`disabled`) and marks every option — the correct one always green (even if unpicked), a wrong pick red — plus a `"N of 5 correct"` score in the footer
+- **Regenerate clears grading too** (same effect that already reset picks on a new quiz now also resets `checked`)
+- **A real CSS bug found and fixed while testing:** the "you selected this" green highlight (`:has(input:checked)`) has higher specificity than the plain `.quiz-option--incorrect` class, so a wrong-but-selected answer showed green *and* a red ✕ icon at the same time — confusing. Fixed by scoping the selected-highlight to `:has(input:checked:not(:disabled))`, so it steps aside once grading locks the radios and only the correct/incorrect colors apply. Caught by actually looking at a screenshot, not just reading the code.
+- Output: DocMind's full loop — upload, chat, quiz, check — all usable end to end in the browser, verified live (locked radios after checking, correct score count, colors correct after the fix, cleared on regenerate, 0 console errors)
 
-**Step 4.3F — Frontend: answer checking**
-- Wire the quiz UI's option selection to `/quiz/check`, show correct/incorrect feedback per question
-- Output: DocMind's full loop — upload, chat, quiz, check — all usable end to end in the browser
-
-**Milestone:** DocMind can generate a quiz from the PDF and grade an answer against it, all through the React UI.
+**Milestone:** DocMind can generate a quiz from the PDF and grade an answer against it, all through the React UI. *(Reached — 2026-09-23.)*
 
 ---
 

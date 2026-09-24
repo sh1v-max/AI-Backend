@@ -4,6 +4,8 @@ import { ChatView } from './components/chat/ChatView'
 import { useDocuments } from './hooks/useDocuments'
 import { useSessions } from './hooks/useSessions'
 import { useChat } from './hooks/useChat'
+import { useQuiz } from './hooks/useQuiz'
+import { QuizModal } from './components/quiz/QuizModal'
 import { log } from './utils/logger'
 import { ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL } from './types/document'
 import type { UploadedDocument } from './types/document'
@@ -26,6 +28,7 @@ function App() {
     openSession,
     sendMessage,
   } = useChat(refreshSessions)
+  const quiz = useQuiz()
 
   // Sidebar starts open on desktop, collapsed to an icon rail on demand.
   // Separate from the mobile drawer flag, which fully hides/shows the panel
@@ -67,6 +70,16 @@ function App() {
     }
     const doc = documents.find((d) => d.documentId === documentId)
     if (doc) startNewChat(doc.documentId, doc.filename)
+  }
+
+  // Step 4.2F — the header's "Generate quiz" button. Only shown when
+  // activeDocument is a real, single document (never null, never "All
+  // documents" — see the guard in ChatView), but the check stays here too
+  // since a handler shouldn't assume the UI enforced its own precondition.
+  function handleGenerateQuiz() {
+    if (!activeDocument || activeDocument.documentId === ALL_DOCUMENTS) return
+    log.info('App', `[action] generate quiz — "${activeDocument.filename}" (${activeDocument.documentId})`)
+    quiz.generate(activeDocument.documentId, activeDocument.filename)
   }
 
   function handleSelectSession(session: (typeof sessions)[number]) {
@@ -151,6 +164,18 @@ function App() {
         onPickAll={handlePickAll}
         onChangeScope={handleChangeScope}
         onDeleteDocument={handleDeleteDocument}
+        onGenerateQuiz={handleGenerateQuiz}
+        quizLoading={quiz.loading}
+      />
+
+      <QuizModal
+        open={quiz.open}
+        loading={quiz.loading}
+        error={quiz.error}
+        quiz={quiz.quiz}
+        filename={quiz.filename}
+        onClose={quiz.close}
+        onRegenerate={quiz.regenerate}
       />
     </div>
   )

@@ -123,7 +123,7 @@ No auth, no queues, no multi-step agents, no deployment pressure. Just enough to
 
 This is the one genuinely "AI backend" skill in this whole simple project: forcing an LLM to return **reliable structured data** instead of free-form text — the same core idea used for any AI feature that has to plug into a database or UI, not just a chat bubble.
 
-**Step 4.1 — Structured output with Zod (3h)**
+**Step 4.1 — Structured output with Zod (3h)** ✅ *done — see `project_building_workthrough.md`*
 - You already know Zod for validating API request bodies — this is the exact same tool, applied to LLM output instead of user input. Docs: [Zod official docs](https://zod.dev/) (just as a refresher if needed)
 - Learn: [Gemini API docs – Structured output](https://ai.google.dev/gemini-api/docs/structured-output) — how to force a response to match a schema
 - Define a schema for one quiz question:
@@ -136,13 +136,16 @@ This is the one genuinely "AI backend" skill in this whole simple project: forci
   const Quiz = z.array(QuizQuestion).length(5);
   ```
 - Build: a standalone script that pulls a few chunks from your DB, prompts the LLM to "generate 5 multiple-choice questions based on this content, respond only in this JSON shape," parses the response with `Quiz.parse(...)`, and logs it. Try it 3-4 times — notice the LLM occasionally returns something slightly off-shape, and Zod catching that (rather than silently accepting garbage) is the entire point of this step.
+- **How it turned out:** with `gemini-flash-lite-latest` the model *didn't* slip — 17/17 replies were valid in both the plain-prompt and structured-output modes — so the "occasionally off-shape" part of the exercise didn't happen on its own. To still see Zod working, the script includes a gallery of 11 hand-made replies (fenced JSON, chatty preamble, 3 options, `"2"` as a string, out-of-range index, duplicate options, ...) run through the same checker with no API calls. Structured-output mode works with an OpenAPI-style `responseSchema` using uppercase types (`'ARRAY'`, `'OBJECT'`, `'STRING'`, `'INTEGER'`). Extra finding: valid ≠ good — the correct answer's position wasn't uniform (22/36/32/10%), so shuffle the options in code in Step 4.2.
 
-**Step 4.2 — POST /quiz endpoint (3h)**
+**Step 4.2 — POST /quiz endpoint (3h)** ✅ *done — see `project_building_workthrough.md`*
 - Build: takes a `documentId` → pulls a handful of stored chunks for that document (not a search, just grab several — you want broad coverage of the doc for a quiz, not narrow relevance like `/chat`) → runs the Step 4.1 prompt+schema → returns the validated quiz as JSON.
 - Add basic retry logic: if `Quiz.parse()` throws (bad shape from the LLM), retry the LLM call once before giving up. This one small habit — validate, and retry on failure, rather than trusting the model blindly — is a real production pattern worth being able to explain in an interview.
+- **How it turned out:** used Gemini's structured-output mode (not just the plain prompt) since Step 4.1 showed it's at least as reliable. `Quiz.safeParse` instead of `.parse()` + try/catch — same idea, no exception to catch. One addition beyond the plan: options are **shuffled in code after validating** (Fisher–Yates, remapping `correctIndex`), because Step 4.1's own data showed the model doesn't place the correct answer uniformly. `documentId: 'all'` is explicitly rejected (400) — a quiz needs one document's chunks in order, not a mix across PDFs. `buildQuizPrompt`/the checker moved into `quiz.service.ts` so the Step 4.1 script (`npm run step4`) and the real endpoint share one implementation.
 
-**Step 4.3 — (Optional) simple quiz-taking response check (1h)**
+**Step 4.3 — (Optional) simple quiz-taking response check (1h)** ✅ *done — see `project_building_workthrough.md`*
 - Build: a tiny `POST /quiz/check` that takes `{questionIndex, chosenIndex}` against a quiz you generated and returns correct/incorrect. This isn't really "AI" — it's just closing the loop so the feature feels complete end to end.
+- **How it turned out — deliberately no endpoint:** `correctIndex` is already sitting in the `/quiz` response the browser holds. A `POST /quiz/check` here would just be the server comparing two numbers the client already knows, with nothing stopping the client from lying to it anyway — quizzes aren't stored server-side (no `quizId`, no table), so the server has no independent truth to check against. Grading happens entirely in `QuizModal.tsx`'s own state, no network round trip. A *real* `/quiz/check` would only be meaningful once quizzes are persisted server-side (a later phase) — that's the honest reason to skip it now rather than build a fake security boundary.
 
 ---
 
