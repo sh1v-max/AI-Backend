@@ -8,7 +8,17 @@ const API_KEY = process.env.GEMINI_API_KEY
 const EMBED_URL =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent'
 
+// this function takes a string and returns an array of numbers (the embedding)
+// the return type is Promise<number[]>, which means it returns a promise that resolves to an array of numbers
 async function getEmbedding(text: string): Promise<number[]> {
+  // const res = await fetch(`${EMBED_URL}?key=${API_KEY}`, {
+  //   method: 'POST',
+  //   headers: { 'Content-Type': 'application/json' },
+  //   body: JSON.stringify({
+  //     content: { parts: [{ text }] },
+  //   }),
+  // })
+
   const res = await fetch(`${EMBED_URL}?key=${API_KEY}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -76,7 +86,7 @@ async function main() {
   console.log(
     similarScore > unrelatedScore
       ? '✅ Confirmed: the similar pair scored higher.'
-      : '❌ Something is off — the similar pair should score higher.'
+      : '❌ Something is off — the similar pair should score higher.',
   )
 }
 
