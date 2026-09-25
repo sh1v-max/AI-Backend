@@ -44,6 +44,7 @@ export async function deleteChunksByDocumentId(documentId: string): Promise<void
 
 // Step 3.3 — each result also carries which document it came from, so an
 // answer built from several PDFs can say which PDF each piece came from.
+// export interface is used to define the shape of the object that will be returned by the searchSimilar function. It includes the content of the chunk, the distance from the query embedding, the documentId of the chunk, and the filename of the document (which can be null if the document is missing)
 export interface SimilarChunk {
   content: string
   distance: number
@@ -92,3 +93,4 @@ export async function searchSimilar(
 // ORDER BY distance
 // LIMIT $3
 // (all documents: WHERE d.id IS NOT NULL instead — only chunks with a documents row)
+// what this mean is that the function will return the content, distance, documentId, and filename of the most similar chunks to the queryEmbedding, ordered by distance, and limited to the specified number of results. If a documentId is provided, it will only search within that document, otherwise, it will search across all documents.

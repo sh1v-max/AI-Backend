@@ -26,7 +26,7 @@ async function getEmbedding(text: string): Promise<number[]> {
   return data.embedding.values
 }
 
-// pgvector expects a vector literal as text: '[0.1,0.2,0.3,...]'
+// we need to convert embeddings to a string representation that postgres can understand, which is a vector literal like '[0.1, 0.2, 0.3]'
 function toVectorLiteral(embedding: number[]): string {
   return `[${embedding.join(',')}]`
 }
