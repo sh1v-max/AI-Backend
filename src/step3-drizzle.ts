@@ -15,6 +15,7 @@ const TEST_DOCUMENT_ID = 'step3-test'
 
 async function main() {
   console.log('Clearing table...')
+  // sql tag is used here to avoid Drizzle's type-checking, since the table name is hard-coded and not a variable
   await db.execute(sql`DELETE FROM chunks`)
 
   const sentences = [
