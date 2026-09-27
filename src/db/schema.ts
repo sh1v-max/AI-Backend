@@ -7,10 +7,10 @@ import {
   vector,
 } from 'drizzle-orm/pg-core'
 
-// schema for the database tables used in this project, defined using Drizzle ORM's pgTable function. Each table is represented as a TypeScript constant, allowing for type-safe access to the table's columns and their types. The schema includes three tables: documents, chunks, and chatMessages, each with its own set of columns and constraints.
+// schema for this project is defined in this file, and used in drizzle.config.ts to generate the migration files
 
 // the documents table schema
-// One row per uploaded PDF — tracks metadata so the frontend (or Postman,
+// One row per uploaded PDF, tracks metadata so the frontend (or Postman,
 // or any other client) can list "what documents exist" without deriving it
 // from chunk rows, and without depending on whoever uploaded it.
 export const documents = pgTable('documents', {
