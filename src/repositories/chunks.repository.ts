@@ -20,23 +20,33 @@ export async function insertChunk(
 // but a quiz has no question, so it wants broad coverage of the whole PDF
 // instead of the few chunks nearest to something. (Chunk ids are serial and
 // assigned in document order at upload time, so ordering by id = page order.)
-export async function sampleChunks(documentId: string, count: number): Promise<string[]> {
+// sampleChunks() is used in the quiz endpoint to pick a few chunks from a PDF to ask questions about
+export async function sampleChunks(
+  documentId: string,
+  count: number,
+): Promise<string[]> {
   const rows = await db
     .select({ content: chunks.content })
     .from(chunks)
     .where(eq(chunks.documentId, documentId))
     .orderBy(asc(chunks.id))
 
+  // if there are fewer chunks than we want, return them all
   if (rows.length <= count) return rows.map((r) => r.content)
 
-  // pick `count` evenly spaced positions, e.g. 8 chunks / 4 wanted -> 0, 2, 4, 6
-  return Array.from({ length: count }, (_, i) => rows[Math.floor((i * rows.length) / count)].content)
+  // if there are more chunks than we want, we pick `count` evenly spaced positions, e.g. 8 chunks / 4 wanted -> 0, 2, 4, 6
+  return Array.from(
+    { length: count },
+    (_, i) => rows[Math.floor((i * rows.length) / count)].content,
+  )
 }
 // equivalent sql query (the spacing is done in TypeScript afterwards):
 // SELECT content FROM chunks WHERE document_id = $1 ORDER BY id
 
 // this function deletes all chunks for one document
-export async function deleteChunksByDocumentId(documentId: string): Promise<void> {
+export async function deleteChunksByDocumentId(
+  documentId: string,
+): Promise<void> {
   await db.delete(chunks).where(eq(chunks.documentId, documentId))
 }
 // equivalent sql query:
@@ -60,30 +70,38 @@ export async function searchSimilar(
   documentId?: string,
 ): Promise<SimilarChunk[]> {
   // searchSimilar is a function that takes in a queryEmbedding array of numbers and a limit number, and returns an array of objects containing the content and distance of the most similar chunks to the queryEmbedding
-  const distance = cosineDistance(chunks.embedding, queryEmbedding).mapWith(Number)
+  const distance = cosineDistance(chunks.embedding, queryEmbedding).mapWith(
+    Number,
+  )
   // cosineDistance(chunks.embedding, queryEmbedding) — builds the same <=> SQL expression as a reusable TypeScript value
   // mapWith(Number) — ensures that the distance values are returned as numbers instead of strings, which is important for accurate sorting and comparison
 
-  return db
-    .select({
-      content: chunks.content,
-      distance,
-      documentId: chunks.documentId,
-      // LEFT JOIN so a chunk whose documents row is missing still comes back
-      // (filename is then null) instead of silently disappearing from search.
-      filename: documents.filename,
-    })
-    .from(chunks)
-    .leftJoin(documents, eq(chunks.documentId, documents.id))
-    // All-documents mode only searches chunks whose document actually exists
-    // in the documents table — i.e. the ones the user can see and delete in
-    // the UI. Older "orphan" chunks (uploaded before the documents table
-    // existed) would otherwise surface in answers as an "unknown document".
-    // Single-document mode is left alone, so a session pinned to an orphan
-    // id keeps working.
-    .where(documentId ? eq(chunks.documentId, documentId) : isNotNull(documents.id))
-    .orderBy(distance)
-    .limit(limit)
+  return (
+    db
+      .select({
+        content: chunks.content,
+        distance,
+        documentId: chunks.documentId,
+        // LEFT JOIN so a chunk whose documents row is missing still comes back
+        // (filename is then null) instead of silently disappearing from search.
+        filename: documents.filename,
+      })
+      .from(chunks)
+      .leftJoin(documents, eq(chunks.documentId, documents.id))
+      // All-documents mode only searches chunks whose document actually exists
+      // in the documents table — i.e. the ones the user can see and delete in
+      // the UI. Older "orphan" chunks (uploaded before the documents table
+      // existed) would otherwise surface in answers as an "unknown document".
+      // Single-document mode is left alone, so a session pinned to an orphan
+      // id keeps working.
+      .where(
+        documentId
+          ? eq(chunks.documentId, documentId)
+          : isNotNull(documents.id),
+      )
+      .orderBy(distance)
+      .limit(limit)
+  )
 }
 // equivalent sql query (single document):
 // SELECT c.content, c.embedding <=> $1 AS distance, c.document_id, d.filename

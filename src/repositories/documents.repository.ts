@@ -2,6 +2,7 @@ import { desc, eq } from 'drizzle-orm'
 import { db } from '../db/client'
 import { documents } from '../db/schema'
 
+// insert a new document
 export async function insertDocument(
   id: string,
   filename: string,
@@ -18,6 +19,7 @@ export async function insertDocument(
 // equivalent sql query:
 // INSERT INTO documents (id, filename, file_size_bytes, text_length, chunk_count) VALUES ($1, $2, $3, $4, $5) RETURNING *
 
+// list all documents
 export async function listDocuments() {
   return db.select().from(documents).orderBy(desc(documents.createdAt))
 }
