@@ -9,3 +9,5 @@ social posts/
 # including .env, so it must never be tracked (caused a real secret leak,
 # see re-do.md).
 .history
+# Claude Code chat transcripts (contain email/context; move between laptops by hand)
+.claude-sessions/

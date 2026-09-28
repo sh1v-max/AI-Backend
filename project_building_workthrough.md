@@ -201,9 +201,10 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 - Answer, without looking anything up: what's an embedding, why store vectors in a DB, what RAG actually solves, how "memory" works under the hood, why stream, why validate LLM output with Zod
 - If any answer feels shaky, that's the concept to revisit
 
-**Step 5.2 — Push a clean README**
+**Step 5.2 — Push a clean README** *(done — 2026-09-27)*
 - One paragraph on the 5 endpoints, an ASCII diagram of both data flows, how to run it locally (backend + frontend)
 - Output: a presentable, explainable project — one you can actually click through in a browser, not just curl
+- Done as [README.md](README.md): what it does, three ASCII flows (ingestion, chat, quiz), stack, full API table + the SSE event protocol, project structure, setup (including the table SQL for a fresh database), design decisions, and an honest known-limitations list. The two-machine git notes moved out of the README (they live in `CLAUDE.md` §12).
 
 **Milestone: you're job-ready here.** Everything below is deeper — go apply/interview before continuing.
 

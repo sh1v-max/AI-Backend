@@ -32,6 +32,15 @@ The frontend generates one `sessionId` per document, the first time I send a mes
 
 This is a known, written-down gap (in PROGRESS.md now), not a bug I'm pretending doesn't exist. Fix later = persist sessionId + fetch old history back on load.
 
+**Update, fixed in Step 2.5.** How it works now:
+- I only save the active `sessionId` in `localStorage`. Never the messages themselves.
+- On page load I check that id against `GET /sessions` (so a deleted or bogus id gets dropped instead of showing a ghost chat), then fetch the full transcript back from Postgres with `GET /sessions/:id/messages`.
+- A refresh now lands me back in the exact same conversation.
+
+The trick I like here: the browser just remembers *which* conversation was open (a pointer), and the database stays the one source of truth for what was said. There's still no `sessions` table either. A "session" is just every `chat_messages` row that shares a `sessionId`, and the sidebar list is built by grouping those rows, with the first message I typed used as the title (same thing ChatGPT does).
+
+Also added deletes: delete one conversation, or delete a whole document, which removes its chunks and every chat about it so nothing is left pointing at a document that no longer exists.
+
 ## Confirmed by actually running it
 
 - [x] Asked about "3 pipelines in RAG," then asked "what's the first stage?" — a genuinely meaningless question on its own — and it correctly resolved it using history
@@ -44,5 +53,6 @@ The backend was already sending back `sources` (which chunks + distance scores a
 
 ## What still feels a little shaky
 
-- The refresh-loses-session thing, obviously — known, written down, not fixed yet.
+- ~~The refresh-loses-session thing~~, fixed (see above).
+- `listSessions()` loads every message of every conversation and groups them in JavaScript. Totally fine for me, wasteful if there were thousands of chats.
 - I capped history at a flat number (8) instead of anything smarter like summarizing old messages. Fine for now, real systems do better — that's a later, deeper topic.

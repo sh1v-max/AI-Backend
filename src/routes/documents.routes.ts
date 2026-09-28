@@ -8,8 +8,11 @@ import { pipelineStart, pipelineEnd, step, rejected } from '../utils/pipelineLog
 
 export const documentsRouter = Router()
 
+// multer is used to handle multipart/form-data, which is primarily used for uploading files. in this case, we are using multer to handle the file upload for pdf documents. 
+// we are using memoryStorage to store the uploaded files in memory as Buffer objects, which is suitable for small files and allows us to process the file immediately without saving it to disk
 const upload = multer({ storage: multer.memoryStorage() })
 
+// List all documents
 documentsRouter.get('/documents', async (_req, res) => {
   const docs = await listDocuments()
   res.json(docs)
@@ -26,8 +29,10 @@ documentsRouter.delete('/documents/:documentId', async (req, res) => {
   res.json({ deleted: documentId })
 })
 
+// upload endpoint for uploading a PDF document. The uploaded file is processed and ingested into the system, and the document metadata is returned in the response.
 documentsRouter.post('/upload', upload.single('file'), async (req, res) => {
   const t0 = Date.now()
+  // ignore all pipelineStart, pipelineEnd, step, rejected, etc. These are just for logging and monitoring the upload process. They don't affect the functionality of the upload endpoint. only for debugging and monitoring the upload process
   pipelineStart('upload', 'POST /upload')
 
   if (!req.file) {
@@ -37,6 +42,7 @@ documentsRouter.post('/upload', upload.single('file'), async (req, res) => {
     })
   }
 
+  // check that the uploaded file is a PDF. If not, reject the request with a 400 status code and an error message. This ensures that only PDF files are processed by the ingestPdf function.
   if (req.file.mimetype !== 'application/pdf') {
     rejected(`wrong mimetype (${req.file.mimetype})`)
     return res.status(400).json({ error: 'Only PDF files are supported' })

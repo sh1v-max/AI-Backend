@@ -6,14 +6,13 @@ import { insertDocument } from '../repositories/documents.repository'
 import { chunkText } from '../utils/chunkText'
 import { step, detail, timing, preview } from '../utils/pipelineLogger'
 
-// Step 2.1 — PDF in, plain text out.
-// Step 2.2 — chunk that text, embed each chunk, store it — a document
+// PDF in, plain text out.
+// chunk that text, embed each chunk, store it — a document
 // becomes a set of searchable chunks, tagged with a documentId.
 
-// Steps 2-5 of the upload pipeline: parse → chunk → embed + store → save the
-// document row. Step 1 (the request checks) stays in the route because it
-// depends on `req`; this function only needs the file itself, which is also
-// what a background job will have later (Phase 6).
+// Steps 2-5 of the upload pipeline: parse → chunk → embed + store → save the document row
+// `file` is a Multer file object, which has the PDF bytes in `file.buffer` and the original filename in `file.originalname`. The file size is in `file.size`.
+// what this function does: It takes the uploaded file, turns it into searchable chunks in the database, and returns a summary of the new document so the caller knows what was created.
 export async function ingestPdf(file: { buffer: Buffer; originalname: string; size: number }) {
   // passing the buffer directly to PDFParse, which will handle it in memory
   const parser = new PDFParse({ data: file.buffer })
@@ -41,6 +40,7 @@ export async function ingestPdf(file: { buffer: Buffer; originalname: string; si
       preview('preview', chunk)
     }
 
+    // It saves one row in the documents table, a "card" describing this PDF
     const document = await insertDocument(
       documentId,
       file.originalname,

@@ -36,6 +36,18 @@ Later I also learned: telling it to "answer using only this context" made it say
 - [x] Asked an off-topic question → got an honest "I don't know" instead of a hallucinated guess
 - [x] Two different uploaded documents stayed correctly separated in search results
 
+## Later: searching all my PDFs at once (Step 3.3)
+
+Chats used to be locked to one PDF. Now the default is "search everything I've uploaded," with "just this one PDF" as the option.
+
+- `documentId` became optional. No id (or `'all'`) = search every document.
+- Every source chunk now carries which PDF it came from, and when searching everything the model is told to say which document it used ("According to rag_guide.pdf...").
+- I stored "all documents" as the word `'all'` in the existing column instead of changing the table. A bit hacky, but I didn't have to touch the live database.
+
+**A real bug that only real data could find:** some answers cited "the first unknown document." That document didn't exist. Turned out my database had 8 groups of old chunks from early test uploads, from before I even had a `documents` table. Invisible in the app, so I couldn't delete them from there, but "search everything" happily pulled them into answers. Fix: when searching everything, only use chunks whose document actually exists. I didn't delete the old rows, just stopped them leaking in.
+
+**The honest tradeoff:** searching everything means all my PDFs fight over the same top 3 spots. When I asked "which documents do you have?" it only answered about one file, because chunk search can tell you what a document *says*, not what documents *exist*. Fixing that properly is routing (a later phase).
+
 ## What still feels shaky
 
 - Chunking is dumb right now — just cuts every 500 words, no regard for sentences or paragraphs. Known and fine for now, real fix comes later.

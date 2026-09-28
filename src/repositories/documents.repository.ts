@@ -13,6 +13,7 @@ export async function insertDocument(
   const [document] = await db
     .insert(documents)
     .values({ id, filename, fileSizeBytes, textLength, chunkCount })
+    // returning() is used to return the inserted document row after the insert operation. this allows the caller to get the document metadata without having to query the database again. it returns as an array with one element, so we destructure it to get the first element (the inserted document)
     .returning()
   return document
 }

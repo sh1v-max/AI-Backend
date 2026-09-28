@@ -20,7 +20,15 @@ I did it with SSE (Server-Sent Events): the server keeps the connection open and
 - Once a stream has started, the status code is already sent, so I can't turn it into a 500 anymore. Errors have to go *inside* the stream as an `error` event.
 - I built a throwaway `/tick` route first (tick 1... tick 5) just to get the basics, then deleted it.
 
+## Errors, the part nobody shows in tutorials
+
+- When Gemini or the database failed, I used to get a bare 500 and no idea why. Worse, Drizzle's error message includes the SQL *and every value in it*, which for a vector search is all 3072 numbers dumped into my terminal. The real reason was buried at the bottom.
+- So I wrote a small helper that prints just three things: the first line of the error, the chain of underlying causes (that's where stuff like `ECONNRESET` hides), and the first line of *my* code where it broke.
+- If saving the finished answer to the database fails *after* the answer already streamed, I just log it. The user already has their answer, showing them an error would be wrong.
+- Real life example: one day every stream failed with `Gemini API error: 503`. Checked Gemini directly and it said "this model is currently experiencing high demand." Not my code at all, Google's servers were overloaded and every Flash model I tried said the same. Good reminder to check the actual error body before touching code.
+
 ## Questions / things that felt unclear
 
 - `EventSource` reconnects by itself if the connection ends. I close it after `done` so it can't re-send my question, but I still want to understand that properly.
 - If someone closes the tab halfway through an answer, does my server keep going until Gemini finishes? I think yes, but I haven't checked.
+- A 503 from Gemini currently just shows "Streaming failed" in the chat. It'd be nicer to recognize it and say "Gemini is busy, try again in a minute," and maybe retry once with a small delay. That's what the rate limiting & retries topic is for.
