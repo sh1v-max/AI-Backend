@@ -17,6 +17,11 @@ import {
 
 // ignore all the logging in this file, like step, detail, timing, preview, rejected, notFound, pipelineEnd — those are just for the console output to help us see how long each step takes and what the intermediate results are. they don't affect the actual chat logic or the returned data.
 
+// everything this file does:
+// buildChatPrompt(): builds the prompt string (instructions + context + history + question).
+// ChatPreparation: the return type, either ok: false with an error or ok: true with everything needed to generate.
+// prepareChat(): the shared pipeline steps 1–5 (validate → embed → search → load history → save the user message → build the prompt). It calls buildChatPrompt() at the end.
+
 // Step 2.3 — POST /chat: embed the question, search stored chunks for this
 // document, hand the relevant ones to the LLM, return a grounded answer.
 // Step 2.4 — give /chat memory: a sessionId groups messages into one
