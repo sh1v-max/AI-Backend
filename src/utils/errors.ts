@@ -35,6 +35,8 @@ export function summarizeError(err: unknown): string {
 
 export function withErrorHandling(
   label: string,
+  // here, handler: (req: Request, res: Response) => Promise<unknown> is the TypeScript type for "a function that takes req and res and returns a Promise"
+  // unknown because the return type of the handler function is not known in advance, it could be anything. The handler function is expected to return a Promise that resolves to some value, but we don't know what that value will be, so we use unknown as the return type.
   handler: (req: Request, res: Response) => Promise<unknown>,
   { sse = false } = {},
 ) {
@@ -42,6 +44,7 @@ export function withErrorHandling(
     try {
       await handler(req, res)
     } catch (err) {
+      // ignore this, only for debugging
       console.error(`[${label}] failed: ${summarizeError(err)}`)
       // EventSource can't read the body of a non-200 response (it only sees
       // "connection error"), so for the stream route the error goes out as a

@@ -5,12 +5,18 @@ import { deleteChunksByDocumentId } from '../repositories/chunks.repository'
 import { listDocuments, deleteDocument } from '../repositories/documents.repository'
 import { deleteMessagesByDocumentId } from '../repositories/chatMessages.repository'
 import { pipelineStart, pipelineEnd, step, rejected } from '../utils/pipelineLogger'
+import { MAX_UPLOAD_BYTES } from '../config'
 
 export const documentsRouter = Router()
 
 // multer is used to handle multipart/form-data, which is primarily used for uploading files. in this case, we are using multer to handle the file upload for pdf documents. 
 // we are using memoryStorage to store the uploaded files in memory as Buffer objects, which is suitable for small files and allows us to process the file immediately without saving it to disk
-const upload = multer({ storage: multer.memoryStorage() })
+// Phase 10 — `limits.fileSize` makes multer stop reading past MAX_UPLOAD_BYTES
+// and throw a MulterError instead; app.ts turns that into a 413 JSON reply.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_UPLOAD_BYTES },
+})
 
 // List all documents
 documentsRouter.get('/documents', async (_req, res) => {

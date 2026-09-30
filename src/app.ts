@@ -1,6 +1,8 @@
-import express from 'express'
+import express, { type Request, type Response, type NextFunction } from 'express'
 import cors from 'cors'
-import { FRONTEND_URL } from './config'
+import multer from 'multer'
+import { FRONTEND_ORIGINS, MAX_UPLOAD_BYTES } from './config'
+import { summarizeError } from './utils/errors'
 import { documentsRouter } from './routes/documents.routes'
 import { sessionsRouter } from './routes/sessions.routes'
 import { chatRouter } from './routes/chat.routes'
@@ -17,7 +19,8 @@ app.use(express.json())
 
 app.use(
   cors({
-    origin: FRONTEND_URL,
+    // an array = "allow any of these origins" (see FRONTEND_ORIGINS in config.ts)
+    origin: FRONTEND_ORIGINS,
   }),
 )
 
@@ -32,3 +35,17 @@ app.use(documentsRouter)
 app.use(sessionsRouter)
 app.use(chatRouter)
 app.use(quizRouter)
+
+// Phase 10 — Express's last-resort error handler. Anything that throws
+// outside withErrorHandling() lands here; without this, Express replies with
+// an HTML error page, which the frontend's res.json() can't parse. The four
+// arguments are what tells Express this is an error handler, not a route.
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  // multer rejects an over-limit upload with code LIMIT_FILE_SIZE
+  if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+    const mb = MAX_UPLOAD_BYTES / (1024 * 1024)
+    return res.status(413).json({ error: `PDF is too large (max ${mb} MB)` })
+  }
+  console.error(`[unhandled] ${summarizeError(err)}`)
+  res.status(500).json({ error: 'Something went wrong on the server' })
+})

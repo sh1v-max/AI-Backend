@@ -2,11 +2,13 @@
   "name": "ai-backend",
   "version": "1.0.0",
   "description": "Learning project for building AI backends from scratch, following ai-backend-roadmap.md",
-  "main": "index.js",
+  "main": "dist/index.js",
   "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
     "step3": "ts-node src/step3-drizzle.ts",
     "step4": "ts-node src/step4-quiz-zod.ts",
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -17,6 +19,9 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": "22.x"
+  },
   "bugs": {
     "url": "https://github.com/sh1v-max/AI-Backend/issues"
   },

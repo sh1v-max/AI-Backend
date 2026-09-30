@@ -18,7 +18,20 @@ export const PORT = process.env.PORT || 3000
 // The frontend (Vite dev server, localhost:5173) and this API (localhost:3000)
 // are different origins even both on localhost — browsers block cross-origin
 // requests by default unless the server explicitly allows them.
-export const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173'
+//
+// Phase 10 — FRONTEND_URL can hold several origins, comma-separated (e.g.
+// "https://docmind.vercel.app,http://localhost:5173"), so the deployed API
+// can serve the live site and local dev at once. A trailing slash is stripped
+// because the browser's Origin header never has one — "https://x.app/" would
+// never match and every request would fail CORS.
+export const FRONTEND_ORIGINS = (process.env.FRONTEND_URL || 'http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim().replace(/\/$/, ''))
+  .filter(Boolean)
+
+// Phase 10 — the free Render instance has 512 MB of RAM and multer keeps the
+// whole upload in memory, so a cap keeps one huge PDF from crashing the server.
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 // What the client sees when a network step (Gemini, Neon) fails — the real
 // cause goes to the terminal instead (see utils/errors.ts).

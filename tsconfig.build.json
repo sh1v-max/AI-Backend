@@ -1,0 +1,13 @@
+{
+  // Phase 10 — the production build (`npm run build`). Extends the normal
+  // tsconfig but only compiles the app itself: rootDir "src" makes the output
+  // dist/index.js (not dist/src/index.js), and the stepN learning scripts +
+  // drizzle.config.ts are left out, since the deployed server never runs them.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"],
+  "exclude": ["src/step*.ts"]
+}
