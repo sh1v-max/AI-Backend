@@ -6,6 +6,11 @@ DocMind is a small AI backend built from scratch to understand how AI products a
 
 It comes with a React frontend that exercises every endpoint the way a real client would.
 
+- **Live app:** [docmind-jet.vercel.app](https://docmind-jet.vercel.app/)
+- **Live API:** [ai-backend-docmind.onrender.com](https://ai-backend-docmind.onrender.com/)
+
+> The API is on Render's free tier. After ~15 idle minutes it sleeps, so the first request can take up to a minute while it wakes up. If the app looks empty at first, give it a moment and refresh.
+
 ---
 
 ## What it does
@@ -212,6 +217,21 @@ Open `http://localhost:5173`, upload a PDF, and start asking.
 
 > Only PDFs with a real text layer work (typed or exported documents). Scanned PDFs are just images and would need OCR.
 
+### Deployment
+
+The API runs on a **Render** free web service and redeploys on every push to `main`.
+
+| Setting | Value |
+|---|---|
+| Build command | `npm install --include=dev && npm run build` (TypeScript is a dev dependency) |
+| Start command | `node dist/index.js` |
+| Health check path | `/` |
+| Env vars | `GEMINI_API_KEY`, `DATABASE_URL`, `FRONTEND_URL` (comma-separated list of allowed origins) |
+
+`npm run build` uses `tsconfig.build.json`, which compiles only the app (not the `stepN` learning scripts) into `dist/`.
+
+The frontend is on **Vercel** (Root Directory `frontend`, Vite preset) with one env var, `VITE_API_URL`, pointing at the Render URL. Vite bakes it in at build time, so changing it needs a redeploy.
+
 ---
 
 ## Decisions worth knowing
@@ -235,7 +255,8 @@ A few things that aren't obvious from the code alone:
 - "Search all documents" shares the top 3 results across every PDF, so a vague question can end up answered from one file. It also can't answer questions *about* your collection, like "which documents do you have?"
 - Memory is the last 8 messages. Older messages are dropped, not summarized.
 - When Gemini is overloaded it returns `503`, and the chat currently just shows "Streaming failed."
-- No authentication and no automated tests yet.
+- No authentication and no automated tests yet. On the live deployment that means anyone with the link can upload and delete documents.
+- Uploads are capped at 10 MB (the free server has 512 MB of RAM and holds the upload in memory).
 
 ---
 
@@ -251,4 +272,4 @@ This repo doubles as a learning log:
 
 ## What's next
 
-Background jobs for PDF ingestion (BullMQ + Redis), then agents and tool calling, multi-step workflows, tests, and deployment.
+Background jobs for PDF ingestion (BullMQ + Redis), then agents and tool calling, multi-step workflows, and tests.
