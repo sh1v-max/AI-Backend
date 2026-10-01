@@ -50,9 +50,11 @@ export function withErrorHandling(
       // "connection error"), so for the stream route the error goes out as a
       // real SSE `event: error` frame, which the frontend already displays.
       if (sse) {
+        // res.headerSent is true if the headers have already been sent to the client, which means the response has already started. in that case we don't want to send the error response again, we just want to end the response cleanly. if the headers haven't been sent yet, we can send a 503 status code and a JSON error message
         if (!res.headersSent) {
           res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
         }
+        // if the response has already been ended (res.writableEnded is true), we don't want to write to it again, so we check that before writing the error event and ending the response
         if (!res.writableEnded) {
           res.write(`event: error\ndata: ${JSON.stringify({ error: CONNECTION_ERROR_MESSAGE })}\n\n`)
           res.end()
