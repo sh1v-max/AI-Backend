@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "71d593b7-4691-4da6-a40b-ef07a8dfdc35",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "C:\\Shiv\\AI-Backend\\.archify\\architecture-docmind-20261001-020632\\candidate.json",
+  "output": "C:\\Shiv\\AI-Backend\\.archify\\architecture-docmind-20261001-020632\\docmind.html",
+  "specification": {
+    "sha256": "7f0b1c24e5e2274d19ef2e9bd1171e523e12a1e02918ce4b20e6e209ed9825d6",
+    "bytes": 6075
+  },
+  "artifact": {
+    "sha256": "74c424d90e2b94560490cb732935528bc7fb12b331bf38077524923e2b498535",
+    "bytes": 770530
+  }
+}
