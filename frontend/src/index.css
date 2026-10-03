@@ -7,6 +7,7 @@
   --color-accent: #16a34a;
   --color-accent-hover: #15803d;
   --color-accent-bg: #f0fdf4;
+  --color-on-accent: #ffffff;
   --color-background: #f7f8f7;
   --color-surface: #ffffff;
   --color-foreground: #18181b;
@@ -19,6 +20,10 @@
 
   --font-heading: 'Space Grotesk', system-ui, sans-serif;
   --font-body: 'DM Sans', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  /* the width of the conversation column and the composer under it */
+  --chat-width: 760px;
 
   --space-1: 4px;
   --space-2: 8px;
@@ -46,6 +51,7 @@
     --color-accent: #4ade80;
     --color-accent-hover: #22c55e;
     --color-accent-bg: rgba(74, 222, 128, 0.12);
+    --color-on-accent: #052e16;
     --color-background: #17191a;
     --color-surface: #202323;
     --color-foreground: #f4f4f5;
@@ -65,6 +71,7 @@
   --color-accent: #4ade80;
   --color-accent-hover: #22c55e;
   --color-accent-bg: rgba(74, 222, 128, 0.12);
+  --color-on-accent: #052e16;
   --color-background: #17191a;
   --color-surface: #202323;
   --color-foreground: #f4f4f5;

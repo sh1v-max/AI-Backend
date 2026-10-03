@@ -1,5 +1,6 @@
 import { PencilSimpleLine, SidebarSimple, X } from '@phosphor-icons/react'
 import { IconButton } from '../common/IconButton'
+import { BrandMark } from '../common/BrandMark'
 import { HistoryList } from './HistoryList'
 import type { SessionSummary } from '../../types/chat'
 
@@ -34,7 +35,14 @@ export function Sidebar({
       aria-label="Chat sidebar"
     >
       <div className="sidebar-header">
-        <span className="sidebar-brand">{!collapsed && 'DocMind'}</span>
+        <span className="sidebar-brand">
+          {!collapsed && (
+            <>
+              <BrandMark size={24} />
+              DocMind
+            </>
+          )}
+        </span>
         <IconButton
           onClick={onToggleCollapse}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}

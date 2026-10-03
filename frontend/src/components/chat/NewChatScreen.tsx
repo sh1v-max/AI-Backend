@@ -1,5 +1,6 @@
 import { Files, FileText, TrashSimple, XCircle } from '@phosphor-icons/react'
 import { UploadDropzone } from '../documents/UploadDropzone'
+import { BrandMark } from '../common/BrandMark'
 import type { UploadedDocument, UploadStatus } from '../../types/document'
 
 interface NewChatScreenProps {
@@ -24,8 +25,15 @@ export function NewChatScreen({
   return (
     <div className="new-chat-screen">
       <div className="new-chat-intro">
+        <BrandMark size={44} />
         <h1>Chat with a document</h1>
         <p>Upload a PDF and ask it anything — DocMind reads it so you don't have to.</p>
+        {/* What the app does, in three steps, for someone seeing it for the first time */}
+        <ul className="feature-row">
+          <li>Answers with sources</li>
+          <li>Remembers the conversation</li>
+          <li>Quiz yourself</li>
+        </ul>
       </div>
 
       <UploadDropzone status={uploadStatus} onFileSelected={onUpload} />
