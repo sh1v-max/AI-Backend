@@ -8,10 +8,20 @@ import { sessionsRouter } from './routes/sessions.routes'
 import { chatRouter } from './routes/chat.routes'
 import { quizRouter } from './routes/quiz.routes'
 import { authRouter } from './routes/auth.routes'
+import { requireAuth } from './middleware/auth'
 
 // The app is built here and started in index.ts — keeping `listen()` out of
 // this file means tests (Phase 9) can import the app without opening a port.
 export const app = express()
+
+// Auth.7 — on Render, requests reach this server through Render's proxy, so
+// the connection's IP address is the proxy's, the same for every visitor.
+// The proxy puts the real visitor's IP in the X-Forwarded-For header, and
+// `trust proxy = 1` tells Express to read it from there ("there is exactly 1
+// proxy in front of me"). Without it, the rate limiter would see one IP for
+// the whole internet and block everyone at once. Too high a number would be
+// the opposite mistake: trusting hops a client can fake to dodge the limit.
+app.set('trust proxy', 1)
 
 // Only affects requests with Content-Type: application/json — /upload's
 // multipart/form-data requests are handled separately by Multer, so the two
@@ -33,8 +43,23 @@ app.get('/', (_req, res) => {
 })
 
 // Auth.1 — the public /auth routes (guest, register, login). Mounted first,
-// above the routers that will need a token once AUTH.2's middleware goes in.
+// above the line below, so getting a token doesn't require a token.
 app.use(authRouter)
+
+// Auth.2 — DEFAULT DENY. Express runs middleware in the order it's added, so
+// everything mounted below this line needs a valid token, including any
+// router added in the future, without anyone having to remember to protect
+// it. (The alternative, adding requireAuth to each route by hand, fails
+// silently the first time someone forgets.)
+//
+// Order matters twice here:
+//  - cors() is ABOVE this, so the browser's preflight OPTIONS request (sent
+//    before any request with an Authorization header, and never carrying the
+//    token itself) gets answered by cors() and never reaches requireAuth.
+//  - a path that matches no route now gets 401 instead of 404, because this
+//    check runs before Express finds out the route doesn't exist. Fine: it
+//    doesn't tell an anonymous caller which routes exist.
+app.use(requireAuth)
 
 app.use(documentsRouter)
 app.use(sessionsRouter)

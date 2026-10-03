@@ -93,8 +93,15 @@ export type GenerateQuizResult =
 // `documentId` comes in as `unknown` — same reasoning as prepareChat: it's
 // raw request input, and validating it is step 1. Never touches req/res, so
 // the route stays thin and this stays reusable (e.g. from a future worker).
-export async function generateQuiz(input: { documentId: unknown }, t0: number): Promise<GenerateQuizResult> {
-  const { documentId } = input
+//
+// Auth.3 — `userId` is the verified caller (from the token, not the body).
+// sampleChunks only returns chunks of documents this user owns, so someone
+// else's documentId hits the same 404 as a documentId that doesn't exist.
+export async function generateQuiz(
+  input: { documentId: unknown; userId: string },
+  t0: number,
+): Promise<GenerateQuizResult> {
+  const { documentId, userId } = input
 
   if (!documentId || typeof documentId !== 'string') {
     rejected('missing/invalid documentId')
@@ -110,11 +117,12 @@ export async function generateQuiz(input: { documentId: unknown }, t0: number): 
   }
 
   step('quiz', 1, 4, 'Request received')
+  detail(`user:       ${userId.slice(0, 8)}`)
   detail(`documentId: ${documentId}`)
 
   step('quiz', 2, 4, 'Sampling chunks spread across the document...')
   const sampleStart = Date.now()
-  const chunks = await sampleChunks(documentId, CHUNKS_FOR_QUIZ)
+  const chunks = await sampleChunks(documentId, userId, CHUNKS_FOR_QUIZ)
   timing(Date.now() - sampleStart, `sampled ${chunks.length} chunk(s)`)
 
   if (chunks.length === 0) {

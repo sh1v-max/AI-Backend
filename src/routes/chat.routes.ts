@@ -30,11 +30,13 @@ chatRouter.post(
     const t0 = Date.now()
     const { documentId, message } = req.body
     const sessionId: string = req.body.sessionId || randomUUID()
+    // Auth.3 — who's asking, from the verified token (requireAuth set it)
+    const userId = req.user!.id
 
     pipelineStart('chat', 'POST /chat')
 
     // preparing the chat involves validating the input, embedding the message, searching for relevant chunks, loading conversation history, saving the user message, and building the prompt for the LLM. the prepareChat function handles all these steps and returns a ChatPreparation object that indicates whether the preparation was successful or if there was an error.
-    const prep = await prepareChat({ documentId, message, sessionId }, t0)
+    const prep = await prepareChat({ documentId, message, sessionId, userId }, t0)
     if (!prep.ok) return res.status(prep.status).json({ error: prep.error })
 
     step('chat', 6, 7, 'Calling the LLM to generate an answer...')
@@ -48,7 +50,7 @@ chatRouter.post(
     step('chat', 7, 7, 'Saving assistant reply to history')
 
     // the "user" message has already been saved in prepareChat(), so now we save the assistant's reply to the chat history
-    await insertMessage(sessionId, prep.documentId, 'assistant', answer)
+    await insertMessage(sessionId, userId, prep.documentId, 'assistant', answer)
 
     pipelineEnd('chat', Date.now() - t0)
 
@@ -99,11 +101,13 @@ chatRouter.get(
       const documentId = req.query.documentId
       const message = req.query.message
       const sessionId = (req.query.sessionId as string) || randomUUID()
+      // Auth.3 — from the verified token, never from the query string
+      const userId = req.user!.id
 
       pipelineStart('chat', 'GET /chat-stream')
 
       // preparing chat
-      const prep = await prepareChat({ documentId, message, sessionId }, t0)
+      const prep = await prepareChat({ documentId, message, sessionId, userId }, t0)
       if (!prep.ok) return res.status(prep.status).json({ error: prep.error })
 
       // writeHead() is called before any data is sent to the client, setting the HTTP status code and headers for the response. in this case, it sets the status code to 200 (OK) and specifies that the content type is "text/event-stream" for server-sent events (SSE). it also includes headers to prevent caching and keep the connection alive, as well as a header to disable buffering by reverse proxies.
@@ -158,7 +162,7 @@ chatRouter.get(
       // The user already has the full answer by now, so a failed save must not
       // turn into an error event — log it and still finish the stream.
       try {
-        await insertMessage(sessionId, prep.documentId, 'assistant', fullAnswer)
+        await insertMessage(sessionId, userId, prep.documentId, 'assistant', fullAnswer)
       } catch (err) {
         console.error(
           `[GET /chat-stream] could not save assistant reply: ${summarizeError(err)}`,

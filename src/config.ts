@@ -40,6 +40,21 @@ export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 export const TOKEN_TTL_USER = '7d'
 export const TOKEN_TTL_GUEST = '30d'
 
+// Auth.7 — how many documents one user may have at once. Every upload costs
+// Gemini embedding calls on the free-tier quota, and POST /auth/guest is
+// public, so a cap per user limits how much one identity can use up. Lower
+// for guests, which also gives them a reason to sign up.
+export const GUEST_MAX_DOCUMENTS = 5
+export const USER_MAX_DOCUMENTS = 10
+
+// Auth.7 — the cap above limits ONE guest; it doesn't stop someone creating a
+// thousand guests in a loop. This limits the public /auth routes per IP
+// address: at most AUTH_RATE_LIMIT requests per AUTH_RATE_WINDOW_MS. A real
+// visitor makes one guest per browser, so 20 per 15 minutes leaves plenty of
+// room even for a shared office or college network.
+export const AUTH_RATE_LIMIT = 20
+export const AUTH_RATE_WINDOW_MS = 15 * 60 * 1000
+
 // What the client sees when a network step (Gemini, Neon) fails — the real
 // cause goes to the terminal instead (see utils/errors.ts).
 export const CONNECTION_ERROR_MESSAGE =

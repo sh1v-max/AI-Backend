@@ -1,5 +1,7 @@
 import 'dotenv/config'
-import { listDocuments } from './repositories/documents.repository'
+import { desc, eq } from 'drizzle-orm'
+import { db } from './db/client'
+import { documents } from './db/schema'
 import { sampleChunks } from './repositories/chunks.repository'
 import { generateAnswer } from './services/llm.service'
 import { Quiz, quizResponseSchema, QUIZ_LENGTH, OPTIONS_PER_QUESTION } from './schemas/quiz.schema'
@@ -60,14 +62,25 @@ function showBadReplyGallery() {
 async function main() {
   showBadReplyGallery()
 
-  const documentId = process.argv[2] ?? (await listDocuments())[0]?.id
-  if (!documentId) {
-    console.log('No documents found — upload a PDF first.')
+  // Auth.3 — sampleChunks() now needs the document's owner. A script you run
+  // on your own machine is the server operator, not a logged-in user, so it
+  // looks the owner up straight from the table. This is the ONE place that's
+  // allowed: never copy this into a route, where the user id must come from
+  // the token.
+  const [document] = await db
+    .select({ id: documents.id, userId: documents.userId })
+    .from(documents)
+    .where(process.argv[2] ? eq(documents.id, process.argv[2]) : undefined)
+    .orderBy(desc(documents.createdAt))
+    .limit(1)
+  if (!document?.userId) {
+    console.log('No owned document found — upload a PDF through the app first.')
     process.exit(1)
   }
+  const documentId = document.id
 
   console.log(`Document: ${documentId}`)
-  const chunks = await sampleChunks(documentId, CHUNKS_FOR_QUIZ)
+  const chunks = await sampleChunks(documentId, document.userId, CHUNKS_FOR_QUIZ)
   console.log(`Sampled ${chunks.length} chunk(s) spread across the document\n`)
   const prompt = buildQuizPrompt(chunks.join('\n\n---\n\n'))
 

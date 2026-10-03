@@ -1,4 +1,4 @@
-import { API_URL, parseJsonOrThrow } from './client'
+import { authFetch, parseJsonOrThrow } from './client'
 import { log } from '../utils/logger'
 import type { UploadedDocument } from '../types/document'
 
@@ -13,8 +13,11 @@ interface DocumentRecord {
 
 export async function fetchDocuments(): Promise<UploadedDocument[]> {
   log.info('api:documents', 'GET /documents')
-  const res = await fetch(`${API_URL}/documents`)
-  const docs: DocumentRecord[] = await res.json()
+  const res = await authFetch('/documents')
+  // Auth.4 — was a bare res.json(). On a 401 that returns { error: '...' },
+  // and the .map() below would crash on it. parseJsonOrThrow checks res.ok
+  // first and throws a readable error instead.
+  const docs: DocumentRecord[] = await parseJsonOrThrow(res)
   log.info('api:documents', `received ${docs.length} document(s)`, docs)
 
   return docs.map((d) => ({
@@ -33,7 +36,10 @@ export async function uploadDocument(file: File): Promise<UploadedDocument> {
   const formData = new FormData()
   formData.append('file', file)
 
-  const res = await fetch(`${API_URL}/upload`, {
+  // No Content-Type header on purpose: for FormData the browser sets it itself,
+  // including the multipart "boundary" string that separates the parts.
+  // authFetch only adds Authorization, so that still works.
+  const res = await authFetch('/upload', {
     method: 'POST',
     body: formData,
   })
@@ -53,6 +59,6 @@ export async function uploadDocument(file: File): Promise<UploadedDocument> {
 
 export async function deleteDocument(documentId: string): Promise<void> {
   log.info('api:documents', `DELETE /documents/${documentId}`)
-  const res = await parseJsonOrThrow(await fetch(`${API_URL}/documents/${documentId}`, { method: 'DELETE' }))
+  const res = await parseJsonOrThrow(await authFetch(`/documents/${documentId}`, { method: 'DELETE' }))
   log.info('api:documents', 'delete complete', res)
 }

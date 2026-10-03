@@ -5,14 +5,18 @@ import { useDocuments } from './hooks/useDocuments'
 import { useSessions } from './hooks/useSessions'
 import { useChat } from './hooks/useChat'
 import { useQuiz } from './hooks/useQuiz'
+import { useAuth } from './hooks/useAuth'
 import { QuizModal } from './components/quiz/QuizModal'
+import { SplashScreen } from './components/common/SplashScreen'
 import { log } from './utils/logger'
 import { ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL } from './types/document'
 import type { UploadedDocument } from './types/document'
 import type { SessionSummary } from './types/chat'
 import './App.css'
 
-function App() {
+// Auth.4 — this was `App` before. It's the whole app as it was, unchanged:
+// it just only gets mounted once useAuth (below) has a token to send.
+function AppShell() {
   const { documents, status, error, uploadFile, deleteDocument } = useDocuments()
   const { sessions, refresh: refreshSessions, deleteSession } = useSessions()
   const {
@@ -179,6 +183,26 @@ function App() {
       />
     </div>
   )
+}
+
+// Auth.4 — the gate. Two jobs:
+//
+// 1. Wait. useDocuments, useSessions and useChat all fetch the moment they
+//    mount. Mounted before a token exists, all three would get a 401 on the
+//    very first load. So AppShell isn't rendered until useAuth is 'ready'.
+//
+// 2. key={user.id}. React reuses a component as long as its `key` stays the
+//    same. When the user changes (an expired token replaced by a new guest,
+//    or later a login/logout), a different key makes React throw the old
+//    AppShell away and mount a fresh one: every hook starts from empty state
+//    and refetches for the new user, so nothing of the previous user's data
+//    stays on screen.
+function App() {
+  const { state, retry } = useAuth()
+
+  if (state.status === 'loading') return <SplashScreen />
+  if (state.status === 'error') return <SplashScreen error={state.message} onRetry={retry} />
+  return <AppShell key={state.user.id} />
 }
 
 export default App
