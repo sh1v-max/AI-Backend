@@ -7,6 +7,7 @@ import { documentsRouter } from './routes/documents.routes'
 import { sessionsRouter } from './routes/sessions.routes'
 import { chatRouter } from './routes/chat.routes'
 import { quizRouter } from './routes/quiz.routes'
+import { authRouter } from './routes/auth.routes'
 
 // The app is built here and started in index.ts — keeping `listen()` out of
 // this file means tests (Phase 9) can import the app without opening a port.
@@ -30,6 +31,10 @@ app.get('/', (_req, res) => {
     message: 'DocMind API - POST a PDF to /upload',
   })
 })
+
+// Auth.1 — the public /auth routes (guest, register, login). Mounted first,
+// above the routers that will need a token once AUTH.2's middleware goes in.
+app.use(authRouter)
 
 app.use(documentsRouter)
 app.use(sessionsRouter)

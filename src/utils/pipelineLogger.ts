@@ -12,6 +12,7 @@ const THEMES = {
   upload: chalk.cyan,
   chat: chalk.magenta,
   quiz: chalk.blueBright,
+  auth: chalk.yellow,
 }
 
 type Pipeline = keyof typeof THEMES

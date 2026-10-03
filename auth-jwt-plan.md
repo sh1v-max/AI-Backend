@@ -182,7 +182,7 @@ What is lost: `EventSource` auto-reconnects. DocMind closes the stream on any er
 
 ```ts
 // config.ts
-export const GUEST_MAX_DOCUMENTS = 3
+export const GUEST_MAX_DOCUMENTS = 5
 export const USER_MAX_DOCUMENTS = 10
 ```
 
@@ -600,15 +600,15 @@ Then check A still sees everything of theirs, unchanged.
 
 ---
 
-## 8. Open decisions (answer before building)
+## 8. Decisions (answered by Shiv, 2026-10-03)
 
-| # | Decision | Recommendation |
+| # | Decision | Answer |
 |---|---|---|
-| D1 | Does a first-time visitor become a guest **automatically**, or see a welcome screen with "Continue as guest" / "Sign in"? | **Automatic.** A recruiter lands straight in a working app. The plan above assumes this |
-| D2 | First deploy with the login UI, or guest-only first and login UI second? | **Guest-only first** if the Oct 8 deadline is tight. It fixes the public problem in about half the time |
-| D3 | Old rows: claim them for your account, or delete them? | **Delete**, apart from one clean sample PDF you re-upload yourself. Some of the old data is resume text |
-| D4 | Document caps: guest 3, user 10? | Fine as a start. They are two constants |
-| D5 | Rate limiting on `/auth/*` now or later? | **Now**, it is 20 minutes and the guest endpoint is otherwise unbounded |
+| D1 | Does a first-time visitor become a guest **automatically**, or see a welcome screen with "Continue as guest" / "Sign in"? | **Automatic** |
+| D2 | First deploy with the login UI, or guest-only first and login UI second? | **Guest-only first**: AUTH.0 to AUTH.5 + AUTH.7. AUTH.6 (login UI) is a later deploy |
+| D3 | Old rows: claim them for your account, or delete them? | **Deleted** by Shiv through the UI before the build started. Orphan chunks and any "All documents" sessions may still be in the tables: check in AUTH.7 |
+| D4 | Document caps | **Guest 5, registered 10** |
+| D5 | Rate limiting on `/auth/*` now or later? | **Now** (built in AUTH.7) |
 
 ---
 
@@ -616,8 +616,8 @@ Then check A still sees everything of theirs, unchanged.
 
 | Step | Date | Time taken | Notes / what bit you |
 |---|---|---|---|
-| AUTH.0 | | | |
-| AUTH.1 | | | |
+| AUTH.0 | 2026-10-03 | | Code side done: `jsonwebtoken` 9, `bcryptjs` 3 (ships its own types, no `@types/bcryptjs` needed), `schema.ts`, `.env.example`. Shiv ran the SQL on Neon and added `JWT_SECRET` to `.env` |
+| AUTH.1 | 2026-10-03 | | `users.repository.ts`, `auth.service.ts`, `auth.schema.ts`, `auth.routes.ts` (guest, register, login), mounted in `app.ts`, startup `JWT_SECRET` check in `index.ts`, `auth` log theme. Tested live on a spare port, 13 cases, all as expected; the 2 test users were deleted afterwards. `GET /auth/me` moved to AUTH.2 (it needs the middleware). Not done: equal-time login for unknown emails (a missing account answers faster than a wrong password) |
 | AUTH.2 | | | |
 | AUTH.3 | | | |
 | AUTH.4 | | | |

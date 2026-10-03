@@ -33,6 +33,13 @@ export const FRONTEND_ORIGINS = (process.env.FRONTEND_URL || 'http://localhost:5
 // whole upload in memory, so a cap keeps one huge PDF from crashing the server.
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
+// Auth.1 — how long a login token stays valid (the format is the `ms`
+// library's: '7d' = 7 days). A guest can't log back in — there's no email or
+// password to log in WITH — so an expired guest token means that guest's
+// files are gone for good. That's why guests get the longer one.
+export const TOKEN_TTL_USER = '7d'
+export const TOKEN_TTL_GUEST = '30d'
+
 // What the client sees when a network step (Gemini, Neon) fails — the real
 // cause goes to the terminal instead (see utils/errors.ts).
 export const CONNECTION_ERROR_MESSAGE =
