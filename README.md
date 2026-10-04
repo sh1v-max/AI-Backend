@@ -268,7 +268,7 @@ The API runs on a **Render** free web service and redeploys on every push to `ma
 
 `npm run build` uses `tsconfig.build.json`, which compiles only the app (not the `stepN` learning scripts) into `dist/`.
 
-On Render, requests pass through Cloudflare and then Render's own proxies before reaching the app. The rate limiter needs the visitor's real IP, so Express is told how many proxy hops to skip in `X-Forwarded-For` (`TRUST_PROXY_HOPS`). That number was measured, not guessed: the `RateLimit-Policy` response header contains a hash of the key the limiter used, which can be compared with a hash of your own IP.
+On Render, requests pass through Cloudflare and then Render's own proxies before reaching the app. The rate limiter needs the visitor's real IP, so Express is told how many proxy hops to skip in `X-Forwarded-For` (`TRUST_PROXY_HOPS`). That number was measured, not guessed: the `RateLimit-Policy` response header contains a hash of the key the limiter used, which can be compared with a hash of your own IP. On Render the answer is 3 hops (client, Cloudflare edge, Render's front proxy).
 
 The frontend is on **Vercel** (Root Directory `frontend`, Vite preset) with one env var, `VITE_API_URL`, pointing at the Render URL. Vite bakes it in at build time, so changing it needs a redeploy.
 

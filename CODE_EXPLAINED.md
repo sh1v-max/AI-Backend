@@ -280,7 +280,7 @@ Multer turns an HTTP file upload into a `Buffer`; `pdf-parse` turns the buffer i
 - [main.tsx:6-10](frontend/src/main.tsx#L6-L10): mounts `<App />` inside `<StrictMode>`. StrictMode (dev only) intentionally runs some things **twice** to expose impure code — this is why the streaming state updater in [useChat.ts:125-133](frontend/src/hooks/useChat.ts#L125-L133) must be a pure function.
 - [vite.config.ts](frontend/vite.config.ts): just the React plugin. Vite serves the app on `localhost:5173`.
 
-### CORS — why the backend needs [app.ts:17-21](src/app.ts#L17-L21)
+### CORS — why the backend needs [app.ts:42-47](src/app.ts#L42-L47)
 The page is served from `:5173` and calls the API on `:3000`. Those are **different origins**, and browsers block cross-origin requests unless the server says it's OK. `cors({ origin: FRONTEND_URL })` sends the allow header for exactly the frontend's origin ([config.ts:21](src/config.ts#L21), defaulting to `http://localhost:5173`).
 
 ### The API layer — `frontend/src/api/` (fetch and nothing else)
@@ -728,7 +728,7 @@ Two separate jobs: **ask** for the shape (prompt, or the API's structured-output
 
 ## Step 4.2 — `POST /quiz`
 
-**Files:** [services/quiz.service.ts](src/services/quiz.service.ts), [routes/quiz.routes.ts](src/routes/quiz.routes.ts), [app.ts:7](src/app.ts#L7) + [L34](src/app.ts#L34), [utils/pipelineLogger.ts:14](src/utils/pipelineLogger.ts#L14) + [L61-63](src/utils/pipelineLogger.ts#L61-L63).
+**Files:** [services/quiz.service.ts](src/services/quiz.service.ts), [routes/quiz.routes.ts](src/routes/quiz.routes.ts), [app.ts:9](src/app.ts#L9) + [L78](src/app.ts#L78), [utils/pipelineLogger.ts:14](src/utils/pipelineLogger.ts#L14) + [L61-63](src/utils/pipelineLogger.ts#L61-L63).
 
 ### Why we need it
 Step 4.1 proved the approach in a throwaway script. A real feature needs it as an endpoint the frontend can call, with the two production habits the topic README calls for: retry once instead of trusting a single reply, and don't leave "where the correct answer sits" up to the model's own habits — Step 4.1 measured that habit wasn't uniform.
@@ -755,7 +755,7 @@ A Fisher–Yates shuffle per question: [L72-76](src/services/quiz.service.ts#L72
 **The route — [quiz.routes.ts](src/routes/quiz.routes.ts)**
 Thin, same shape as the other routes: [L11](src/routes/quiz.routes.ts#L11) `withErrorHandling('POST /quiz', ...)` catches real exceptions (network/DB) the same way `/chat` does; [L15-16](src/routes/quiz.routes.ts#L15-L16) calls `generateQuiz` and forwards its status/error unchanged; [L18](src/routes/quiz.routes.ts#L18) sends the quiz. **Deliberately not streamed** — unlike `/chat-stream`, half a JSON object is useless, so the client waits for the complete, checked result.
 
-**Wiring** — [app.ts:7](src/app.ts#L7) imports `quizRouter`, [L34](src/app.ts#L34) mounts it, same pattern as the other three routers.
+**Wiring** — [app.ts:9](src/app.ts#L9) imports `quizRouter`, [L78](src/app.ts#L78) mounts it, same pattern as the other three routers.
 
 **A new log theme and a new helper — [pipelineLogger.ts:14](src/utils/pipelineLogger.ts#L14), [L61-63](src/utils/pipelineLogger.ts#L61-L63)**
 `quiz` got its own color (`chalk.blueBright`), so its terminal trace is easy to tell apart from uploads (cyan) and chats (magenta). [`failed(reason)`](src/utils/pipelineLogger.ts#L61-L63) is a new red-line helper, deliberately distinct from `rejected()` (bad input) and `notFound()` (missing resource): "the request was valid, the work just never produced a usable result."
@@ -942,7 +942,7 @@ Login alone fixes nothing: if only the list endpoints were filtered, anyone hold
 
 **`req.user` typing** — [express.d.ts:13-19](src/types/express.d.ts#L13-L19): Express's `Request` has no `user`. *Declaration merging* (two interfaces with the same name merge into one) adds `user?: AuthUser` to the real type everywhere, without touching `node_modules`. It's optional because on public routes it really is missing; protected handlers write `req.user!.id`, which is safe only because of where the routers are mounted.
 
-**Default deny** — [app.ts:54](src/app.ts#L54) mounts the public `authRouter`, [L69](src/app.ts#L69) `app.use(requireAuth)`, then [L71-L74](src/app.ts#L71-L74) the four data routers. Express runs middleware in order, so every router mounted below that line is protected, including any added later. Two order details: `cors()` sits above it, so the browser's preflight `OPTIONS` (which never carries the token) is answered before auth sees it; and an unknown path now gets 401 instead of 404, which tells an anonymous caller nothing about which routes exist.
+**Default deny** — [app.ts:58](src/app.ts#L58) mounts the public `authRouter`, [L73](src/app.ts#L73) `app.use(requireAuth)`, then [L75-L78](src/app.ts#L75-L78) the four data routers. Express runs middleware in order, so every router mounted below that line is protected, including any added later. Two order details: `cors()` sits above it, so the browser's preflight `OPTIONS` (which never carries the token) is answered before auth sees it; and an unknown path now gets 401 instead of 404, which tells an anonymous caller nothing about which routes exist.
 
 **`GET /auth/me`** — [auth.routes.ts:88-102](src/routes/auth.routes.ts#L88-L102) passes `requireAuth` to that one route (it lives above the global line) and *does* look the user up: a token can be valid while its user row is gone, and the frontend needs to hear that.
 
@@ -1025,11 +1025,11 @@ The signature and handlers didn't change, so `useChat.ts` didn't change, and the
 
 ## Auth.7 — document caps, rate limit, and the proxy problem
 
-**Files:** [config.ts:47-62](src/config.ts#L47-L62), [documents.routes.ts:36-50](src/routes/documents.routes.ts#L36-L50), [middleware/rateLimit.ts](src/middleware/rateLimit.ts), [app.ts:31](src/app.ts#L31)
+**Files:** [config.ts:47-63](src/config.ts#L47-L63), [documents.routes.ts:36-50](src/routes/documents.routes.ts#L36-L50), [middleware/rateLimit.ts](src/middleware/rateLimit.ts), [app.ts:35](src/app.ts#L35)
 
 - **Document cap** — [`checkDocumentCap`](src/routes/documents.routes.ts#L36-L50): 5 for guests, 10 for accounts, as a middleware placed **before multer** on `/upload`, so an over-limit user is turned away before their file (up to 10 MB) is read into memory. 403, not 400: the request is fine, they're just not allowed more. Two uploads at the same instant can both pass at 4/5; fine for a cost guard.
 - **Rate limit** — [`authLimiter`, rateLimit.ts:23-36](src/middleware/rateLimit.ts#L23-L36): one counter per IP, shared across `/auth/guest`, `/register` and `/login` (20 per 15 minutes), answering 429 with a `RateLimit` header. It exists because `POST /auth/guest` is public: without it anyone could loop it and mint unlimited guests, each with their own cap. Counters live in memory and reset on restart.
-- **`trust proxy`** — [app.ts:31](src/app.ts#L31) with `TRUST_PROXY_HOPS` ([config.ts:62](src/config.ts#L62)). On Render the connection comes from a proxy, so every visitor has the same raw IP. Each proxy appends the address it received from to `X-Forwarded-For`, and `trust proxy = N` tells Express to skip N hops from the right. Render puts **Cloudflare in front of its own proxies**, which had to be measured, not guessed: with 1, identical requests landed in two counters (Render's front proxies); with 2, every request got a new counter (Cloudflare's edges), meaning no limit at all. The measuring trick: the `RateLimit-Policy` response header's `pk` is the first 12 hex characters of `sha256(key)`, so you can compare it with `sha256` of your own IP (which `https://<api>/cdn-cgi/trace` reports). The evidence points to 3 hops; see the results log in [auth-jwt-plan.md](auth-jwt-plan.md) for where this stands.
+- **`trust proxy`** — [app.ts:35](src/app.ts#L35) with `TRUST_PROXY_HOPS` ([config.ts:63](src/config.ts#L63)). On Render the connection comes from a proxy, so every visitor has the same raw IP. Each proxy appends the address it received from to `X-Forwarded-For`, and `trust proxy = N` tells Express to skip N hops from the right. Render puts **Cloudflare in front of its own proxies**, which had to be measured, not guessed: with 1, identical requests landed in two counters (Render's front proxies); with 2, every request got a new counter (Cloudflare's edges), meaning no limit at all. The measuring trick: the `RateLimit-Policy` response header's `pk` is the first 12 hex characters of `sha256(key)`, so you can compare it with `sha256` of your own IP (which `https://<api>/cdn-cgi/trace` reports). With 3 the `pk` matched `sha256` of the client IP, stayed the same across requests, and a faked `X-Forwarded-For` didn't change it, so Render's chain is `<client>, <Cloudflare edge>, <Render front proxy>` and the value is **3** (env on Render, and the code default). Details in the results log of [auth-jwt-plan.md](auth-jwt-plan.md).
 
 ---
 
@@ -1105,7 +1105,7 @@ Follow a single message from the keyboard to the screen (streaming version, as o
 1. **You type and press Enter.** [`ChatInputForm`](frontend/src/components/chat/ChatInputForm.tsx#L14-L74) trims it and calls `onSubmit` → `sendMessage` in [useChat.ts](frontend/src/hooks/useChat.ts) (function `sendMessage`).
 2. **The user bubble appears immediately**; loading = true → the three "thinking" dots in [`ChatPanel`](frontend/src/components/chat/ChatPanel.tsx#L27-L89).
 3. **`fetch` opens** `GET /chat-stream?documentId=…&message=…&sessionId=…` with `Authorization: Bearer <token>` through [`authFetch`](frontend/src/api/client.ts#L70-L87), inside [`streamChatMessage`](frontend/src/api/chat.ts#L71-L170). The browser first sends a CORS preflight, which `cors()` answers.
-4. **Express routes it**: [`requireAuth`](src/middleware/auth.ts#L16-L33) verifies the token and sets `req.user` ([app.ts:69](src/app.ts#L69)); the `/chat-stream` handler in [chat.routes.ts](src/routes/chat.routes.ts) runs inside `withErrorHandling` and reads `userId = req.user!.id`.
+4. **Express routes it**: [`requireAuth`](src/middleware/auth.ts#L16-L33) verifies the token and sets `req.user` ([app.ts:73](src/app.ts#L73)); the `/chat-stream` handler in [chat.routes.ts](src/routes/chat.routes.ts) runs inside `withErrorHandling` and reads `userId = req.user!.id`.
 5. **[`prepareChat()`](src/services/chat.service.ts#L109-L237)**, everything scoped to that user:
    - validates input → [embeddings.service.ts](src/services/embeddings.service.ts) calls Gemini to embed the question →
    - [`searchSimilar`](src/repositories/chunks.repository.ts#L88-L124) runs the pgvector `<=>` query, `INNER JOIN documents ... WHERE documents.user_id = $userId` → top 3 chunks →
@@ -1137,7 +1137,7 @@ Things that work but are deliberately simple — good to know, and several are f
 - **The upload's PDF check trusts the client's mimetype** ([documents.routes.ts:40](src/routes/documents.routes.ts#L40)).
 - **Errors are terminal-only** — writing them to a file (`logs/errors.log`) was discussed and intentionally deferred.
 - **Auth is deliberately simple** ([auth-jwt-plan.md](auth-jwt-plan.md) §7 has the full list): no refresh tokens or server-side logout (a token is valid until it expires), no email verification or password reset, the token sits in `localStorage`, a guest's files are tied to one browser, logging in to an existing account doesn't merge a guest's files, and an unknown email answers login slightly faster than a wrong password.
-- **The rate limiter's counters are in memory** (reset on every restart), and its correctness depends on the `trust proxy` hop count matching the host (see Auth.7).
+- **The rate limiter's counters are in memory** (reset on every restart), and its correctness depends on the `trust proxy` hop count matching the host (3 on Render; see Auth.7).
 - **Cancelling a stream only stops the browser**: the server finishes the Gemini call and saves both messages anyway.
 - **No automated tests yet** (Phase 9).
 - **Don't re-run the `step2` / `step3` scripts against the real database** — they drop/clear the `chunks` table (see the warnings in Phase 1). `step3` is still an npm script; `step2` no longer is.

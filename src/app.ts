@@ -23,10 +23,14 @@ export const app = express()
 // Too high a number is the opposite mistake: trusting a hop the CLIENT wrote,
 // which lets anyone dodge the limit by sending a fake header.
 //
-// Measured after the first deploy: Render has TWO hops (Cloudflare, then
-// Render's own load balancer — every response carries a CF-RAY header). With
-// 1, identical requests from one machine landed in different rate-limit
-// counters, keyed by whichever Cloudflare server forwarded them.
+// Measured on the live deploy, not guessed: Render's chain is
+// `<visitor>, <Cloudflare edge>, <Render front proxy>` before it reaches us,
+// so N = 3. With 1 the limiter keyed on Render's proxies (one machine's
+// requests split into 2 counters); with 2 it keyed on Cloudflare edges (a new
+// counter every request = no limit at all). Confirmed with 3: the
+// RateLimit-Policy header's `pk` (first 12 hex of sha256(key)) matched
+// sha256 of the visitor IP from /cdn-cgi/trace, stayed the same across
+// requests, and a faked X-Forwarded-For header didn't change it.
 // See TRUST_PROXY_HOPS in config.ts.
 app.set('trust proxy', TRUST_PROXY_HOPS)
 
