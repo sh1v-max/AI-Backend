@@ -269,6 +269,7 @@ This is where your chatbot stops being "always do RAG search" and starts genuine
 - Use **[Render](https://render.com/docs)'s free tier**: one free web service for your API, one free [background worker](https://render.com/docs/background-workers) for your BullMQ worker process (Step A.2). Free tier services spin down after inactivity and take a few seconds to wake up — totally fine for a portfolio project, just mention it if a recruiter tests it and it's slow to respond the first time.
 - Database: your existing free [Neon](https://neon.tech)/[Supabase](https://supabase.com) Postgres. Redis: your existing free [Upstash](https://upstash.com) instance.
 - Confirm the full flow works live: upload → background ingest → chat with memory → streamed reply → quiz workflow with suspend/resume.
+- ✅ **How it turned out (2026-09-30 → 10-04):** done early and only half of it: the API on a Render free web service and the frontend on Vercel, no worker (Phase A isn't built yet). Being live showed what the plan never mentioned: a public app with no users shows everyone everything. So JWT auth with guest accounts and per-user data got built (see [auth-jwt-plan.md](auth-jwt-plan.md)), plus a per-IP rate limit, whose proxy settings had to be measured on Render rather than guessed.
 
 ---
 

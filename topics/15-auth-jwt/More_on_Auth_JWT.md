@@ -1,6 +1,6 @@
 # 15 — Auth (JWT)
 
-**Roadmap: Phase 11 (Step 11.2)** · **Status in DocMind: no auth at all.** Anyone who has the API URL can upload, read every document and conversation, delete things, and spend the Gemini quota. You already know JWT basics from other projects, so this file is the full reference plus the part that's new: wiring auth into an **AI backend's** request path (streaming, cost, per-user data).
+**Roadmap: Phase 11 (Step 11.2)** · **Status in DocMind: built (2026-10-04).** This file was written before that, when DocMind had no auth at all: anyone with the API URL could upload, read every document and conversation, delete things, and spend the Gemini quota. The sections below still read as "what to build"; what was actually built, and where it differs from this file, is in [auth-jwt-plan.md](../../auth-jwt-plan.md) and the auth section of [CODE_EXPLAINED.md](../../CODE_EXPLAINED.md#auth--per-user-data). The main differences: guests are real users so login is optional (§22 assumed a login screen), `chunks` got **no** `user_id` (searches filter through the `documents` join instead of the denormalized column §14 suggests, because there's no vector index yet), and streaming went with fetch-based reading (§15's recommendation). You already know JWT basics from other projects, so this file is the full reference plus the part that's new: wiring auth into an **AI backend's** request path (streaming, cost, per-user data).
 
 Code this file talks about: [app.ts](../../src/app.ts), [chat.routes.ts](../../src/routes/chat.routes.ts), [chat.service.ts](../../src/services/chat.service.ts), [schema.ts](../../src/db/schema.ts), the frontend's `EventSource` use in `frontend/src/api/chat.ts`
 
@@ -446,6 +446,8 @@ Sign test tokens in the test with a test secret. Use `vi.useFakeTimers()` to tes
 ---
 
 # 22. Adding It to DocMind (The Optional Side Exercise)
+
+> **Done, 2026-10-04.** The order below is roughly what happened, with a guest account in front so nobody has to log in. Existing rows were deleted before the build; the orphan chunks became unreachable. Per-step details and what bit: [auth-jwt-plan.md](../../auth-jwt-plan.md).
 
 A sensible minimal order:
 

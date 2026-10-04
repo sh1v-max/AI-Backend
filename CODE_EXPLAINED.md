@@ -1,4 +1,4 @@
-# DocMind — Code Explained (Step 1.1 → Step 4.3F)
+# DocMind — Code Explained (Step 1.1 → auth + frontend redesign)
 
 A file-by-file, line-linked walkthrough of everything built so far: **why** each piece exists, **what** it does, and **how** it's implemented. Every `[file:lines]` link jumps to the exact code (Ctrl+Click in VS Code).
 
@@ -6,7 +6,7 @@ How this relates to the other docs:
 - [project_building_workthrough.md](project_building_workthrough.md) = the *build order* (what step comes next).
 - [PROGRESS.md](PROGRESS.md) = the *tracker*.
 - **This file** = the *code explained*. Read it when you want to understand (or re-learn) how something actually works.
-- Line numbers were checked when this was written. If a file has been edited since, the link may be a few lines off — the function names are the reliable anchor.
+- Line numbers were checked when each section was written. If a file has been edited since, the link may be a few lines off — the function names are the reliable anchor. The auth work (2026-10-04) edited most backend files, so the older sections' bare line ranges (e.g. `[L99-102]`) in `chat.routes.ts`, the repositories and the services may now be off by some lines; links that name a function were re-checked and fixed.
 
 ---
 
@@ -32,6 +32,8 @@ How this relates to the other docs:
    - [Step 3.2F — Streaming in the frontend](#step-32f--streaming-in-the-frontend)
    - [Step 3.3 — Multi-document chat](#step-33--multi-document-chat)
    - **Phase 4 — Quiz generation:** [Step 4.1 — Structured output with Zod](#step-41--structured-output-with-zod) · [Step 4.2 — `POST /quiz`](#step-42--post-quiz) · [Step 4.2F — Frontend: quiz UI](#step-42f--frontend-quiz-ui) · [Step 4.3 + 4.3F — checking answers](#step-43--43f--checking-answers)
+   - **Auth — per-user data:** [the problem and the fix](#auth--per-user-data) · [Auth.0 schema](#auth0--the-schema) · [Auth.1 users + tokens](#auth1--users-tokens-and-the-auth-routes) · [Auth.2 requireAuth](#auth2--requireauth-and-default-deny) · [Auth.3 ownership](#auth3--ownership-in-every-query) · [Auth.4 frontend](#auth4--the-frontend-token-authfetch-useauth-the-gate) · [Auth.5 fetch streaming](#auth5--streaming-with-fetch-instead-of-eventsource) · [Auth.6 sign in UI](#auth6--sign-in-sign-up-log-out) · [Auth.7 limits + proxies](#auth7--document-caps-rate-limit-and-the-proxy-problem)
+   - [Frontend redesign](#frontend-redesign)
 5. [Cross-cutting: errors, logging, and the backend restructure](#5-cross-cutting-errors-logging-and-the-backend-restructure)
 6. [One chat message, end to end](#6-one-chat-message-end-to-end)
 7. [Known limitations (honest list)](#7-known-limitations-honest-list)
@@ -442,7 +444,7 @@ Step 2.4's frontend kept the `sessionId` only in React state, so **refreshing th
 - **`getMessagesForSession()`** — [L52-64](src/repositories/chatMessages.repository.ts#L52-L64): the full transcript, oldest first.
 - **Routes** — [sessions.routes.ts](src/routes/sessions.routes.ts): `GET /sessions` ([L10-13](src/routes/sessions.routes.ts#L10-L13)), `GET /sessions/:sessionId/messages` ([L15-18](src/routes/sessions.routes.ts#L15-L18)), `DELETE /sessions/:sessionId` ([L20-23](src/routes/sessions.routes.ts#L20-L23)).
 - **`deleteSession`** — [repository L122-124](src/repositories/chatMessages.repository.ts#L122-L124): deletes that conversation's messages; the document stays.
-- **`DELETE /documents/:documentId`** — [documents.routes.ts:21-27](src/routes/documents.routes.ts#L21-L27): deletes the chunks ([`deleteChunksByDocumentId`](src/repositories/chunks.repository.ts#L39-L41)), then every chat message for it ([`deleteMessagesByDocumentId`, L131-133](src/repositories/chatMessages.repository.ts#L131-L133)), then the document row ([`deleteDocument`](src/repositories/documents.repository.ts#L28-L30)) — so no rows are left pointing at a dead `document_id`.
+- **`DELETE /documents/:documentId`** — [documents.routes.ts:61-79](src/routes/documents.routes.ts#L61-L79): deletes the chunks ([`deleteChunksByDocumentId`](src/repositories/chunks.repository.ts#L62-L66)), then every chat message for it ([`deleteMessagesByDocumentId`, L160-164](src/repositories/chatMessages.repository.ts#L160-L164)), then the document row ([`deleteDocument`](src/repositories/documents.repository.ts#L74-L80)) — so no rows are left pointing at a dead `document_id`. *(Since Auth.3 it first checks the document is the caller's, and 404s otherwise.)*
 
 ### Frontend
 
@@ -633,8 +635,8 @@ Until now every chat was pinned to **one** PDF. But a natural question is often 
 - **The sentinel** — [config.ts:13-14](src/config.ts#L13-L14): `ALL_DOCUMENTS = 'all'` and a display label. Why a sentinel string instead of `NULL`? `chat_messages.document_id` is `NOT NULL`; making it nullable means altering the live Neon table. Storing `'all'` in the existing column needs no schema change at all.
 - **`searchSimilar` — [chunks.repository.ts:56-86](src/repositories/chunks.repository.ts#L56-L86)**:
   - [`documentId?`](src/repositories/chunks.repository.ts#L56-L60) is now optional.
-  - It returns [`SimilarChunk`](src/repositories/chunks.repository.ts#L47-L52) = `{ content, distance, documentId, filename }`. To get the filename it does a [`LEFT JOIN documents`](src/repositories/chunks.repository.ts#L76) — *why the source document's name matters:* so the answer and the UI can say **which PDF** each piece came from.
-  - [The `where`](src/repositories/chunks.repository.ts#L83): a real `documentId` → `chunks.document_id = …`; otherwise → `documents.id IS NOT NULL`, i.e. **only chunks whose document exists in the `documents` table**. That last condition matters: older "orphan" chunks (test uploads from before Step 2.2, no `documents` row) would otherwise leak into answers as an "unknown document". Single-document mode is left untouched so an old session pinned to an orphan id still works.
+  - It returns [`SimilarChunk`](src/repositories/chunks.repository.ts#L73-L78) = `{ content, distance, documentId, filename }`. To get the filename it joins `documents` (a `LEFT JOIN` when this step was built; an [`INNER JOIN`](src/repositories/chunks.repository.ts#L115) since Auth.3, because that's where the owner lives) — *why the source document's name matters:* so the answer and the UI can say **which PDF** each piece came from.
+  - [The `where`](src/repositories/chunks.repository.ts#L116-L120): as built in Step 3.3, a real `documentId` → `chunks.document_id = …`; otherwise → `documents.id IS NOT NULL`, i.e. **only chunks whose document exists in the `documents` table**, so older "orphan" chunks (test uploads from before Step 2.2) wouldn't leak into answers as an "unknown document". *Since Auth.3 both branches filter on `documents.user_id` instead, which excludes orphans in both modes automatically — see [Auth.3](#auth3--ownership-in-every-query).*
 - **`prepareChat` — [chat.service.ts:74-165](src/services/chat.service.ts#L74-L165)** (the *one* place the change lives, thanks to the earlier restructure):
   - [L80-88](src/services/chat.service.ts#L80-L88): absent/empty `documentId` → `ALL_DOCUMENTS`; a non-string (e.g. `?documentId=a&documentId=b` arrives as an array) → `400`. `searchAll` is the boolean the rest of the function branches on.
   - [L105-115](src/services/chat.service.ts#L105-L115): logs "across ALL documents" vs "scoped to this documentId", and passes `undefined` to `searchSimilar` for all-mode.
@@ -700,12 +702,12 @@ It gained one optional parameter, [`generationConfig`](src/services/llm.service.
 2. **Is it the right JSON?** [`Quiz.safeParse`, L54](src/step4-quiz-zod.ts#L54) — `safeParse` never throws; it returns `{ success, data }` or `{ success: false, error }`, so the code can branch (retry, or report). On failure, Zod lists **every problem with the exact path**, like `0.options: expected array to have exactly 4 items`.
 
 **The experiment — [`main`, step4-quiz-zod.ts:60-137](src/step4-quiz-zod.ts#L60-L137)**
-- Picks your newest document (or the id you pass), samples 5 chunks ([L110](src/step4-quiz-zod.ts#L110)), and builds one prompt used for both modes ([`buildQuizPrompt`, L22](src/step4-quiz-zod.ts#L22)).
+- Picks your newest document (or the id you pass), samples 5 chunks ([L83](src/step4-quiz-zod.ts#L83)), and builds one prompt used for both modes ([`buildQuizPrompt`, L85](src/step4-quiz-zod.ts#L85), imported from `quiz.service.ts` since Step 4.2).
 - [L114-120](src/step4-quiz-zod.ts#L114-L120): the two modes — plain (no config) vs structured (with the response schema).
 - [L133](src/step4-quiz-zod.ts#L133): each run calls the model; an API error is counted as a failure rather than crashing the script.
 - [L114](src/step4-quiz-zod.ts#L114): a pass/fail summary per mode.
 
-**The bad-reply gallery — [`showBadReplyGallery`, step4-quiz-zod.ts:68-98](src/step4-quiz-zod.ts#L68-L98)**
+**The bad-reply gallery — [`showBadReplyGallery`, step4-quiz-zod.ts:30-60](src/step4-quiz-zod.ts#L30-L60)**
 Modern models rarely slip, so waiting for a real failure teaches slowly. Instead, 11 hand-made replies — one good, ten wrong in the ways real models go wrong (fenced JSON, a chatty sentence before the JSON, only 3 questions, 3 options, `"2"` as a string, index out of range, `1.5`, duplicate options, a missing field, an object instead of an array) — go through the same checker, with **no API calls**. Each shows which check caught it and why.
 
 **Valid ≠ good — [the answer-position tally, step4-quiz-zod.ts:121-127](src/step4-quiz-zod.ts#L121-L127)**
@@ -883,13 +885,194 @@ Not every "endpoint the roadmap describes" is worth building — sometimes the h
 
 ---
 
+# Auth — per-user data
+
+> **Why this exists at all:** once DocMind was deployed, anyone who opened the link saw every PDF and every conversation ever uploaded. Nothing in the app knew *who* was asking: `documents`, `chunks` and `chat_messages` had no owner, so `GET /documents` returned every row to everyone. The plan, the 16 rules and a per-step results log (what was tested, what bit) are in [auth-jwt-plan.md](auth-jwt-plan.md); this section explains the code that came out of it.
+
+**The shape of the fix, in two jobs:**
+
+| Job | Question | Where | Fails with |
+|---|---|---|---|
+| Authentication | Who are you? | [`requireAuth`](src/middleware/auth.ts#L16-L33) checks the JWT | 401 |
+| Authorization | Is this row yours? | a `user_id` filter inside every repository query | 404 |
+
+Login alone fixes nothing: if only the list endpoints were filtered, anyone holding a `documentId` could still chat with it, quiz it or delete it. The filter on every query is the real fix; the JWT is just how the server learns which user id to filter by.
+
+**Guests are real users.** A first visit calls `POST /auth/guest`, which creates a `users` row with no email and no password and returns a token for it. So there's one code path: a guest's token goes through the same middleware and the same filters as an account's, and signing up later just fills in email + password on the *same* row, which is why a guest's files survive it.
+
+---
+
+## Auth.0 — the schema
+
+**File:** [db/schema.ts](src/db/schema.ts)
+
+- **`users`** — [L19-L28](src/db/schema.ts#L19-L28): `id`, `email` (UNIQUE but nullable: Postgres treats every NULL as different, so many guests can have no email), `passwordHash` (nullable), `isGuest` (default true), `createdAt`.
+- **`documents.userId`** and **`chatMessages.userId`** — nullable text columns. *Why nullable:* adding a nullable column to a live table is instant and doesn't break the code that's already deployed, which just never fills it in. A row with no owner matches no user, so it's invisible to everyone.
+- **`chunks` gets no owner on purpose.** A chunk belongs to a document and the document has the owner, so searches filter on `documents.user_id` through the join `searchSimilar` already had. `chat_messages` *does* need its own column, because an "All documents" session has `document_id = 'all'` and no document row to find the owner through.
+- There are no migration files: the SQL (kept in comments beside each table) was run by hand in the Neon editor before any code used it.
+
+---
+
+## Auth.1 — users, tokens and the `/auth` routes
+
+**Files:** [repositories/users.repository.ts](src/repositories/users.repository.ts), [services/auth.service.ts](src/services/auth.service.ts), [schemas/auth.schema.ts](src/schemas/auth.schema.ts), [routes/auth.routes.ts](src/routes/auth.routes.ts), [index.ts:7](src/index.ts#L7)
+
+**The repository.** Every query selects `publicColumns` ([L17-L21](src/repositories/users.repository.ts#L17-L21)) **by name**, so the password hash can't leak through a "select everything". The one exception is [`findUserByEmail`](src/repositories/users.repository.ts#L72-L81), which login needs. [`upgradeGuest`](src/repositories/users.repository.ts#L53-L64) updates `WHERE id = $1 AND is_guest = true`, so a guest token can never overwrite an already-registered account.
+
+**What a JWT is.** Three base64 pieces, `header.payload.signature`. The payload is readable by anyone. What makes it trustworthy is the signature: a hash of header + payload + a secret only the server knows. Change one character of the payload and the signature no longer matches, so the server can tell "I issued this, untouched" without looking anything up.
+
+**The service:**
+- [`getJwtSecret`](src/services/auth.service.ts#L32-L38) throws a clear error if `JWT_SECRET` is missing; [index.ts:7](src/index.ts#L7) calls it at startup so a misconfigured deploy dies at boot, not on the first login.
+- [`signToken`](src/services/auth.service.ts#L50-L55): payload `{ sub: userId, guest }`, HS256, 7 days for accounts and 30 for guests ([config.ts:40-41](src/config.ts#L40-L41)). A guest can't log back in, so an expired guest token means lost files.
+- [`verifyToken`](src/services/auth.service.ts#L65-L73): `jwt.verify` (never `jwt.decode`, which doesn't check the signature), with `algorithms: ['HS256']` pinned, because the token's own header says which algorithm it used and without the pin the attacker gets to pick. Returns the user or `null`, never throws.
+- [`register`](src/services/auth.service.ts#L111-L146): Zod check → bcrypt hash → if the request carries a valid *guest* token, `upgradeGuest`, otherwise `createUser`. There's no "does this email exist?" query first: two simultaneous sign-ups could both pass it. The `UNIQUE` constraint is the real guard, and Postgres error `23505` becomes a 409.
+- [`login`](src/services/auth.service.ts#L148-L177): one `401 Invalid email or password` for both "no such email" and "wrong password", so nobody can probe which emails are registered.
+
+**The input schema** — [auth.schema.ts:22-35](src/schemas/auth.schema.ts#L22-L35): the email is trimmed and lowercased *before* it's checked or stored (otherwise `Shiv@x.com` and `shiv@x.com` are two accounts). Passwords are 8 characters to **72 bytes**, not characters: bcrypt silently ignores everything past 72 bytes, so two long passwords sharing their first 72 bytes would both log in.
+
+**The routes** — [auth.routes.ts](src/routes/auth.routes.ts): `POST /auth/guest` ([L22-L40](src/routes/auth.routes.ts#L22-L40)), `/auth/register` ([L46-L59](src/routes/auth.routes.ts#L46-L59), which reads the header by hand because it's a public route), `/auth/login`, all thin and wrapped in `withErrorHandling`. Each answers `{ token, user: { id, email, isGuest } }`.
+
+---
+
+## Auth.2 — `requireAuth` and "default deny"
+
+**Files:** [middleware/auth.ts](src/middleware/auth.ts), [types/express.d.ts](src/types/express.d.ts), [app.ts](src/app.ts), [auth.routes.ts:88-102](src/routes/auth.routes.ts#L88-L102)
+
+**The middleware** — [L16-L33](src/middleware/auth.ts#L16-L33): reads the Bearer token, `verifyToken()`, then either answers `401 Sign in required` or sets `req.user = { id, isGuest }` and calls `next()`. It never queries the database; that's the point of a JWT.
+
+**`req.user` typing** — [express.d.ts:13-19](src/types/express.d.ts#L13-L19): Express's `Request` has no `user`. *Declaration merging* (two interfaces with the same name merge into one) adds `user?: AuthUser` to the real type everywhere, without touching `node_modules`. It's optional because on public routes it really is missing; protected handlers write `req.user!.id`, which is safe only because of where the routers are mounted.
+
+**Default deny** — [app.ts:54](src/app.ts#L54) mounts the public `authRouter`, [L69](src/app.ts#L69) `app.use(requireAuth)`, then [L71-L74](src/app.ts#L71-L74) the four data routers. Express runs middleware in order, so every router mounted below that line is protected, including any added later. Two order details: `cors()` sits above it, so the browser's preflight `OPTIONS` (which never carries the token) is answered before auth sees it; and an unknown path now gets 401 instead of 404, which tells an anonymous caller nothing about which routes exist.
+
+**`GET /auth/me`** — [auth.routes.ts:88-102](src/routes/auth.routes.ts#L88-L102) passes `requireAuth` to that one route (it lives above the global line) and *does* look the user up: a token can be valid while its user row is gone, and the frontend needs to hear that.
+
+---
+
+## Auth.3 — ownership in every query
+
+**Files:** all three repositories, `chat.service.ts`, `quiz.service.ts`, `ingestion.service.ts`, all four data routes.
+
+Every request does the same three moves:
+
+```
+route        const userId = req.user!.id          ← only ever from the verified token
+service      takes userId as an argument          ← services still never touch req
+repository   WHERE ... AND user_id = userId       ← the filter lives in the SQL
+```
+
+**The safety net: `userId` is a *required* parameter.** Adding it to the repository functions turned 15 call sites into TypeScript errors, which was the to-do list. Forgetting the filter is a compile error, not a leak. The one thing the compiler can't catch: two string arguments in the wrong order (`step3-drizzle.ts` passed its document id where `userId` now goes and still compiled).
+
+**Chunks, through their document** — [`searchSimilar`, chunks.repository.ts:88-124](src/repositories/chunks.repository.ts#L88-L124) now uses `INNER JOIN documents` ([L115](src/repositories/chunks.repository.ts#L115)) and filters on `documents.user_id` ([L117-L119](src/repositories/chunks.repository.ts#L117-L119)). In single-document mode the ownership check and the search are one query: someone else's `documentId` returns zero chunks and `prepareChat`'s existing "No document found" 404 fires with no new code. "All documents" now means *all of mine*. [`sampleChunks`](src/repositories/chunks.repository.ts#L29-L51) (quiz) got the same join. The old "skip orphan chunks" filter is gone: a chunk with no `documents` row can never match a user.
+
+**Sessions, on both ids** — every query in [chatMessages.repository.ts](src/repositories/chatMessages.repository.ts) filters `session_id AND user_id`. The client picks the session id, so it proves nothing: if user B sends user A's session id, B finds none of A's messages and B's new messages are saved under B. [`getRecentMessages`](src/repositories/chatMessages.repository.ts#L43-L56) matters most and is the easiest to miss: it returns nothing to the client, it feeds the *prompt*. Unscoped, B could ask "what did I ask earlier?" in A's session and the model would answer from A's history.
+
+**Deletes check first** — [documents.routes.ts:61-79](src/routes/documents.routes.ts#L61-L79) calls [`getDocumentForUser`](src/repositories/documents.repository.ts#L46-L56) and answers 404 before any of the three deletes, because `deleteChunksByDocumentId` has no owner column to check. Someone else's document is a **404, not a 403**: a 403 would confirm the id exists.
+
+**Services** — [`prepareChat`](src/services/chat.service.ts#L109-L237) takes `userId` in its input (a plain string, not `unknown`, because requireAuth already proved it) and passes it to `searchSimilar`, `getRecentMessages` and `insertMessage`; [`generateQuiz`](src/services/quiz.service.ts#L100-L167) passes it to `sampleChunks`; `ingestPdf(file, userId)` saves it on the document row. Each pipeline logs one `user:` line (first 8 characters only).
+
+---
+
+## Auth.4 — the frontend: token, `authFetch`, `useAuth`, the gate
+
+**Files:** [api/client.ts](frontend/src/api/client.ts), [api/auth.ts](frontend/src/api/auth.ts), [hooks/useAuth.ts](frontend/src/hooks/useAuth.ts), [App.tsx](frontend/src/App.tsx), [components/common/SplashScreen.tsx](frontend/src/components/common/SplashScreen.tsx)
+
+**`authFetch()`** — [client.ts:70-87](frontend/src/api/client.ts#L70-L87): `fetch` plus `Authorization: Bearer`, used by every file in `api/`, so "send the token" lives in one place. `new Headers(init.headers)` keeps the caller's headers and adds nothing else, which matters for `/upload` (the browser must set the multipart Content-Type itself). The token lives in `localStorage` under `docmind:token` ([L24-L47](frontend/src/api/client.ts#L24-L47)), every access wrapped in `try/catch`. A real bug fixed on the way: `fetchDocuments()` and `fetchSessions()` used a bare `res.json()`, which on a 401 returns `{ error }` and crashed on `.map()`; they go through `parseJsonOrThrow` now.
+
+**`useAuth()`** — [useAuth.ts:52-140](frontend/src/hooks/useAuth.ts#L52-L140): [`resolveUser`](frontend/src/hooks/useAuth.ts#L23-L34) = saved token? `GET /auth/me` : `POST /auth/guest`; a rejected token is thrown away and a new guest made.
+- **StrictMode double mount:** in dev React mounts components twice, which would create two guests on a first visit. The in-progress request is kept at **module level** ([L41-L50](frontend/src/hooks/useAuth.ts#L41-L50)), outside the component, so both mounts share it.
+- **Mid-session 401** ([L85-L96](frontend/src/hooks/useAuth.ts#L85-L96)): `authFetch` reports *which* token was rejected, and the handler ignores it unless it's still the current one, so a late failure can't throw away a freshly made token.
+- `api/auth.ts` uses plain `fetch`, not `authFetch`: for `/auth/me` a 401 is an answer `useAuth` is waiting for, not an accident to recover from.
+
+**The gate** — [App.tsx:239-247](frontend/src/App.tsx#L239-L247): splash while loading, an error screen with retry, otherwise `<AppShell key={state.user.id} />`. Two jobs: the data hooks fetch the moment they mount, so mounting them before a token exists would give three 401s; and `key={user.id}` makes React throw the whole app away and mount a fresh one when the user changes, so nothing of the previous user's data stays on screen.
+
+---
+
+## Auth.5 — streaming with `fetch` instead of `EventSource`
+
+**File:** [api/chat.ts](frontend/src/api/chat.ts) — [`streamChatMessage`, L71-L170](frontend/src/api/chat.ts#L71-L170)
+
+The browser's `EventSource` takes a URL and nothing else, so it can't send an `Authorization` header: after Auth.2 every stream got a 401. `fetch` can send headers, and `res.body.getReader()` reads the response as it arrives. The price is parsing the SSE frames by hand, which is the same job `streamAnswer()` already does on the backend for Gemini's stream:
+
+```
+authFetch('/chat-stream?…', { signal })
+  not 200? → read the JSON error → onError(real message)
+  loop: buffer += decode(chunk, { stream: true }), \r\n → \n
+        split on "\n\n", keep the last (maybe half) frame in the buffer
+        each frame → parseFrame() → meta / (default) text / done / error
+  body ended with no done/error → onError('Connection lost')
+```
+
+- [`parseFrame`](frontend/src/api/chat.ts#L47-L55) reads `event:` and `data:` lines (no `event:` line = the default "message" event; `:` comment lines are skipped).
+- [`finish`](frontend/src/api/chat.ts#L89-L94) lets only the first `onDone`/`onError` through: `useChat` waits for exactly one.
+- `{ stream: true }` on the decoder holds back half of a multi-byte character split across two network chunks.
+- An `AbortError` from the cleanup function is ignored on purpose ([L162-L167](frontend/src/api/chat.ts#L162-L167)).
+
+The signature and handlers didn't change, so `useChat.ts` didn't change, and the server didn't change at all. A bonus: `EventSource` could never read the body of a non-200 response, so a 400/404 used to show as "Connection lost"; now the server's real message reaches the user.
+
+---
+
+## Auth.6 — sign in, sign up, log out
+
+**Files:** [components/auth/AuthModal.tsx](frontend/src/components/auth/AuthModal.tsx), [components/auth/AccountArea.tsx](frontend/src/components/auth/AccountArea.tsx), [hooks/useAuth.ts:112-137](frontend/src/hooks/useAuth.ts#L112-L137), [api/auth.ts:40-67](frontend/src/api/auth.ts#L40-L67)
+
+- **`login` / `register` / `logout`** in `useAuth` each swap the saved token and the user. Login and logout change the user id, so the gate's `key` remounts the app for the new user. Sign-up keeps the guest's id (the server upgraded the row), so nothing remounts: documents stay on screen and only the sidebar changes. Log out drops the token and starts a fresh guest, the same path as a first visit.
+- **`register()` sends the current guest token** ([api/auth.ts:55-67](frontend/src/api/auth.ts#L55-L67)); that's what tells the server to upgrade instead of create.
+- **`AccountArea`** (sidebar footer): a guest sees "Sign up to keep them" and "I already have an account", but **no Log out** — with no email or password there'd be no way back to their files. An account sees its initial, email and a log-out button.
+- **`AuthModal`** shows the server's own error messages, and a note when a guest with files opens it: signing up keeps them, signing in to a different account leaves them behind.
+- **`closeAuth` is a `useCallback`** ([App.tsx:60](frontend/src/App.tsx#L60)): the modal's focus effect depends on `onClose`, and a new function on every re-render (each streamed piece of an answer) would yank focus back to the email field mid-typing.
+
+---
+
+## Auth.7 — document caps, rate limit, and the proxy problem
+
+**Files:** [config.ts:47-62](src/config.ts#L47-L62), [documents.routes.ts:36-50](src/routes/documents.routes.ts#L36-L50), [middleware/rateLimit.ts](src/middleware/rateLimit.ts), [app.ts:31](src/app.ts#L31)
+
+- **Document cap** — [`checkDocumentCap`](src/routes/documents.routes.ts#L36-L50): 5 for guests, 10 for accounts, as a middleware placed **before multer** on `/upload`, so an over-limit user is turned away before their file (up to 10 MB) is read into memory. 403, not 400: the request is fine, they're just not allowed more. Two uploads at the same instant can both pass at 4/5; fine for a cost guard.
+- **Rate limit** — [`authLimiter`, rateLimit.ts:23-36](src/middleware/rateLimit.ts#L23-L36): one counter per IP, shared across `/auth/guest`, `/register` and `/login` (20 per 15 minutes), answering 429 with a `RateLimit` header. It exists because `POST /auth/guest` is public: without it anyone could loop it and mint unlimited guests, each with their own cap. Counters live in memory and reset on restart.
+- **`trust proxy`** — [app.ts:31](src/app.ts#L31) with `TRUST_PROXY_HOPS` ([config.ts:62](src/config.ts#L62)). On Render the connection comes from a proxy, so every visitor has the same raw IP. Each proxy appends the address it received from to `X-Forwarded-For`, and `trust proxy = N` tells Express to skip N hops from the right. Render puts **Cloudflare in front of its own proxies**, which had to be measured, not guessed: with 1, identical requests landed in two counters (Render's front proxies); with 2, every request got a new counter (Cloudflare's edges), meaning no limit at all. The measuring trick: the `RateLimit-Policy` response header's `pk` is the first 12 hex characters of `sha256(key)`, so you can compare it with `sha256` of your own IP (which `https://<api>/cdn-cgi/trace` reports). The evidence points to 3 hops; see the results log in [auth-jwt-plan.md](auth-jwt-plan.md) for where this stands.
+
+---
+
+## What actually happened
+
+Each step was tested against the real database with throwaway users (deleted afterwards), then the whole thing live after the deploy:
+- **No token** → 401 on every data route; a payload edited by hand, a token signed with a different secret, an expired token and an `alg: none` token → all 401.
+- **Two guests**, A with a document: B's list is `[]`; B's chat, stream, quiz and delete on A's document → 404 (and A's document survives); B's "All documents" chat says nothing is uploaded; B sending A's session id gets none of A's history ("NO EARLIER QUESTION"); a `userId` sneaked into the body is ignored.
+- **Frontend**, in a headless browser: a first visit makes exactly one `POST /auth/guest` (StrictMode dedupe works), every request carries the header, a corrupted token silently becomes a new guest, a second browser profile is a different guest. Sign up keeps the same id and the document; log out → an empty guest; wrong password and duplicate email show the server's messages.
+- **Streaming edge cases** with a mocked `/chat-stream`: normal, `\r\n` endings, a dropped connection, an `event: error` frame, error-then-done, a `: ping` comment, a 404 JSON body, a cancel after 50 ms — all behave.
+
+## Takeaway
+
+Authentication is the easy half; the work is **authorization in every query**, and the best tool for it was the type system: a required `userId` makes the compiler list every place that still trusts nobody. The streaming change is the AI-backend-specific part (an `EventSource` can't carry a token), and the proxy problem is the deployment-specific part: anything that depends on the client's IP has to be checked on the real host.
+
+---
+
+# Frontend redesign
+
+**Files:** [components/chat/Markdown.tsx](frontend/src/components/chat/Markdown.tsx), [ChatTurn.tsx](frontend/src/components/chat/ChatTurn.tsx), [ChatPanel.tsx](frontend/src/components/chat/ChatPanel.tsx), [ChatInputForm.tsx](frontend/src/components/chat/ChatInputForm.tsx), [ChatSources.tsx](frontend/src/components/chat/ChatSources.tsx), [components/common/BrandMark.tsx](frontend/src/components/common/BrandMark.tsx), [App.css](frontend/src/App.css)
+
+### Why we need it
+Gemini answers in markdown, and the UI showed it as plain text: raw `**bold**` and `*` bullets. Long answers also stretched across the whole screen.
+
+### How it works
+- **Markdown** — [`Markdown`, L28-L36](frontend/src/components/chat/Markdown.tsx#L28-L36) renders answers with `react-markdown` + `remark-gfm` (tables, strikethrough, task lists, bare links). It does **not** render raw HTML inside the markdown and strips dangerous link targets like `javascript:`, which matters because the login token lives in `localStorage`: a PDF that tricks the model into writing `<script>` can't run code. Links open in a new tab ([L20-L22](frontend/src/components/chat/Markdown.tsx#L20-L22)). Only answers are rendered; what the user typed stays plain text.
+- **Layout** — the conversation sits in a centred column, `--chat-width: 760px` in `index.css`. Answers have the brand mark as an avatar and, once finished streaming, a Copy button next to the sources toggle. [`ChatSources`](frontend/src/components/chat/ChatSources.tsx#L15-L51) became a button with state instead of a `<details>`, so the toggle and Copy share one row while the opened list still spans the full width.
+- **The composer** — [`ChatInputForm`](frontend/src/components/chat/ChatInputForm.tsx#L14-L74): a `<textarea>` that grows with its content (reset height, then set it to `scrollHeight`, capped at 200px), Enter sends, Shift+Enter adds a line, and Enter is ignored while an input-method composition is in progress (`isComposing`, e.g. Hindi or Japanese keyboards).
+- **Empty chat** — [`ChatPanel`](frontend/src/components/chat/ChatPanel.tsx#L27-L89) shows "Ask anything about *file*" and three starter questions that send on click; "thinking" is three pulsing dots next to the mark.
+- Colours and fonts are unchanged; one new variable, `--color-on-accent`, gives the icon on the green background enough contrast in dark mode.
+
+### What actually happened
+Checked in a headless browser on desktop, mobile (390px) and dark mode with no console errors. A fixed mocked answer confirmed bold, italics, both list types, inline code, strikethrough and links render, that an injected `<img onerror>` did **not** run, and that the `javascript:` link's target came out empty. Two old mobile CSS rules broke the new pieces and were fixed: one hid every icon button in the sidebar (including the new Log out), one forced the brand to `display: block`.
+
+---
+
 ## 5. Cross-cutting: errors, logging, and the backend restructure
 
 ### Error handling on the backend — [utils/errors.ts](src/utils/errors.ts)
 Every chat step talks to the network (Gemini, Neon) and can fail on a bad connection. Without handling, that becomes a bare `500` and the real cause is buried in a stack trace.
 - **`withErrorHandling(label, handler, { sse })`** — [L36-64](src/utils/errors.ts#L36-L64): wraps a route handler in `try/catch`. On failure it logs the real cause to the terminal and sends the client a clear message ([config.ts:25-26](src/config.ts#L25-L26)): a plain route → `503 { error }`; a stream route → an `event: error` frame. If headers were already sent it just ends the response.
 - **`summarizeError(err)`** — [L16-34](src/utils/errors.ts#L16-L34): Drizzle's failed-query errors embed the SQL **and every bound parameter** — for a vector search that's all 3072 numbers, drowning the real reason. This prints only: the first line of the message, the chain of `cause`s (where `ECONNRESET` etc. live), and the first stack frame inside *our* code (`where: …`). Never `console.error(err)` raw in a route.
-- **Where it's applied:** only `/chat` and `/chat-stream`. The upload and the read/delete routes are *not* wrapped (pre-existing behavior; Express's default handler answers those). Also note: a wrong API key currently shows the "check your internet connection" message, because the wrapper doesn't distinguish failure types.
+- **Where it's applied:** `/chat`, `/chat-stream`, `/quiz` and the `/auth` routes. The upload and the read/delete routes are *not* wrapped; Express 5 forwards their async errors to the last-resort JSON handler at the bottom of [app.ts](src/app.ts). Also note: a wrong API key currently shows the "check your internet connection" message, because the wrapper doesn't distinguish failure types.
 
 ### Frontend logger
 [utils/logger.ts](frontend/src/utils/logger.ts): `log.info/warn/error(scope, …)` prints `[DocMind:<scope>]` in colour. Filter the browser console by `[DocMind:` (or `[DocMind:useChat]`) to trace upload → chat → session flow. Toggle everything with `ENABLED` ([L4](frontend/src/utils/logger.ts#L4)).
@@ -916,24 +1099,25 @@ Why: the chat code was duplicated (Step 3.3 would have meant editing it twice), 
 
 ## 6. One chat message, end to end
 
-Follow a single message from the keyboard to the screen (streaming version):
+Follow a single message from the keyboard to the screen (streaming version, as of the auth build):
 
-1. **You type and press send.** [ChatInputForm.tsx:12-17](frontend/src/components/chat/ChatInputForm.tsx#L12-L17) trims it and calls `onSubmit` → `App` passes `sendMessage` from [useChat.ts:98](frontend/src/hooks/useChat.ts#L98).
-2. **The user bubble appears immediately** ([useChat.ts:117](frontend/src/hooks/useChat.ts#L117)); loading = true → "Thinking…" ([ChatPanel.tsx:44](frontend/src/components/chat/ChatPanel.tsx#L44)).
-3. **`EventSource` opens** `GET /chat-stream?documentId=…&message=…&sessionId=…` ([api/chat.ts:46-53](frontend/src/api/chat.ts#L46-L53)). The browser first checks CORS ([app.ts:17-21](src/app.ts#L17-L21)).
-4. **Express routes it** — [app.ts:32](src/app.ts#L32) mounts `chatRouter`; [chat.routes.ts:42](src/routes/chat.routes.ts#L42) handles it inside `withErrorHandling`.
-5. **`prepareChat()`** ([chat.service.ts:74](src/services/chat.service.ts#L74)):
+0. **Before anything:** on page load [`useAuth`](frontend/src/hooks/useAuth.ts#L52-L140) has already turned the saved token into a user (`GET /auth/me`), or made a guest (`POST /auth/guest`), and only then mounted the app ([App.tsx:239-247](frontend/src/App.tsx#L239-L247)).
+1. **You type and press Enter.** [`ChatInputForm`](frontend/src/components/chat/ChatInputForm.tsx#L14-L74) trims it and calls `onSubmit` → `sendMessage` in [useChat.ts](frontend/src/hooks/useChat.ts) (function `sendMessage`).
+2. **The user bubble appears immediately**; loading = true → the three "thinking" dots in [`ChatPanel`](frontend/src/components/chat/ChatPanel.tsx#L27-L89).
+3. **`fetch` opens** `GET /chat-stream?documentId=…&message=…&sessionId=…` with `Authorization: Bearer <token>` through [`authFetch`](frontend/src/api/client.ts#L70-L87), inside [`streamChatMessage`](frontend/src/api/chat.ts#L71-L170). The browser first sends a CORS preflight, which `cors()` answers.
+4. **Express routes it**: [`requireAuth`](src/middleware/auth.ts#L16-L33) verifies the token and sets `req.user` ([app.ts:69](src/app.ts#L69)); the `/chat-stream` handler in [chat.routes.ts](src/routes/chat.routes.ts) runs inside `withErrorHandling` and reads `userId = req.user!.id`.
+5. **[`prepareChat()`](src/services/chat.service.ts#L109-L237)**, everything scoped to that user:
    - validates input → [embeddings.service.ts](src/services/embeddings.service.ts) calls Gemini to embed the question →
-   - [`searchSimilar`](src/repositories/chunks.repository.ts#L56-L86) runs the pgvector `<=>` query on Neon → top 3 chunks →
-   - [`getRecentMessages`](src/repositories/chatMessages.repository.ts#L30-L42) loads the last 8 messages →
-   - [`insertMessage`](src/repositories/chatMessages.repository.ts#L17-L24) saves your message →
-   - [`buildChatPrompt`](src/services/chat.service.ts#L15-L49) assembles context + history + question.
-6. **SSE opens**; `meta` (session id + sources) is sent ([chat.routes.ts:57-67](src/routes/chat.routes.ts#L57-L67)). The frontend adds the empty assistant bubble with sources ([useChat.ts:137-150](frontend/src/hooks/useChat.ts#L137-L150)).
-7. **[`streamAnswer`](src/services/llm.service.ts#L36-L80)** calls Gemini's streaming endpoint; each parsed piece is `yield`ed, and the route writes it as `data: {"text": …}` ([chat.routes.ts:74-77](src/routes/chat.routes.ts#L74-L77)).
-8. **Each piece reaches `onmessage`** ([api/chat.ts:61-64](frontend/src/api/chat.ts#L61-L64)) → `appendToAssistantBubble` → React re-renders; the bubble grows and the view scrolls ([ChatPanel.tsx:23-27](frontend/src/components/chat/ChatPanel.tsx#L23-L27)).
-9. **The stream ends**: the server saves the full reply ([chat.routes.ts:88-95](src/routes/chat.routes.ts#L88-L95)) and sends `event: done`; the browser closes the connection and `onDone` refreshes the sidebar ([useChat.ts:152-157](frontend/src/hooks/useChat.ts#L152-L157)).
+   - [`searchSimilar`](src/repositories/chunks.repository.ts#L88-L124) runs the pgvector `<=>` query, `INNER JOIN documents ... WHERE documents.user_id = $userId` → top 3 chunks →
+   - [`getRecentMessages`](src/repositories/chatMessages.repository.ts#L43-L56) loads the last 8 messages of this session *for this user* →
+   - [`insertMessage`](src/repositories/chatMessages.repository.ts#L24-L32) saves your message with your `user_id` →
+   - [`buildChatPrompt`](src/services/chat.service.ts#L35) assembles context + history + question.
+6. **SSE opens**; `meta` (session id + sources) is written. The frontend's [`parseFrame`](frontend/src/api/chat.ts#L47-L55) reads it and `useChat` adds the empty assistant bubble with sources.
+7. **[`streamAnswer`](src/services/llm.service.ts)** calls Gemini's streaming endpoint; each parsed piece is `yield`ed, and the route writes it as `data: {"text": …}`.
+8. **Each piece reaches the frontend's read loop**, is split into frames, dispatched as `onChunk` → `appendToAssistantBubble` → React re-renders the growing answer through [`Markdown`](frontend/src/components/chat/Markdown.tsx#L28-L36), and the view scrolls.
+9. **The stream ends**: the server saves the full reply (again with your `user_id`) and sends `event: done`; [`finish('done')`](frontend/src/api/chat.ts#L89-L94) fires `onDone`, the sidebar refreshes, and Copy + the sources toggle appear under the answer.
 
-Along the way, the backend terminal shows the colourful `[1/7] … [7/7]` trace, and the browser console shows `[DocMind:…]` lines.
+Along the way, the backend terminal shows the colourful `[1/7] … [7/7]` trace (with a `user:` line), and the browser console shows `[DocMind:…]` lines.
 
 ---
 
@@ -946,12 +1130,15 @@ Things that work but are deliberately simple — good to know, and several are f
 - **Search has no vector index**, so it compares against every chunk → fine now, see INDEXING-AT-SCALE for later.
 - **A chat's scope is fixed when it starts** (one document *or* all documents), because messages are saved against one `documentId`. Switching scope in the header starts a new chat instead of changing the current one.
 - **"All documents" retrieval is only as good as top-3.** Chunks from several PDFs compete for the same 3 slots, and *meta* questions ("which documents do you have?") can't be answered by chunk search — the model only sees the 3 nearest chunks, often all from one file. A future routing step (Phase 7) is the real fix.
-- **Orphan chunks exist in the database**: 8 groups of chunks have no `documents` row (test uploads from before Step 2.2). They're invisible in the UI and can't be deleted from it. All-documents search deliberately skips them; they can be cleaned up with SQL (`DELETE FROM chunks WHERE document_id NOT IN (SELECT id FROM documents)`) — not done automatically.
+- **Orphan chunks exist in the database**: 65 chunk rows have no `documents` row (test uploads from before Step 2.2). Since auth they're unreachable in every search (no owner through the join). They can be cleaned up with SQL (`DELETE FROM chunks WHERE document_id NOT IN (SELECT id FROM documents)`) — not done automatically.
 - **`listSessions()` loads *every* message** of every session and reduces them in JavaScript ([repository L71-114](src/repositories/chatMessages.repository.ts#L71-L114)) — fine for a learning project, wasteful at scale.
-- **`/chat-stream` puts the user's message in the URL** (because `EventSource` is GET-only): it can appear in server logs, and very long messages could hit URL length limits.
+- **`/chat-stream` puts the user's message in the URL** (it was built GET-only for `EventSource`, and the `fetch`-based client kept the same route): it can appear in server logs, and very long messages could hit URL length limits. Now that the client uses `fetch`, moving it to a POST body is possible.
 - **The Gemini API key is sent in the URL** (`?key=`). Gemini also accepts it in an `x-goog-api-key` header, which keeps it out of URLs and logs.
 - **The upload's PDF check trusts the client's mimetype** ([documents.routes.ts:40](src/routes/documents.routes.ts#L40)).
 - **Errors are terminal-only** — writing them to a file (`logs/errors.log`) was discussed and intentionally deferred.
+- **Auth is deliberately simple** ([auth-jwt-plan.md](auth-jwt-plan.md) §7 has the full list): no refresh tokens or server-side logout (a token is valid until it expires), no email verification or password reset, the token sits in `localStorage`, a guest's files are tied to one browser, logging in to an existing account doesn't merge a guest's files, and an unknown email answers login slightly faster than a wrong password.
+- **The rate limiter's counters are in memory** (reset on every restart), and its correctness depends on the `trust proxy` hop count matching the host (see Auth.7).
+- **Cancelling a stream only stops the browser**: the server finishes the Gemini call and saves both messages anyway.
 - **No automated tests yet** (Phase 9).
 - **Don't re-run the `step2` / `step3` scripts against the real database** — they drop/clear the `chunks` table (see the warnings in Phase 1). `step3` is still an npm script; `step2` no longer is.
 
@@ -979,4 +1166,13 @@ Things that work but are deliberately simple — good to know, and several are f
 - **Structured output** — getting an LLM to return data in an exact shape (JSON) instead of prose, so code can use it.
 - **Zod schema** — a description of the shape data must have; `safeParse` checks data against it, and `z.infer` gives the matching TypeScript type.
 - **Sentinel value** — a special value standing for a case (here `'all'` for "every document"), used instead of a schema change.
-- **Orphan chunk** — a stored chunk whose `documents` row doesn't exist, so it's invisible in the UI.
+- **Orphan chunk** — a stored chunk whose `documents` row doesn't exist, so it's invisible in the UI (and, since auth, unreachable in search).
+- **JWT** — JSON Web Token: `header.payload.signature`. The payload is readable by anyone; the signature (made with the server's secret) proves the server issued it and nobody edited it.
+- **Authentication vs authorization** — *who are you* (checking the token, 401) vs *is this yours* (the `user_id` filter, 404 here).
+- **Middleware** — a function Express runs before the route handler; it either ends the request or calls `next()`.
+- **Default deny** — protecting everything mounted after one line, so a new route is protected without anyone remembering to do it.
+- **Declaration merging** — TypeScript merging two interfaces with the same name; used to add `user` to Express's `Request`.
+- **bcrypt** — a deliberately slow password hash; only the hash is stored, and `compare()` re-hashes the typed password to check it.
+- **Guest user** — a real `users` row with no email or password, created on a first visit; signing up fills in that same row.
+- **Rate limiting** — counting requests per key (here: per IP) and answering 429 past a limit.
+- **`trust proxy`** — how many proxies Express should skip in `X-Forwarded-For` to find the visitor's IP; too low = proxy IPs, too high = a client can fake its IP.

@@ -206,6 +206,11 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 - Output: a presentable, explainable project — one you can actually click through in a browser, not just curl
 - Done as [README.md](README.md): what it does, three ASCII flows (ingestion, chat, quiz), stack, full API table + the SSE event protocol, project structure, setup (including the table SQL for a fresh database), design decisions, and an honest known-limitations list. The two-machine git notes moved out of the README (they live in `CLAUDE.md` §12).
 
+**Extra — Frontend redesign** *(done — 2026-10-04, not in the original plan)*
+- Answers render as markdown (`react-markdown` + `remark-gfm`): the raw `**bold**` and `*` bullets Gemini returns now show as real formatting. Raw HTML inside answers is not rendered, which matters because the login token lives in `localStorage`.
+- Conversation in one centred 760px column, assistant mark + Copy button under each answer, three-dot "thinking" state, a composer that grows as you type (Enter sends, Shift+Enter newline), three starter questions on an empty chat, a brand mark in the sidebar and on the new-chat screen. Same colours and fonts as before; checked on desktop, mobile and dark mode.
+- Line-linked explanation in [CODE_EXPLAINED.md](CODE_EXPLAINED.md#frontend-redesign).
+
 **Milestone: you're job-ready here.** Everything below is deeper — go apply/interview before continuing.
 
 ---
@@ -301,6 +306,8 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 **Step 10.2 — Confirm the full flow live**
 - Upload → background ingest → chat with memory → streamed reply → quiz workflow with suspend/resume, all working end to end on the deployed URL
 
+**How it turned out (2026-09-30 → 10-04):** pulled forward before Phase 6, so only the API (Render free web service) and the frontend (Vercel) are deployed; there's no worker yet. Render needed a `build`/`start` script, a `tsconfig.build.json`, comma-separated CORS origins, a 10 MB upload cap and `X-Accel-Buffering: no` on the stream. Going live exposed the real problem: with no notion of users, every visitor saw every upload, which is why Step 11.2 got built for real. The live check after the auth deploy found one more thing: the rate limiter's `trust proxy` hop count, which had to be measured (Render = Cloudflare + its own proxies).
+
 **Milestone:** DocMind is live, and every phase above is provably working outside your machine.
 
 ---
@@ -309,17 +316,18 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 
 *Topics: [14-graphql-subscriptions](topics/14-graphql-subscriptions), [15-auth-jwt](topics/15-auth-jwt), [16-idempotency-multi-tenancy](topics/16-idempotency-multi-tenancy)*
 
-These don't require rebuilding DocMind — reading + notes is enough to speak to them in an interview. Optional hands-on: add JWT auth to `/chat` as a side exercise.
+These don't require rebuilding DocMind — reading + notes is enough to speak to them in an interview. *(In practice auth and tenant scoping got built anyway; see Steps 11.2 and 11.3.)*
 
 **Step 11.1 — GraphQL + subscriptions**
 - Learn schema/resolvers/subscriptions and how a subscription resolver (an async generator) maps onto SSE
 
-**Step 11.2 — Auth (JWT)**
+**Step 11.2 — Auth (JWT)** *(built and deployed — 2026-10-04; plan, rules and per-step results in [auth-jwt-plan.md](auth-jwt-plan.md); line-linked explanation in [CODE_EXPLAINED.md](CODE_EXPLAINED.md#auth--per-user-data))*
 - Learn verification vs decoding, where it belongs in a request lifecycle, authentication vs authorization
+- **How it turned out:** built for real, because the deployed app showed every visitor every upload. Every visitor silently becomes a **guest** (a real `users` row), every data route needs a Bearer JWT (`requireAuth`, mounted once before all data routers, so new routes are protected by default), and every repository query takes a **required** `userId` (forgetting it is a compile error). Sign up upgrades the guest in place so its files stay; sign in, log out; per-user document caps (5 guest / 10 account); a per-IP rate limit on `/auth/*`. The frontend reads `/chat-stream` with `fetch` now, because `EventSource` can't send the header.
 
-**Step 11.3 — Idempotency & multi-tenancy**
-- Learn the idempotency-key pattern (reject duplicate requests before they cause side effects)
-- Learn tenant-scoped queries and why unscoped vector search can leak one tenant's data into another's answer
+**Step 11.3 — Idempotency & multi-tenancy** *(half built — the tenant scoping came with Step 11.2)*
+- Learn the idempotency-key pattern (reject duplicate requests before they cause side effects) — *not built*
+- Learn tenant-scoped queries and why unscoped vector search can leak one tenant's data into another's answer — *built*: `searchSimilar` and `sampleChunks` join `documents` and filter on its `user_id`, and the conversation history fed into the prompt is user-scoped too (otherwise another user's session id would leak their chat through the model)
 
 **Milestone:** you can explain the production concerns a real multi-tenant AI backend has to handle, even though DocMind itself doesn't need them.
 

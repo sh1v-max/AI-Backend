@@ -17,21 +17,21 @@ Keep this file current: see "Keeping this file alive" at the bottom.
 
 ## 2. What DocMind is
 
-Upload a PDF → chat with it (with memory) → the reply streams in live → generate a quiz from it → check quiz answers. Five endpoints in the original spec; it's grown a few helper endpoints for history. A separate React frontend exercises each endpoint the way a real client would (not just Postman).
+Upload a PDF → chat with it (with memory) → the reply streams in live → generate a quiz from it → check quiz answers. Five endpoints in the original spec; it's grown helper endpoints for history, and (since 2026-10-04) accounts: every visitor is a guest by default and can sign up to keep their files. A separate React frontend exercises each endpoint the way a real client would (not just Postman).
 
 Roadmap phases (details in the walkthrough): 1 Embeddings & vector search · 2 RAG (+ memory) · 3 Streaming · 4 Quiz/structured output · 5 Tie together · 6 Background jobs (BullMQ) · 7 Agents & tool calling · 8 Suspend/resume workflows · 9 Testing & observability · 10 Deploy · 11 Production web-layer reading (GraphQL, JWT, idempotency/multi-tenancy) · 12 Advanced pass.
 
-## 3. Current state (as of 2026-09-23)
+## 3. Current state (as of 2026-10-04)
 
-- **Done:** Phase 1 (embeddings, pgvector, Drizzle repositories), Phase 2 (PDF upload → chunk → embed → store; `/chat` RAG; conversation memory; session/document history + deletes; ChatGPT-style frontend), **all of Phase 3** — Steps 3.1, 3.2, 3.2F (SSE mechanics, streamed `/chat-stream`, frontend `EventSource`) and 3.3 (multi-document chat).
-- **Step 4.1 done (2026-09-21, committed):** Zod quiz schema (`src/schemas/quiz.schema.ts`), `sampleChunks()` in `chunks.repository.ts`, optional `generationConfig` on `generateAnswer()`, and the `npm run step4` experiment script (plain prompt vs Gemini structured-output mode, plus a no-API "bad-reply gallery").
-- **Step 4.2 done (2026-09-22):** `POST /quiz` — `src/services/quiz.service.ts` (`generateQuiz`, plus `buildQuizPrompt`/`checkQuizReply` moved here from the Step 4.1 script so both share one implementation) + `src/routes/quiz.routes.ts`, mounted in `app.ts`. Structured-output mode → `Quiz.safeParse` → **retry once** (max 2 attempts) → **shuffle options in code** (Fisher–Yates, remaps `correctIndex`) before returning. Rejects `documentId: 'all'` with 400 (a quiz needs one document, not a mix). Added a `quiz` log theme + `failed()` to `pipelineLogger.ts`. Tested live: happy path (5 shuffled, valid questions) + all 4 bad-input cases (missing/`'all'`/unknown/non-string documentId); `npm run step4` re-run after the refactor to confirm the shared functions still work. **Uncommitted when written** — check `git status`.
-- **Step 4.2F done (2026-09-23):** frontend quiz UI — `types/quiz.ts`, `api/quiz.ts` (`generateQuiz`, not streamed), `hooks/useQuiz.ts` (`open/loading/error/quiz/filename`, `generate`/`regenerate`/`close`), `components/quiz/QuizModal.tsx` (an overlay: loading state, error state with retry, 5 questions × 4 radio-button options, a progress counter, regenerate). A "Generate quiz" button was added to `ChatView`'s header (`ClipboardText` icon), shown only when a single real document is active — hidden on the New Chat screen and on "All documents". Wired through `App.tsx` (`useQuiz()` + `handleGenerateQuiz`). New CSS in `App.css` (`.quiz-*` classes), including a mobile variant (icon-only button, full-screen modal). **Tested live in a headless browser:** button correctly hidden/shown across all three states, modal opened with a loading state then a real 5-question quiz, options selectable (progress counter updated), regenerate produced a fresh quiz and cleared selections, close worked, zero console errors — screenshot confirmed it visually matches the rest of the app (same colors/cards/radius as chat bubbles and source cards).
-- **Step 4.3/4.3F done (2026-09-23):** grading, built **client-side, no `POST /quiz/check` endpoint** — deliberate, see §9. `QuizModal.tsx` gained a "Check answers" button, a `checked` state that locks the radios and colors each option (correct always green, a wrong pick red), and a score line. Found and fixed a real CSS bug while testing: the "selected" highlight was beating the "incorrect" color on specificity, so a wrong pick showed green *and* red at once — fixed by scoping the selected style to `:not(:disabled)`. Tested live: locked radios, correct score, colors verified via screenshot (caught the bug this way), cleared on regenerate, 0 console errors.
-- **Phase 4 is now fully done (4.1, 4.2, 4.2F, 4.3, 4.3F)** — DocMind's whole loop (upload → chat → quiz → check) works end to end in the browser. **Next up:** Phase 5 (tie it together, write it up in your own words) or Phase 6 (background jobs / BullMQ). See [PROGRESS.md](PROGRESS.md) and the walkthrough.
-- **Backend restructure done (2026-09-20):** the 449-line `src/index.ts` was split into `app.ts` + `config.ts` + `routes/` + `services/` + `utils/` (see §6), with **no behavior change**. Verified: `tsc --noEmit` clean; all 400/404 validation paths, `/chat` and `/chat-stream` happy paths (incl. history persistence, cleaned up afterwards), and the bad-API-key failure paths (503 for `/chat`, `event: error` frame for the stream, same terminal error block) behave as before. The frontend was not touched.
-- **Git:** the checked-out branch is `zod-branch` (last commit when written: `ea2d6a5 "quiz frontend build"`, 2026-09-23). `Streaming-branch` was merged into `main` through PR #1; Step 3.3, all of Step 4.1, Step 4.2 (backend) and Step 4.2F (frontend) are committed. **Uncommitted when written:** Step 4.3/4.3F's grading changes to `QuizModal.tsx`/`App.css` (no new files — no endpoint was added) and the latest docs updates. Shiv commits everything himself — run `git status` to see what's pending.
-- **Topic notes:** `topics/07-streaming-sse/NOTES.md` was written (short, in Shiv's voice) on 2026-09-21 at his request. READMEs now exist for topics 07, 08 (structured output) and 09 (BullMQ). NOTES.md for 08+ are still Shiv's to fill in.
+- **Done and live:** Phases 1–4 (embeddings, pgvector, Drizzle repositories; PDF upload → chunk → embed → store; RAG `/chat` with memory; session/document history + deletes; SSE streaming; multi-document chat; Zod-validated quiz with retry + shuffle; client-side grading). Step 5.2 (public README) done; Step 5.1 is Shiv's to do himself.
+- **Deployed (Phase 10 pulled forward, 2026-09-30):** API on Render free (https://ai-backend-docmind.onrender.com/, auto-deploys on push to `main`), frontend on Vercel (https://docmind-jet.vercel.app/, Root Directory `frontend`). No BullMQ worker exists yet, so Phase 10's "API + worker" is only half relevant.
+- **Auth + per-user data (2026-10-03 → 10-04, PR #3, live):** every visitor silently becomes a **guest** (a real `users` row), every data route needs a JWT (`Authorization: Bearer`), and every query is scoped to the caller's `user_id`. Sign up (upgrades the guest in place, files kept), sign in, log out. Per-user document caps (guest 5, registered 10) and a per-IP rate limit on `/auth/*`. Full plan, rules and a per-step results log: [auth-jwt-plan.md](auth-jwt-plan.md). Verified live: two guests can't see, chat with, quiz or delete each other's documents.
+- **Frontend redesign (2026-10-04):** answers render as markdown (`react-markdown` + `remark-gfm`, no raw HTML), conversation in a centred 760px column, assistant mark + Copy button, growing composer (Enter sends, Shift+Enter newline), starter questions on an empty chat, brand mark, account area in the sidebar footer.
+- **Open item — rate limiter on Render:** `trust proxy` hop count. `1` keyed the limiter on Render's front proxies, `2` keys it on Cloudflare edges (a new key per request = no limiting at all). The evidence points to **3 hops**; `TRUST_PROXY_HOPS` is an env var, so the fix is setting it to `3` in Render and re-checking with the partition-key method in §9. Update this bullet once confirmed.
+- **Open item — 65 orphan chunks** are still in `chunks` (unreachable since auth; see §8). Deleting them is Shiv's call: `DELETE FROM chunks WHERE document_id NOT IN (SELECT id FROM documents);`
+- **Next:** finish the two open items above, then Phase 6 (background jobs / BullMQ) or the prompt-quality plan in [prompt-improvement.md](prompt-improvement.md). See [PROGRESS.md](PROGRESS.md).
+- **Git:** `main` is the working branch for small fixes; feature work goes on its own branch and merges through a PR (auth was `auth-branch` → PR #3). Last commit when written: `5eb5109` (trust-proxy fix). Shiv commits everything himself — run `git status` to see what's pending.
+- **Topic notes:** NOTES.md for 01–08 are filled in (in Shiv's voice, see §1). 09–16 and `advanced/*` are empty on purpose. Topic 15 (auth) is now *built*, but its NOTES.md is still Shiv's to write.
 
 ## 4. Stack
 
@@ -43,8 +43,9 @@ Roadmap phases (details in the walkthrough): 1 Embeddings & vector search · 2 R
 | PDF | `pdf-parse` v2 (`new PDFParse(...)`, `getText()`) — needs a real text layer, no OCR |
 | LLM | Gemini REST API, called with plain `fetch` (no SDK): `gemini-flash-lite-latest` for generation (`generateContent` and `streamGenerateContent?alt=sse`) |
 | Embeddings | `gemini-embedding-001`, **3072 dimensions** |
-| Validation | **Zod 4** (`zod` ^4.6) — validates LLM output (the quiz), same idea as validating request bodies |
-| Frontend | React 19 + Vite 8 + TypeScript, `@phosphor-icons/react`, oxlint. No state library, no router |
+| Validation | **Zod 4** (`zod` ^4.6) — validates LLM output (the quiz) and the register/login request bodies |
+| Auth | `jsonwebtoken` (HS256, one `JWT_SECRET`), `bcryptjs` (pure JS, no native build), `express-rate-limit` 8 (in-memory store) |
+| Frontend | React 19 + Vite 8 + TypeScript, `@phosphor-icons/react`, `react-markdown` + `remark-gfm` (answers), oxlint. No state library, no router |
 
 ⚠️ **Doc/code mismatch to remember:** the roadmap and walkthrough text still say `text-embedding-004` / 768 dimensions in Phase 1 (that's what Step 1.1/1.2 originally used). The **running code uses `gemini-embedding-001` and `vector(3072)`** ([schema.ts](src/db/schema.ts), [embeddings.service.ts](src/services/embeddings.service.ts)). Trust the code.
 
@@ -57,12 +58,11 @@ npm run dev                 # API on http://localhost:3000 (ts-node-dev --respaw
 cd frontend && npm install && npm run dev   # UI on http://localhost:5173
 npx tsc --noEmit            # typecheck backend (dev script uses --transpile-only, so type errors don't stop it)
 npm run build && npm start  # production: tsconfig.build.json compiles src/ (minus stepN scripts) to dist/index.js; this is what Render runs
-npm run build && npm start  # production: tsconfig.build.json compiles src/ (minus stepN scripts) to dist/index.js; this is what Render runs
 ```
 
-`.env` keys: `GEMINI_API_KEY`, `DATABASE_URL` (Neon Postgres connection string), `FRONTEND_URL` (CORS origin; defaults to `http://localhost:5173`). `.env` is gitignored and **copied between machines by hand**. The `package.json` scripts are `dev`, `step3`, `step4` and `test` (`step1`/`step2` were deleted from it; run those files directly with `npx ts-node src/stepN-….ts` if needed). The `stepN` files are standalone learning scripts, not part of the app. **`step2` and `step3` are destructive** (they DROP/DELETE the `chunks` table) — never re-run them against the live database; note `step3` is *still* an npm script and is worth removing. `step1` and `step4` are safe (step4 is read-only). **`package.json` must stay strict JSON** — a `//` comment in it breaks every npm command (`EJSONPARSE`).
+`.env` keys: `GEMINI_API_KEY`, `DATABASE_URL` (Neon Postgres connection string), `FRONTEND_URL` (CORS origins, comma-separated; defaults to `http://localhost:5173`), **`JWT_SECRET`** (required — the server refuses to start without it; generate with `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`; Render has its own, different value), and optional `TRUST_PROXY_HOPS` (default 2; see §9). Local `.env` and Render point at the **same Neon database**, so local testing writes to production data. `.env` is gitignored and **copied between machines by hand**. The `package.json` scripts are `dev`, `step3`, `step4` and `test` (`step1`/`step2` were deleted from it; run those files directly with `npx ts-node src/stepN-….ts` if needed). The `stepN` files are standalone learning scripts, not part of the app. **`step2` and `step3` are destructive** (they DROP/DELETE the `chunks` table) — never re-run them against the live database; note `step3` is *still* an npm script and is worth removing. `step1` and `step4` are safe (step4 is read-only). **`package.json` must stay strict JSON** — a `//` comment in it breaks every npm command (`EJSONPARSE`).
 
-Schema changes: `drizzle.config.ts` points at `src/db/schema.ts` (output `./drizzle`). There is no committed migrations folder in the repo right now; the tables were created against Neon directly, and equivalent SQL is kept in comments beside each table in `schema.ts`.
+Schema changes: `drizzle.config.ts` points at `src/db/schema.ts` (output `./drizzle`). There is no committed migrations folder; every table and column (including the auth ones) was created by running SQL in the Neon editor by hand, and the equivalent SQL is kept in comments beside each table in `schema.ts`. So **every schema change = edit `schema.ts` + run the matching SQL on Neon yourself**, additive and nullable first so the deployed code keeps working. Moving to `drizzle-kit generate`/`migrate` needs a one-time baseline (the existing tables would otherwise be re-created) — worth doing before the next schema change.
 
 Tests: none yet (Phase 9).
 
@@ -70,64 +70,78 @@ Tests: none yet (Phase 9).
 
 ```
 src/
-  index.ts                     ~7 lines: load dotenv, app.listen(). Nothing else — don't grow it
-  app.ts                       builds the Express app (json, cors, health route, mounts the routers); no listen(), so tests can import it
-  config.ts                    HISTORY_LIMIT, PORT, FRONTEND_URL, CONNECTION_ERROR_MESSAGE, ALL_DOCUMENTS ('all') + ALL_DOCUMENTS_LABEL
+  index.ts                     ~10 lines: load dotenv, fail fast if JWT_SECRET is missing, app.listen(). Don't grow it
+  app.ts                       builds the Express app: trust proxy, json, cors, GET /, authRouter (public), app.use(requireAuth), then the 4 data routers, last-resort error handler. No listen(), so tests can import it
+  config.ts                    HISTORY_LIMIT, PORT, FRONTEND_ORIGINS, MAX_UPLOAD_BYTES, ALL_DOCUMENTS ('all') + label, TOKEN_TTL_USER/GUEST, GUEST/USER_MAX_DOCUMENTS, AUTH_RATE_LIMIT/WINDOW_MS, TRUST_PROXY_HOPS, CONNECTION_ERROR_MESSAGE
+  middleware/
+    auth.ts                    requireAuth: verifies the Bearer JWT (no DB lookup), sets req.user = { id, isGuest } or answers 401
+    rateLimit.ts               authLimiter (express-rate-limit): one shared per-IP counter for /auth/guest, /register, /login
+  types/express.d.ts           declaration merging: adds `user?: AuthUser` to Express's Request
   routes/                      thin: read the request, call a service/repository, write the response
-    documents.routes.ts        GET /documents, DELETE /documents/:id, POST /upload (multer lives here)
+    auth.routes.ts             POST /auth/guest, /auth/register, /auth/login (public, rate-limited), GET /auth/me (route-level requireAuth + DB lookup)
+    documents.routes.ts        GET /documents, DELETE /documents/:id (ownership check first), POST /upload (checkDocumentCap BEFORE multer)
     sessions.routes.ts         GET /sessions, GET /sessions/:id/messages, DELETE /sessions/:id
     chat.routes.ts             POST /chat, GET /chat-stream (steps 6-7 differ per route, so they stay here)
     quiz.routes.ts             POST /quiz — thin, calls generateQuiz(); not streamed (a quiz needs the complete, validated JSON)
   services/
+    auth.service.ts            getJwtSecret, signToken, verifyToken (verify, never decode; algorithm pinned), tokenFromHeader, loginAsGuest, register (upgrades a guest in place), login
     chat.service.ts            buildChatPrompt() + prepareChat() = steps 1-5 of the chat pipeline, shared by both chat routes
     quiz.service.ts            generateQuiz(): sample -> prompt -> generate (structured mode) -> validate -> retry once -> shuffle options. Also buildQuizPrompt()/checkQuizReply(), shared with npm run step4
-    ingestion.service.ts       ingestPdf(): parse -> chunk -> embed + store -> document row (steps 2-5 of upload)
+    ingestion.service.ts       ingestPdf(file, userId): parse -> chunk -> embed + store -> document row (steps 2-5 of upload)
     embeddings.service.ts      getEmbedding(text) -> number[3072]
     llm.service.ts             generateAnswer(prompt, generationConfig?) and streamAnswer(prompt) (async generator). generationConfig is how structured-output (JSON) mode is switched on
-  repositories/
-    chunks.repository.ts       insertChunk, sampleChunks (evenly spaced chunks of one document, for quizzes — no search), searchSimilar (cosine distance), deleteChunksByDocumentId
-    documents.repository.ts    insertDocument, listDocuments, deleteDocument
-    chatMessages.repository.ts insertMessage, getRecentMessages, getMessagesForSession, listSessions, deleteSession, deleteMessagesByDocumentId
+  repositories/                every read/delete of user data takes a REQUIRED userId
+    users.repository.ts        createGuest, createUser, upgradeGuest, findUserByEmail (the only one returning password_hash), findUserById
+    chunks.repository.ts       insertChunk, sampleChunks (INNER JOIN documents, owner filter), searchSimilar (INNER JOIN documents, filter on documents.user_id), deleteChunksByDocumentId (no owner column — caller checks ownership first)
+    documents.repository.ts    insertDocument, listDocuments, getDocumentForUser, countDocuments, deleteDocument
+    chatMessages.repository.ts insertMessage, getRecentMessages, getMessagesForSession, listSessions, deleteSession, deleteMessagesByDocumentId (all filter session/document AND user_id)
   db/client.ts                 Pool + drizzle instance (the `db` every repository imports)
-  db/schema.ts                 documents, chunks, chatMessages tables
+  db/schema.ts                 users, documents, chunks, chatMessages tables (+ the SQL in comments)
   utils/
-    errors.ts                  summarizeError(), withErrorHandling() (wraps /chat, /chat-stream and /quiz)
+    errors.ts                  summarizeError(), withErrorHandling() (wraps /chat, /chat-stream, /quiz and the /auth routes)
     chunkText.ts               ~500-word splitter
-    pipelineLogger.ts          chalk-coloured step/timing/preview logging used by every route (themes: upload cyan, chat magenta, quiz blue); also failed() for "retries exhausted" style failures
+    pipelineLogger.ts          chalk-coloured step/timing/preview logging used by every route (themes: upload cyan, chat magenta, quiz blue, auth yellow); also failed() for "retries exhausted" style failures
   schemas/
     quiz.schema.ts             Zod QuizQuestion / Quiz (exactly 5 questions × exactly 4 options, correctIndex 0-3, options all different) + the same shape as Gemini's responseSchema
-  step1-embeddings.ts, step2-pgvector.ts, step3-drizzle.ts   Phase 1 learning scripts (⚠️ step2 DROPs and step3 DELETEs the chunks table — never re-run against the live DB)
-  step4-quiz-zod.ts            Step 4.1 experiment (`npm run step4 [documentId] [runs]`) — read-only, safe to re-run; spends a few Gemini calls
+    auth.schema.ts             Zod RegisterInput (email trimmed+lowercased, password 8 chars to 72 BYTES) / LoginInput
+  step1-embeddings.ts, step2-pgvector.ts, step3-drizzle.ts   Phase 1 learning scripts (⚠️ step2 DROPs and step3 DELETEs the chunks table — never re-run against the live DB; step3's search finds nothing now anyway, its chunks have no owner)
+  step4-quiz-zod.ts            Step 4.1 experiment (`npm run step4 [documentId] [runs]`) — read-only; looks up the document's owner straight from the table (the one sanctioned exception)
 frontend/src/
-  api/         client.ts, documents.ts, chat.ts (sendChatMessage + streamChatMessage), sessions.ts, quiz.ts (generateQuiz, not streamed)
-  types/       document.ts, chat.ts, quiz.ts (QuizQuestion/Quiz, mirrors the backend schema)
-  hooks/       useDocuments.ts, useSessions.ts, useChat.ts, useQuiz.ts (its own hook — a quiz isn't part of the conversation)
+  api/         client.ts (API_URL, parseJsonOrThrow, token store `docmind:token`, authFetch, onUnauthorized), auth.ts (guestLogin, fetchMe, login, register — plain fetch on purpose), documents.ts, chat.ts (sendChatMessage + streamChatMessage on fetch + a hand-written SSE parser), sessions.ts, quiz.ts
+  types/       auth.ts (User, AuthResponse), document.ts, chat.ts, quiz.ts
+  hooks/       useAuth.ts (guest bootstrap, login/register/logout, mid-session 401 recovery), useDocuments.ts, useSessions.ts, useChat.ts, useQuiz.ts
   utils/       format.ts, logger.ts   (tagged console logger: [DocMind:<scope>])
-  components/  common/, sidebar/, chat/, documents/, quiz/ (QuizModal.tsx — overlay: radio buttons per question, "Check answers" grades client-side, no /quiz/check call)
-  App.tsx      thin orchestrator
-topics/        16 concept folders (README = reading, NOTES = Shiv's own notes) + advanced/ + OVERVIEW.md
+  components/  auth/ (AuthModal, AccountArea), common/ (BrandMark, SplashScreen, IconButton), sidebar/, chat/ (Markdown.tsx renders answers, ChatTurn, ChatPanel, ChatInputForm = the composer, ChatSources), documents/, quiz/
+  App.tsx      App = the auth gate (splash until there's a user, then <AppShell key={user.id}>); AppShell = the app itself + the auth modal
+topics/        16 concept folders (README = reading, NOTES = Shiv's own notes) + advanced/ + OVERVIEW.md + AI_BASICS.md
 ```
 
-Rules that matter: **nothing outside `repositories/` touches SQL/Drizzle directly** (routes/services call repositories; repositories call `db`), and **services never touch `req`/`res`** — `prepareChat()` returns `{ ok: false, status, error }` and the route sends the response. That's what lets the same service be reused by a background worker later.
+Rules that matter: **nothing outside `repositories/` touches SQL/Drizzle directly** (routes/services call repositories; repositories call `db`), and **services never touch `req`/`res`** — `prepareChat()` returns `{ ok: false, status, error }` and the route sends the response. That's what lets the same service be reused by a background worker later. Since auth, two more: **a user id only ever comes from `req.user.id`** (never body/query/params), and **every repository function that reads or deletes user data takes `userId` as a required parameter** — forgetting it is a compile error, not a leak. The full list of 16 auth rules is in [auth-jwt-plan.md](auth-jwt-plan.md) §3.
 
-Note: `/upload` and the read/delete routes are *not* wrapped in `withErrorHandling` (only `/chat` and `/chat-stream` are) — that's pre-existing behavior, kept as-is during the refactor. Also, a bad `GEMINI_API_KEY` currently produces the "check your internet connection" message, because `withErrorHandling` doesn't distinguish failure types yet.
+Note: `/upload` and the read/delete routes are *not* wrapped in `withErrorHandling` (only `/chat`, `/chat-stream`, `/quiz` and `/auth/*` are); Express 5 forwards their async errors to the last-resort handler in `app.ts` (JSON 500). Also, a bad `GEMINI_API_KEY` currently produces the "check your internet connection" message, because `withErrorHandling` doesn't distinguish failure types yet.
 
 ## 7. API surface
 
+Every route except `GET /` and the three public `/auth` routes needs `Authorization: Bearer <JWT>`; without a valid one it's `401 { error: 'Sign in required' }` (an unknown path also gets 401, because `requireAuth` runs before Express finds out the route doesn't exist). Every data route sees **only the caller's rows**; someone else's document or session behaves like one that doesn't exist (404 / empty list).
+
 | Method & path | What it does |
 |---|---|
-| `GET /` | health/hello |
-| `POST /upload` | multipart PDF → parse → `chunkText` (~500 words) → embed each → `insertChunk` (tagged `documentId`) → insert `documents` row |
-| `GET /documents` | list uploaded documents |
-| `DELETE /documents/:documentId` | delete chunks + all chat messages for it + the document row |
-| `POST /chat` | JSON `{ documentId?, message, sessionId? }` → 7-step pipeline (below) → `{ sessionId, answer, sources }`. `documentId` omitted/empty/`'all'` = search every document; each source is `{ content, distance, documentId, filename }` |
-| `GET /chat-stream` | same pipeline, but SSE; query params `documentId?`, `message`, `sessionId` (a non-string/repeated `documentId` → 400) |
-| `GET /sessions` | one summary per session (`sessionId, documentId, filename, title, lastMessage, lastMessageAt, messageCount`), newest first |
-| `GET /sessions/:sessionId/messages` | full transcript, oldest first |
-| `DELETE /sessions/:sessionId` | delete one conversation's messages (document untouched) |
-| `POST /quiz` | JSON `{ documentId }` (required, must be a real document — `'all'` → 400) → `{ documentId, quiz }`, `quiz` = 5 validated `QuizQuestion`s with shuffled options. Not streamed |
+| `GET /` | health/hello (public) |
+| `POST /auth/guest` | public, rate-limited. Creates a guest user → `201 { token, user }` |
+| `POST /auth/register` | public, rate-limited. `{ email, password }` → `201 { token, user }`. With a valid guest token in the header, upgrades that guest in place (same id, files kept). 400 invalid, 409 email taken |
+| `POST /auth/login` | public, rate-limited. `{ email, password }` → `{ token, user }`. 401 `Invalid email or password` for a wrong password AND an unknown email |
+| `GET /auth/me` | `{ user }`, or 401 if the token is bad or its user row is gone. Called on every page load |
+| `POST /upload` | multipart PDF → parse → `chunkText` (~500 words) → embed each → `insertChunk` (tagged `documentId`) → insert `documents` row with the caller's `user_id`. 403 when over the cap (guest 5, registered 10), checked before multer reads the file |
+| `GET /documents` | the caller's documents |
+| `DELETE /documents/:documentId` | 404 unless it's the caller's; then delete chunks + the caller's messages for it + the document row |
+| `POST /chat` | JSON `{ documentId?, message, sessionId? }` → 7-step pipeline (below) → `{ sessionId, answer, sources }`. `documentId` omitted/empty/`'all'` = search **all of the caller's** documents; each source is `{ content, distance, documentId, filename }` |
+| `GET /chat-stream` | same pipeline, but SSE; query params `documentId?`, `message`, `sessionId` (a non-string/repeated `documentId` → 400). Still GET (it was chosen for `EventSource`); the frontend now reads it with `fetch` so it can send the header |
+| `GET /sessions` | one summary per session of the caller (`sessionId, documentId, filename, title, lastMessage, lastMessageAt, messageCount`), newest first |
+| `GET /sessions/:sessionId/messages` | full transcript, oldest first (someone else's session → `[]`) |
+| `DELETE /sessions/:sessionId` | delete the caller's messages in one conversation (document untouched) |
+| `POST /quiz` | JSON `{ documentId }` (required, must be one of the caller's documents — `'all'` → 400, someone else's → 404) → `{ documentId, quiz }`, `quiz` = 5 validated `QuizQuestion`s with shuffled options. Not streamed |
 
-Chat pipeline (both routes): embed question → `searchSimilar(top 3, one document or all — see §8)` → load last `HISTORY_LIMIT = 8` messages → save user message → `buildChatPrompt(context, history, message)` → generate → save assistant reply.
+Chat pipeline (both routes): embed question → `searchSimilar(top 3, the caller's documents — one or all, see §8)` → load the last `HISTORY_LIMIT = 8` messages of this session *for this user* → save user message → `buildChatPrompt(context, history, message)` → generate → save assistant reply.
 
 ### `/chat-stream` SSE protocol (the frontend depends on this exactly)
 
@@ -138,39 +152,56 @@ Chat pipeline (both routes): embed question → `searchSimilar(top 3, one docume
 | `done` (named) | `{}` | after the full reply is saved |
 | `error` (named) | `{ error }` | any failure |
 
-Only the last-stage failures are special: a failed DB save of the assistant reply is logged but does **not** emit `error` (the user already has the answer).
+Only the last-stage failures are special: a failed DB save of the assistant reply is logged but does **not** emit `error` (the user already has the answer). Validation/auth failures before the stream opens are plain JSON 4xx responses, which the `fetch`-based client now reads and shows.
 
 ## 8. Data model
 
-- `documents(id text PK [uuid], filename, file_size_bytes, text_length, chunk_count, created_at)`
-- `chunks(id serial PK, content, embedding vector(3072), document_id text)`
-- `chat_messages(id serial PK, session_id, document_id NOT NULL, role 'user'|'assistant', content, created_at)`
-- **There is no `sessions` table.** A session is just a `session_id` shared by a group of `chat_messages` rows; history is *derived* (`listSessions()` groups and reduces). A session's `title` is its first user message.
-- **Scope (Step 3.3):** `chat_messages.document_id` holds either a real document id or the sentinel **`'all'`** (`ALL_DOCUMENTS` in `config.ts`) — chosen over making the column nullable so the live Neon table didn't need altering. A missing/empty `documentId` in a request also means "all". A session's scope is fixed by that value, so the frontend's scope dropdown starts a *new* chat when switched. `searchSimilar(embedding, limit, documentId?)` returns `{ content, distance, documentId, filename }` (`LEFT JOIN documents`); the all-mode branch lives in `prepareChat()` (`searchAll`).
-- **Orphan chunks:** the live database has 8 groups of `chunks` rows with no matching `documents` row (test uploads from before Step 2.2, some are resume text). They're invisible in the UI. All-documents search skips them (`documents.id IS NOT NULL` in `searchSimilar`); single-document mode does not, so an old session pinned to an orphan id still works. They have **not** been deleted — cleanup would be `DELETE FROM chunks WHERE document_id NOT IN (SELECT id FROM documents)`, Shiv's call.
-- **Known Step 3.3 tradeoff:** top-3 chunks are shared across all PDFs, and "meta" questions ("which documents do you have?") can't be answered by chunk search. Routing (Phase 7) is the real fix.
+- `users(id text PK [uuid], email text UNIQUE NULL, password_hash text NULL, is_guest boolean NOT NULL DEFAULT true, created_at)` — a guest is a row with no email/password. `UNIQUE` still allows many NULL emails.
+- `documents(id text PK [uuid], filename, file_size_bytes, text_length, chunk_count, created_at, user_id text NULL)`
+- `chunks(id serial PK, content, embedding vector(3072), document_id text)` — **no `user_id`, on purpose**: a chunk belongs to a document and the document has the owner, so searches filter on `documents.user_id` through the join. (Revisit if a vector index is ever added: an ANN index returns its top-k before the join filter runs.)
+- `chat_messages(id serial PK, session_id, document_id NOT NULL, role 'user'|'assistant', content, created_at, user_id text NULL)` — needs its own owner because an "All documents" session has `document_id = 'all'`.
+- Indexes added with auth: `documents(user_id)`, `chat_messages(user_id, session_id)`. No foreign keys anywhere (consistent with the existing tables, not ideal).
+- `user_id` is nullable so adding it to the live tables was instant and didn't break the then-deployed code. A row with `user_id IS NULL` matches no user, so it's invisible to everyone. All pre-auth documents and messages were deleted by Shiv before the build.
+- **There is no `sessions` table.** A session is just a `session_id` shared by a group of `chat_messages` rows; history is *derived* (`listSessions()` groups and reduces). A session's `title` is its first user message. The client picks the `sessionId`, so every session query filters on `session_id AND user_id`: another user's session id finds nothing, and new messages are saved under the caller.
+- **Scope (Step 3.3):** `chat_messages.document_id` holds either a real document id or the sentinel **`'all'`** (`ALL_DOCUMENTS` in `config.ts`). A missing/empty `documentId` in a request also means "all", which now means *all of the caller's documents*. A session's scope is fixed by that value, so the frontend's scope dropdown starts a *new* chat when switched. `searchSimilar(embedding, limit, userId, documentId?)` returns `{ content, distance, documentId, filename }` (`INNER JOIN documents`).
+- **Orphan chunks:** 65 `chunks` rows have no matching `documents` row (test uploads from before Step 2.2, some resume text). Since auth they're unreachable in both search modes (no owner through the join). Not deleted yet — Shiv's call: `DELETE FROM chunks WHERE document_id NOT IN (SELECT id FROM documents)`.
+- **Known Step 3.3 tradeoff:** top-3 chunks are shared across all of a user's PDFs, and "meta" questions ("which documents do you have?") can't be answered by chunk search. Routing (Phase 7) is the real fix.
 
 ## 9. Decisions and gotchas worth remembering
 
 **Streaming**
-- `/chat-stream` is **GET** because the browser `EventSource` can only send GET; all inputs are query params.
-- `streamAnswer()` is an `async function*`: it reads Gemini's byte stream with `getReader()` + `TextDecoder`, **normalizes `\r\n` → `\n` on the whole buffer** (Gemini terminates SSE lines with `\r\n`; normalizing per-chunk would miss a `\r\n` split across two reads), splits on the blank-line event boundary, and keeps the trailing partial event in the buffer for the next read. If streaming ever emits nothing, look here first.
+- `/chat-stream` is **GET** because it was built for the browser `EventSource` (GET-only); all inputs are query params. Since Auth.5 the frontend reads it with **`fetch` + `res.body.getReader()`** instead, because `EventSource` can't send an `Authorization` header. The server side didn't change.
+- `streamAnswer()` is an `async function*`: it reads Gemini's byte stream with `getReader()` + `TextDecoder`, **normalizes `\r\n` → `\n` on the whole buffer** (Gemini terminates SSE lines with `\r\n`; normalizing per-chunk would miss a `\r\n` split across two reads), splits on the blank-line event boundary, and keeps the trailing partial event in the buffer for the next read. If streaming ever emits nothing, look here first. The frontend's `streamChatMessage()` now does exactly the same parsing (plus `decode(..., { stream: true })` for multi-byte characters split across chunks).
 - Gemini REST streaming is a *different method* (`streamGenerateContent?alt=sse`), not a `stream: true` flag.
-- `EventSource` cannot read the body of a non-200 response — it only sees "connection error". So the stream route reports failures as an in-band `event: error` frame with status 200, not an HTTP error code. That's why `withErrorHandling(label, handler, { sse: true })` exists.
-- Frontend: the `error` listener fires for both our own `event: error` frames (has `e.data`) and raw connection failures (no `e.data`) — handled as two cases.
+- Errors after the stream opens go out as an in-band `event: error` frame with status 200 (`withErrorHandling(label, handler, { sse: true })`), because the status is already sent. That was also required by `EventSource`, which can't read a non-200 body; with `fetch`, 4xx errors *before* the stream opens are now read and shown with their real message.
+- Frontend stream client rules (`api/chat.ts`): `finish()` lets only the first `onDone`/`onError` through (useChat waits for exactly one); a body that ends without `done`/`error` = "Connection lost" (otherwise the UI sits on "Thinking…" forever); the `AbortError` from the cleanup function is ignored on purpose.
+- Cancelling only stops the browser: the server doesn't notice the client left, finishes the Gemini call and still saves both messages (true with `EventSource` too).
 - React: functions passed to `setMessages(prev => ...)` must be pure (StrictMode calls them twice in dev). The streaming bubble is always "the last message in `prev`", never a variable mutated inside the callback.
-- UI keeps "Thinking…" until the assistant bubble has real text; the empty placeholder bubble (sources arrived, no text yet) is hidden.
+- UI shows three "thinking" dots until the assistant bubble has real text; the empty placeholder bubble (sources arrived, no text yet) is hidden. Copy/sources under an answer only appear once it has finished streaming.
 
 **Errors**
-- `withErrorHandling` wraps `/chat` and `/chat-stream`. Plain routes return `503 { error }` with a "check your internet connection" message; stream routes send an `event: error` frame.
+- `withErrorHandling` wraps `/chat`, `/chat-stream`, `/quiz` and the `/auth` routes. Plain routes return `503 { error }` with a "check your internet connection" message; stream routes send an `event: error` frame.
 - `summarizeError()` exists because Drizzle failed-query errors embed the SQL **and every bound parameter** — for vector search that's all 3072 embedding numbers, burying the real cause. It prints the first line, the `cause` chain (where `ECONNRESET` etc. live), and the first in-repo stack frame. Don't `console.error(err)` raw in routes.
 - The prompt is built in one place, `buildChatPrompt()`, shared by `/chat` and `/chat-stream`. Change wording there, once.
 
 **Persistence**
-- Frontend stores only the active `sessionId` in `localStorage` (`docmind:activeSessionId`), never messages; on load it's cross-checked against `GET /sessions` and the transcript re-fetched. A refresh resumes the same conversation.
+- Frontend stores only two things in `localStorage`: the login token (`docmind:token`) and the active `sessionId` (`docmind:activeSessionId`), never messages. On load the token is checked with `GET /auth/me` and the session id is cross-checked against `GET /sessions`, then the transcript is re-fetched. A refresh resumes the same conversation as the same user.
 
 **Security hygiene**
 - `.env` and `.history/` (VS Code Local History snapshots every saved file, including `.env`) are gitignored. A real secret leak happened through `.history` earlier — never track either, never print `.env` contents. Rotate the Gemini key / DB password if they're ever exposed.
+**Auth & per-user data (2026-10-04, see [auth-jwt-plan.md](auth-jwt-plan.md))**
+- **Guests are real users.** `POST /auth/guest` creates a `users` row with no email/password and returns a JWT, so guests go through the same middleware and ownership filters as everyone else; the only places that read `isGuest` are the document cap and the UI. Registering *with* a guest token upgrades that row in place (same id), so a guest keeps their files. Logging in to a different account can't merge them; the modal warns.
+- **Authentication vs authorization.** `requireAuth` proves *who* (signature + expiry, no DB lookup); the `user_id` filter in every repository query decides *what's yours*. Login alone would have fixed nothing: anyone holding a `documentId` could still have chatted with it. Someone else's resource is a **404, not 403** (403 would confirm the id exists).
+- **Default deny.** In `app.ts`, `authRouter` is mounted first, then `app.use(requireAuth)`, then every data router — so a router added later is protected automatically. `cors()` must stay ABOVE `requireAuth`: the browser's preflight `OPTIONS` never carries the token.
+- **Tokens:** HS256, payload only `{ sub, guest }` (a JWT is readable by anyone; only the signature is secret). 7 days for registered users, **30 days for guests** (an expired guest token = lost files). `jwt.verify` with `algorithms: ['HS256']` pinned, never `jwt.decode`. Sent as a Bearer header, not a cookie: Vercel and Render are different sites, so an API cookie would be third-party. Stored in `localStorage`, readable by XSS — why answers are rendered with `react-markdown` and **no raw HTML** (don't add `rehype-raw` without a sanitizer). No refresh tokens, no server-side logout, no email verification/password reset (listed in the plan's §7).
+- **Passwords:** bcryptjs, 10 rounds. Max **72 bytes** (bcrypt silently ignores the rest). Emails trimmed + lowercased before saving and looking up. Duplicate emails are caught by the `UNIQUE` constraint (Postgres `23505` → 409), not by a check-then-insert (race). Login gives one message for wrong password and unknown email. Known gap: an unknown email answers a little faster (no hash compared).
+- **Required `userId` is the main safety net:** making it a required repository parameter turned 15 call sites into compile errors, which was the to-do list. The one thing the compiler can't catch: **two string arguments swapped** (`step3-drizzle.ts` passed its document id where `userId` now goes and still compiled). Check argument order when touching these functions.
+- **`getRecentMessages` must stay user-scoped** even though it returns nothing to the client — it feeds the prompt. Unscoped, another user's `sessionId` would let the model answer from their conversation.
+- **Frontend:** `authFetch()` in `api/client.ts` is the only place that adds the header (and it never sets Content-Type, so `/upload`'s multipart boundary still works). `App` is a gate: `AppShell` mounts only once there's a user (otherwise the data hooks fire 401s on first load), with `key={user.id}` so a different user remounts everything. `useAuth` keeps the in-flight bootstrap promise at **module level** so StrictMode's double mount creates one guest, not two. The mid-session 401 handler ignores a 401 whose token isn't the current one (a late failure must not throw away a fresh token). `api/auth.ts` uses plain `fetch`: there a 401 is an expected answer.
+- **Limits:** `checkDocumentCap` runs **before multer** on `/upload` (an over-limit user is turned away before their file is read). Two simultaneous uploads at 4/5 can both pass — fine for a cost guard. `authLimiter` = one shared counter per IP for guest/register/login (20 per 15 min), in-memory, so it resets on every restart/sleep.
+- **`trust proxy` on Render — measure, don't guess.** Each proxy appends to `X-Forwarded-For`; `trust proxy = N` skips N hops from the right. Render has Cloudflare in front of its own proxies (`CF-RAY` header on every response). `1` keyed the limiter on Render's front proxies (identical requests landed in 2 counters), `2` keyed it on Cloudflare edges (a new key per request = no limit at all). **How to check from outside:** the `RateLimit-Policy` response header's `pk=:<base64>:` is the first 12 hex chars of `sha256(key)`; compare it with `sha256(<your IP>)`, where your IP is what `https://<api>/cdn-cgi/trace` reports (`ip=`). Locally a faked `X-Forwarded-For` always gets around the limiter, since no proxy sits in front.
+- **Testing against the real DB:** local `.env` = production Neon. Tests create guests; **delete only the ids your own test captured** (a time-window cleanup once deleted a guest that was probably Shiv's own browser). `node -e` scripts that load dotenv 17 must use `config({ quiet: true })`: its stdout banner got glued onto generated tokens and made requests fail with 400. Before trusting a local test server, check what's actually listening on the port (a stale one once answered with old code).
+
 **Structured output (Phase 4)**
 - **Quiz grading (Step 4.3/4.3F) is client-side, no `POST /quiz/check`:** quizzes aren't persisted server-side (no `quizId`, no table), so the server has no independent copy of "the" quiz to check an answer against — a check endpoint here would just be comparing two numbers the client already has, with the client equally able to lie either way. `correctIndex` already ships in the `/quiz` response, so `QuizModal.tsx` grades itself: a `checked` state locks the radios (`disabled`) and colors each option. **CSS gotcha to remember:** the "you selected this" highlight (`.quiz-option:has(input:checked...)`) has higher specificity than a plain `.quiz-option--incorrect` class — without scoping it to `:not(:disabled)`, a wrong-but-selected answer shows green *and* red at once. If a future `:has()`-based state class stops applying once another class is added, check specificity/source order first, not the component logic.
 - **Structured output (Step 4.1):** two separate jobs — *ask* for a shape (prompt, or Gemini `generationConfig: { responseMimeType: 'application/json', responseSchema }`, which takes an OpenAPI-style schema with **uppercase** types) and *verify* it (Zod `safeParse`). Never skip the verify half. With `gemini-flash-lite-latest` the model was valid 17/17 times in both modes, so Zod is insurance here; the script's "bad-reply gallery" is what shows it working. A quiz needs broad coverage of one document (`sampleChunks`), not a similarity search, and must not stream (half a JSON object is useless).
@@ -180,7 +211,7 @@ Only the last-stage failures are special: a failed DB save of the assistant repl
 
 ## 10. Code conventions in this repo
 
-- Heavily commented on purpose — comments explain *why* and teach the concept, in a conversational tone. Match that density when adding code. Add a `Step X.Y —` marker comment on new step-related code (as existing code does).
+- Heavily commented on purpose — comments explain *why* and teach the concept, in a conversational tone. Match that density when adding code. Add a `Step X.Y —` marker comment on new step-related code (as existing code does); auth code uses `Auth.N —` (N = the step in auth-jwt-plan.md).
 - Routes log through `pipelineLogger` (`pipelineStart`, `step('chat', n, total, ...)`, `detail`, `timing`, `preview`, `pipelineEnd`) so a request can be followed in the terminal.
 - Frontend logs through `utils/logger.ts` with a scope (`log.info('useChat', ...)`).
 - Frontend: `api/` = fetch only, `hooks/` = state + async logic, `components/` = presentation, `App.tsx` = wiring.
@@ -198,7 +229,7 @@ Only the last-stage failures are special: a failed DB save of the assistant repl
 | [PROGRESS.md](PROGRESS.md) | The tracker — single source of truth for "what next" | Claude, when a topic finishes |
 | [CODE_EXPLAINED.md](CODE_EXPLAINED.md) | Deep, line-linked explanation of every file and step (1.1 → 4.3F): why, what, how. Written for Shiv to re-learn from. Link line numbers can drift as code changes — function names are the reliable anchor | Claude, when a step is finished (add the new step's section) and after big refactors (re-check links) |
 | [prompt-improvement.md](prompt-improvement.md) | Planned (not started) RAG quality pass for `/chat`: Step 0 baseline test set + PI.1–PI.6 (query rewriting, systemInstruction + real turns, tagged sources/injection defense, better rules, format + temperature, distance threshold), each with problem case, how, gotchas, tests, time. Recommended order 0 → PI.2 → PI.5 → PI.3 → PI.4 → PI.1 → PI.6 | Claude, when building a PI step (fill in its Results log) |
-| [auth-jwt-plan.md](auth-jwt-plan.md) | Planned (not started) fix for "every visitor sees every upload": JWT auth + guest mode (a guest is a real `users` row) + per-user ownership. Holds the design (HS256 Bearer token in `localStorage`, `users` table, nullable `user_id` on `documents` + `chat_messages`, none on `chunks`, `EventSource` replaced by `fetch` streaming), 16 build rules, steps AUTH.0–AUTH.8 with times, a file-by-file edit list, a two-user isolation test checklist, and 5 open decisions (D1–D5) Shiv must answer first | Claude, when building an AUTH step (fill in its Results log) |
+| [auth-jwt-plan.md](auth-jwt-plan.md) | The auth build: design (guests are real users, HS256 Bearer token in `localStorage`, `users` table, nullable `user_id` on `documents` + `chat_messages`, none on `chunks`, `fetch` streaming), 16 build rules, steps AUTH.0–AUTH.8, a file-by-file edit list, the two-user isolation checklist, the answered decisions (D1–D5) and a **results log** per step with what was tested and what bit. **Built and deployed 2026-10-04** | Claude, when auth changes (add to its results log) |
 | [posts/](posts) | Shiv's daily "learning in public" record. `postN.md` = a source-notes file for that day's work, handed to another Claude chat that turns it into a LinkedIn post and a Twitter/X post. `posts/` holds `post1.md`–`post11.md`. **Format to follow (Shiv's own posts 1–7, now also 8–9), ~4–7 KB, no longer than posts 4–5:** (1) title `# AI Backend Learning Journey — Day N Context (for LinkedIn + Twitter)`; (2) `## Instructions for Claude` — use the `post-writer-sms` skill, tone (genuine, technical but accessible, no buzzwords), who Shiv is, "see post1–post(N-1) for continuity" with a one-line series recap, LinkedIn = longer/narrative vs Twitter = tight thread, and the strongest angle; (3) `## What I built today` — first-person narrative sections with the *why*, small code snippets, and "a real gotcha, not a hypothetical one"; (4) `## The bigger takeaway` (one thesis paragraph); (5) `## What's next`; then short extras Shiv's 1–7 lack but are worth keeping: `## Numbers you can quote`, `## Don't overclaim`, `## Hook ideas`. Do **not** write a bullet-fragment "notes" file (the first draft of post 8 was rejected as too long/timeline-style, the second as too thin — the narrative + instructions block is what makes the writer chat useful). Only write a new `postN.md` when Shiv asks; scope it to *that day's* work, don't mention which machine the work was on, and keep private data (resume text, keys, email) out | Claude, on request |
 | [README.md](README.md) | Public-facing project README (Step 5.2): features, ASCII flows, API + SSE protocol, structure, setup incl. table SQL, design decisions, known limitations. No longer holds the two-machine workflow (that's §12 here) | When features or setup change |
 | `topics/NN-*/README.md` / `NOTES.md` | Reading material / **Shiv's own notes (don't write)** | Shiv |
@@ -209,6 +240,8 @@ Only the last-stage failures are special: a failed DB save of the assistant repl
 Shiv sometimes works on two laptops. Git is the only thing that carries code; `.env` is copied manually. One branch per machine/task, `git pull --rebase` at the start of a session, push at the end, merge to `main` via PR, then `git fetch && git rebase origin/main` on the other branch. **This file is in the repo, so it syncs across laptops — the per-machine Claude auto-memory does not.** Anything a future session needs must be written here, not left in chat.
 
 ## 13. Work log (newest first — append an entry each session)
+
+- **2026-10-03 → 10-04 (auth, UI, deploy)** — Built the whole [auth-jwt-plan.md](auth-jwt-plan.md), one step at a time with Shiv reviewing each: AUTH.0 (schema + packages; Shiv ran the SQL and added `JWT_SECRET`), AUTH.1 (`users.repository`, `auth.service`, `/auth/guest|register|login`), AUTH.2 (`requireAuth`, default deny, `/auth/me`), AUTH.3 (required `userId` through every repository/service/route — the real fix), AUTH.4 (frontend token store, `authFetch`, `useAuth`, auto guest, app gate), AUTH.5 (`fetch` streaming replaces `EventSource`), AUTH.7 (doc caps 5/10, rate limit 20/15 min on `/auth/*`), then AUTH.6 (sign in / sign up / log out UI) early at Shiv's request. Every step tested against the real DB with throwaway users that were deleted afterwards. Also a frontend redesign at Shiv's request (markdown answers, centred column, composer, starter questions, brand mark), checked on desktop, mobile and dark mode, with an XSS check on the markdown. Deployed via PR #3; verified live (401 without token, two guests fully isolated, streaming, CORS, live frontend). **Found live:** the rate limiter's `trust proxy` hop count is wrong on Render — fixed 1 → 2 (`5eb5109`), then measured again with the partition-key method: 2 is wrong too, the evidence says 3 (env `TRUST_PROXY_HOPS`, pending Shiv). 65 orphan chunks still to delete. Docs (CLAUDE, README, CODE_EXPLAINED, PROGRESS, walkthrough, roadmap, plan, More_on 15/16) updated as AUTH.8.
 
 - **2026-10-02 (AI basics)** — At Shiv's request, wrote [topics/AI_BASICS.md](topics/AI_BASICS.md): one file covering the general AI vocabulary (LLM, training vs inference, tokens, context window, statelessness, temperature/top-p, embeddings, similarity, vector search, RAG, chunking, fine-tuning vs RAG, tool calling, agents, MCP, cost, rate limits, evaluation, security), each section short with a link to its deep-dive, plus a "how DocMind uses each idea" table, a misconceptions table, a glossary and interview quick answers. No provider prices or limits are quoted.
 

@@ -23,7 +23,7 @@ Advanced topics are listed **right after the basic topic they relate to** so you
 | 10 | ⬜ | Agents & tool calling | [topics/10-agents-tool-calling](topics/10-agents-tool-calling/NOTES.md) | `advanced/07` Vendor abstraction |
 | 11 | ⬜ | Workflows (suspend/resume) | [topics/11-workflows-suspend-resume](topics/11-workflows-suspend-resume/NOTES.md) | — |
 | 12 | ⬜ | Testing & observability | [topics/12-testing-observability](topics/12-testing-observability/NOTES.md) | `advanced/04` Evaluation |
-| 13 | ⬜ | Deployment | [topics/13-deployment](topics/13-deployment/NOTES.md) | — |
+| 13 | 🟡 | Deployment | [topics/13-deployment](topics/13-deployment/NOTES.md) — pulled forward: API live on Render and frontend on Vercel since 2026-09-30, redeployed with auth on 2026-10-04. Not done: a worker (there's nothing to run until Phase 6). Lesson from the live check: Render puts Cloudflare in front of its own proxies, so the rate limiter's `trust proxy` hop count had to be measured (see [CLAUDE.md](CLAUDE.md) §9) | — |
 
 **Milestone: you're job-ready here.** DocMind works end to end, deployed, and you can explain every concept above out loud without notes. Go apply / interview. The advanced pass below is for after that, not instead of it.
 
@@ -36,10 +36,10 @@ Added after comparing this plan against a real production AI backend. The AI-spe
 | # | Topic | Notes |
 |---|---|---|
 | 14 | GraphQL + subscriptions | [topics/14-graphql-subscriptions](topics/14-graphql-subscriptions/NOTES.md) |
-| 15 | Auth (JWT) | [topics/15-auth-jwt](topics/15-auth-jwt/NOTES.md) |
-| 16 | Idempotency & multi-tenancy | [topics/16-idempotency-multi-tenancy](topics/16-idempotency-multi-tenancy/NOTES.md) |
+| 15 | Auth (JWT) — ✅ **built**, not just read | [topics/15-auth-jwt](topics/15-auth-jwt/NOTES.md) — the live site was showing every visitor's uploads, so it was built for real on 2026-10-03/04: guests as real users, JWT Bearer auth, sign up / sign in / log out, per-IP rate limit. Plan + per-step results: [auth-jwt-plan.md](auth-jwt-plan.md). NOTES.md still yours to write |
+| 16 | Idempotency & multi-tenancy — 🟡 half built | [topics/16-idempotency-multi-tenancy](topics/16-idempotency-multi-tenancy/NOTES.md) — per-user scoping is built (every query filters on `user_id`, including vector search through the `documents` join, which is exactly the "unscoped vector search leaks one tenant into another" problem). Idempotency keys are not |
 
-These don't need a code change to DocMind necessarily — reading + notes is enough to be able to talk about them in an interview. If you want hands-on practice, add JWT auth to the `/chat` endpoint as a small side exercise.
+These don't need a code change to DocMind necessarily — reading + notes is enough to be able to talk about them in an interview. **Update 2026-10-04:** 15 and half of 16 got built anyway, because the deployed app had no notion of users.
 
 ---
 

@@ -1,6 +1,6 @@
 # 16 — Idempotency & Multi-Tenancy
 
-**Roadmap: Phase 11 (Step 11.3)** · **Status in DocMind: neither exists.** DocMind is single-user with no duplicate protection. This is a reading topic: two production concerns that look unrelated but share a root. Both are about a backend **not trusting the client to behave**: not to send things twice, and not to ask only for its own data.
+**Roadmap: Phase 11 (Step 11.3)** · **Status in DocMind: multi-tenancy (per-user scoping) built on 2026-10-04 as part of auth; idempotency not built.** When this file was written DocMind was single-user with no duplicate protection, and the sections below still read that way. The per-user version: every repository query filters on `user_id`, vector search filters through the `documents` join, and session history is user-scoped. See [auth-jwt-plan.md](../../auth-jwt-plan.md). This is a reading topic: two production concerns that look unrelated but share a root. Both are about a backend **not trusting the client to behave**: not to send things twice, and not to ask only for its own data.
 
 Code this file talks about: [chat.service.ts](../../src/services/chat.service.ts) (`prepareChat`), [documents.routes.ts](../../src/routes/documents.routes.ts) (`POST /upload`), [chunks.repository.ts](../../src/repositories/chunks.repository.ts) (`searchSimilar`), [schema.ts](../../src/db/schema.ts), [config.ts](../../src/config.ts) (`ALL_DOCUMENTS`)
 
