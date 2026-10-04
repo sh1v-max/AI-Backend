@@ -1,7 +1,7 @@
 import express, { type Request, type Response, type NextFunction } from 'express'
 import cors from 'cors'
 import multer from 'multer'
-import { FRONTEND_ORIGINS, MAX_UPLOAD_BYTES } from './config'
+import { FRONTEND_ORIGINS, MAX_UPLOAD_BYTES, TRUST_PROXY_HOPS } from './config'
 import { summarizeError } from './utils/errors'
 import { documentsRouter } from './routes/documents.routes'
 import { sessionsRouter } from './routes/sessions.routes'
@@ -14,14 +14,21 @@ import { requireAuth } from './middleware/auth'
 // this file means tests (Phase 9) can import the app without opening a port.
 export const app = express()
 
-// Auth.7 — on Render, requests reach this server through Render's proxy, so
-// the connection's IP address is the proxy's, the same for every visitor.
-// The proxy puts the real visitor's IP in the X-Forwarded-For header, and
-// `trust proxy = 1` tells Express to read it from there ("there is exactly 1
-// proxy in front of me"). Without it, the rate limiter would see one IP for
-// the whole internet and block everyone at once. Too high a number would be
-// the opposite mistake: trusting hops a client can fake to dodge the limit.
-app.set('trust proxy', 1)
+// Auth.7 — on Render, requests reach this server through proxies, so the
+// connection's IP address is a proxy's, not the visitor's. Each proxy appends
+// the address it received the request from to the X-Forwarded-For header,
+// and `trust proxy = N` tells Express "there are exactly N proxies in front
+// of me": skip that many hops from the right and the next one is the visitor.
+// Without it, the rate limiter would see proxy IPs and lump everyone together.
+// Too high a number is the opposite mistake: trusting a hop the CLIENT wrote,
+// which lets anyone dodge the limit by sending a fake header.
+//
+// Measured after the first deploy: Render has TWO hops (Cloudflare, then
+// Render's own load balancer — every response carries a CF-RAY header). With
+// 1, identical requests from one machine landed in different rate-limit
+// counters, keyed by whichever Cloudflare server forwarded them.
+// See TRUST_PROXY_HOPS in config.ts.
+app.set('trust proxy', TRUST_PROXY_HOPS)
 
 // Only affects requests with Content-Type: application/json — /upload's
 // multipart/form-data requests are handled separately by Multer, so the two

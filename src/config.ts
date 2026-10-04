@@ -55,6 +55,12 @@ export const USER_MAX_DOCUMENTS = 10
 export const AUTH_RATE_LIMIT = 20
 export const AUTH_RATE_WINDOW_MS = 15 * 60 * 1000
 
+// Auth.7 — how many proxies sit between the visitor and this server (see the
+// `trust proxy` comment in app.ts). 2 on Render (Cloudflare + Render's load
+// balancer). An env var so another host, or a change on Render's side, can be
+// fixed from the dashboard without a code change.
+export const TRUST_PROXY_HOPS = Number(process.env.TRUST_PROXY_HOPS ?? 2)
+
 // What the client sees when a network step (Gemini, Neon) fails — the real
 // cause goes to the terminal instead (see utils/errors.ts).
 export const CONNECTION_ERROR_MESSAGE =
