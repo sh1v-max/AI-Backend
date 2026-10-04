@@ -275,6 +275,275 @@
   font-size: 13px;
 }
 
+/* ---------- Auth.6: account area at the bottom of the sidebar ---------- */
+
+.account-area {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* pushes it to the bottom of the sidebar column */
+  margin-top: auto;
+  padding: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.account-area--collapsed {
+  align-items: center;
+  padding-inline: 0;
+}
+
+.account-guest {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--color-muted);
+}
+
+.account-guest div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.account-guest strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-foreground);
+}
+
+.account-guest span {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.account-signup {
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+.account-signup:hover {
+  background: var(--color-accent-hover);
+}
+
+.account-signin {
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.account-signin:hover {
+  color: var(--color-foreground);
+  text-decoration: underline;
+}
+
+.account-user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.account-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-accent-bg);
+  color: var(--color-accent-hover);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.account-email {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* ---------- Auth.6: sign in / sign up modal ---------- */
+
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 40;
+}
+
+.auth-modal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(400px, 100%);
+  max-height: calc(100dvh - 2 * var(--space-4));
+  padding: var(--space-8) var(--space-6) var(--space-6);
+  overflow-y: auto;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+  text-align: center;
+}
+
+.auth-close {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+}
+
+.auth-modal h2 {
+  margin-top: var(--space-4);
+  font-size: 22px;
+}
+
+.auth-subtitle {
+  margin: var(--space-1) 0 0;
+  font-size: 14px;
+  color: var(--color-muted);
+}
+
+.auth-note {
+  width: 100%;
+  margin-top: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-bg);
+  color: var(--color-accent-hover);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.auth-note--warn {
+  background: var(--color-destructive-bg);
+  color: var(--color-destructive);
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+  margin-top: var(--space-6);
+  text-align: left;
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.auth-field input {
+  padding: 10px var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-foreground);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 400;
+}
+
+.auth-field input:focus {
+  border-color: var(--color-accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-accent-bg);
+}
+
+.auth-field small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-muted);
+}
+
+.auth-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-destructive-bg);
+  color: var(--color-destructive);
+  font-size: 13px;
+}
+
+.auth-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  padding: 11px var(--space-4);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+.auth-submit:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.auth-submit:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.auth-submit .spin {
+  color: inherit;
+}
+
+.auth-switch {
+  margin: var(--space-4) 0 0;
+  font-size: 13px;
+  color: var(--color-muted);
+}
+
+.auth-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-accent-hover);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-link:hover {
+  text-decoration: underline;
+}
+
 /* ---------- chat (right) ---------- */
 
 .chat-main {
@@ -1289,12 +1558,15 @@
     display: inline-flex;
   }
 
-  .sidebar .icon-button:not(.icon-button--mobile-only) {
+  /* only the header's collapse toggle is hidden on mobile (the drawer has its
+     own close button). Was `.sidebar .icon-button`, which also hid the
+     account area's Log out button. */
+  .sidebar-header .icon-button:not(.icon-button--mobile-only) {
     display: none;
   }
 
   .sidebar-brand {
-    display: block !important;
+    display: flex !important;
   }
 
   .sidebar {

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { Sidebar } from './components/sidebar/Sidebar'
 import { ChatView } from './components/chat/ChatView'
 import { useDocuments } from './hooks/useDocuments'
@@ -8,15 +8,26 @@ import { useQuiz } from './hooks/useQuiz'
 import { useAuth } from './hooks/useAuth'
 import { QuizModal } from './components/quiz/QuizModal'
 import { SplashScreen } from './components/common/SplashScreen'
+import { AuthModal, type AuthMode } from './components/auth/AuthModal'
+import { AccountArea } from './components/auth/AccountArea'
+import type { User } from './types/auth'
 import { log } from './utils/logger'
 import { ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL } from './types/document'
 import type { UploadedDocument } from './types/document'
 import type { SessionSummary } from './types/chat'
 import './App.css'
 
+interface AppShellProps {
+  user: User
+  onLogin: (email: string, password: string) => Promise<void>
+  onRegister: (email: string, password: string) => Promise<void>
+  onLogout: () => void
+}
+
 // Auth.4 — this was `App` before. It's the whole app as it was, unchanged:
 // it just only gets mounted once useAuth (below) has a token to send.
-function AppShell() {
+// Auth.6 — plus the account area and the sign-in / sign-up modal.
+function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
   const { documents, status, error, uploadFile, deleteDocument } = useDocuments()
   const { sessions, refresh: refreshSessions, deleteSession } = useSessions()
   const {
@@ -39,6 +50,20 @@ function AppShell() {
   // instead of just narrowing it.
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+
+  // Auth.6 — which auth form is open, or null for none
+  const [authMode, setAuthMode] = useState<AuthMode | null>(null)
+  // useCallback keeps this the SAME function across re-renders. AuthModal's
+  // effect depends on onClose; a new function every render (e.g. each piece
+  // of a streaming answer) would re-run it and yank focus back to the email
+  // field mid-typing.
+  const closeAuth = useCallback(() => setAuthMode(null), [])
+
+  function openAuth(mode: AuthMode) {
+    log.info('App', `[action] open auth — ${mode}`)
+    setAuthMode(mode)
+    setMobileSidebarOpen(false)
+  }
 
   async function handleUpload(file: File) {
     log.info('App', `[action] file selected for upload — "${file.name}"`)
@@ -136,6 +161,9 @@ function AppShell() {
   return (
     <div className="app-shell">
       <Sidebar
+        footer={
+          <AccountArea user={user} collapsed={sidebarCollapsed} onOpenAuth={openAuth} onLogout={onLogout} />
+        }
         sessions={sessions}
         activeSessionId={activeSessionId}
         collapsed={sidebarCollapsed}
@@ -181,6 +209,17 @@ function AppShell() {
         onClose={quiz.close}
         onRegenerate={quiz.regenerate}
       />
+
+      {authMode && (
+        <AuthModal
+          mode={authMode}
+          onModeChange={setAuthMode}
+          onClose={closeAuth}
+          onLogin={onLogin}
+          onRegister={onRegister}
+          guestDocumentCount={user.isGuest ? documents.length : 0}
+        />
+      )}
     </div>
   )
 }
@@ -198,11 +237,13 @@ function AppShell() {
 //    and refetches for the new user, so nothing of the previous user's data
 //    stays on screen.
 function App() {
-  const { state, retry } = useAuth()
+  const { state, retry, login, register, logout } = useAuth()
 
   if (state.status === 'loading') return <SplashScreen />
   if (state.status === 'error') return <SplashScreen error={state.message} onRetry={retry} />
-  return <AppShell key={state.user.id} />
+  return (
+    <AppShell key={state.user.id} user={state.user} onLogin={login} onRegister={register} onLogout={logout} />
+  )
 }
 
 export default App

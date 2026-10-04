@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchMe, guestLogin } from '../api/auth'
+import { fetchMe, guestLogin, login as loginRequest, register as registerRequest } from '../api/auth'
 import { clearToken, getToken, onUnauthorized, setToken } from '../api/client'
 import { log } from '../utils/logger'
 import type { User } from '../types/auth'
@@ -100,5 +100,41 @@ export function useAuth() {
     setAttempt((n) => n + 1)
   }
 
-  return { state, retry }
+  // Auth.6 — the three account actions the login UI calls. Each one swaps the
+  // saved token and the user in state. App renders <AppShell key={user.id}>,
+  // so switching to a DIFFERENT user (login, logout) remounts the whole app
+  // and refetches everything for them. Signing up as a guest keeps the same
+  // id (the server upgrades the guest in place), so nothing remounts: the
+  // documents and chats stay on screen and only the sidebar changes.
+  //
+  // login/register throw on failure (wrong password, email taken, rate
+  // limited), and the form shows that error.
+  async function login(email: string, password: string) {
+    const { token, user } = await loginRequest(email, password)
+    setToken(token)
+    setState({ status: 'ready', user })
+  }
+
+  async function register(email: string, password: string) {
+    const { token, user } = await registerRequest(email, password, getToken())
+    setToken(token)
+    setState({ status: 'ready', user })
+  }
+
+  // Throw the token away and start over as a fresh guest — the same path as
+  // a first visit. The account itself is untouched: logging back in restores it.
+  function logout() {
+    log.info('useAuth', 'logout — starting a fresh guest session')
+    clearToken()
+    try {
+      // the open conversation belonged to the old user
+      localStorage.removeItem('docmind:activeSessionId')
+    } catch {
+      // storage unavailable — nothing to clear
+    }
+    setState({ status: 'loading' })
+    setAttempt((n) => n + 1)
+  }
+
+  return { state, retry, login, register, logout }
 }
