@@ -33,6 +33,28 @@ export const FRONTEND_ORIGINS = (process.env.FRONTEND_URL || 'http://localhost:5
 // whole upload in memory, so a cap keeps one huge PDF from crashing the server.
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
+// Auth.1 — how long a login token stays valid (the format is the `ms`
+// library's: '7d' = 7 days). A guest can't log back in — there's no email or
+// password to log in WITH — so an expired guest token means that guest's
+// files are gone for good. That's why guests get the longer one.
+export const TOKEN_TTL_USER = '7d'
+export const TOKEN_TTL_GUEST = '30d'
+
+// Auth.7 — how many documents one user may have at once. Every upload costs
+// Gemini embedding calls on the free-tier quota, and POST /auth/guest is
+// public, so a cap per user limits how much one identity can use up. Lower
+// for guests, which also gives them a reason to sign up.
+export const GUEST_MAX_DOCUMENTS = 5
+export const USER_MAX_DOCUMENTS = 10
+
+// Auth.7 — the cap above limits ONE guest; it doesn't stop someone creating a
+// thousand guests in a loop. This limits the public /auth routes per IP
+// address: at most AUTH_RATE_LIMIT requests per AUTH_RATE_WINDOW_MS. A real
+// visitor makes one guest per browser, so 20 per 15 minutes leaves plenty of
+// room even for a shared office or college network.
+export const AUTH_RATE_LIMIT = 20
+export const AUTH_RATE_WINDOW_MS = 15 * 60 * 1000
+
 // What the client sees when a network step (Gemini, Neon) fails — the real
 // cause goes to the terminal instead (see utils/errors.ts).
 export const CONNECTION_ERROR_MESSAGE =

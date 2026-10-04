@@ -27,11 +27,14 @@
   },
   "homepage": "https://github.com/sh1v-max/AI-Backend#readme",
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "chalk": "^4.1.2",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
+    "jsonwebtoken": "^9.0.3",
     "multer": "^2.3.0",
     "pdf-parse": "^2.4.5",
     "pg": "^8.23.0",
@@ -40,6 +43,7 @@
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.2.0",
     "@types/node": "^26.4.1",
     "@types/pg": "^8.23.1",

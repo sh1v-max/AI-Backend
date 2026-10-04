@@ -182,7 +182,7 @@ What is lost: `EventSource` auto-reconnects. DocMind closes the stream on any er
 
 ```ts
 // config.ts
-export const GUEST_MAX_DOCUMENTS = 3
+export const GUEST_MAX_DOCUMENTS = 5
 export const USER_MAX_DOCUMENTS = 10
 ```
 
@@ -600,15 +600,15 @@ Then check A still sees everything of theirs, unchanged.
 
 ---
 
-## 8. Open decisions (answer before building)
+## 8. Decisions (answered by Shiv, 2026-10-03)
 
-| # | Decision | Recommendation |
+| # | Decision | Answer |
 |---|---|---|
-| D1 | Does a first-time visitor become a guest **automatically**, or see a welcome screen with "Continue as guest" / "Sign in"? | **Automatic.** A recruiter lands straight in a working app. The plan above assumes this |
-| D2 | First deploy with the login UI, or guest-only first and login UI second? | **Guest-only first** if the Oct 8 deadline is tight. It fixes the public problem in about half the time |
-| D3 | Old rows: claim them for your account, or delete them? | **Delete**, apart from one clean sample PDF you re-upload yourself. Some of the old data is resume text |
-| D4 | Document caps: guest 3, user 10? | Fine as a start. They are two constants |
-| D5 | Rate limiting on `/auth/*` now or later? | **Now**, it is 20 minutes and the guest endpoint is otherwise unbounded |
+| D1 | Does a first-time visitor become a guest **automatically**, or see a welcome screen with "Continue as guest" / "Sign in"? | **Automatic** |
+| D2 | First deploy with the login UI, or guest-only first and login UI second? | **Guest-only first**: AUTH.0 to AUTH.5 + AUTH.7. AUTH.6 (login UI) is a later deploy |
+| D3 | Old rows: claim them for your account, or delete them? | **Deleted** by Shiv through the UI before the build started. Orphan chunks and any "All documents" sessions may still be in the tables: check in AUTH.7 |
+| D4 | Document caps | **Guest 5, registered 10** |
+| D5 | Rate limiting on `/auth/*` now or later? | **Now** (built in AUTH.7) |
 
 ---
 
@@ -616,12 +616,12 @@ Then check A still sees everything of theirs, unchanged.
 
 | Step | Date | Time taken | Notes / what bit you |
 |---|---|---|---|
-| AUTH.0 | | | |
-| AUTH.1 | | | |
-| AUTH.2 | | | |
-| AUTH.3 | | | |
-| AUTH.4 | | | |
-| AUTH.5 | | | |
-| AUTH.6 | | | |
-| AUTH.7 | | | |
+| AUTH.0 | 2026-10-03 | | Code side done: `jsonwebtoken` 9, `bcryptjs` 3 (ships its own types, no `@types/bcryptjs` needed), `schema.ts`, `.env.example`. Shiv ran the SQL on Neon and added `JWT_SECRET` to `.env` |
+| AUTH.1 | 2026-10-03 | | `users.repository.ts`, `auth.service.ts`, `auth.schema.ts`, `auth.routes.ts` (guest, register, login), mounted in `app.ts`, startup `JWT_SECRET` check in `index.ts`, `auth` log theme. Tested live on a spare port, 13 cases, all as expected; the 2 test users were deleted afterwards. `GET /auth/me` moved to AUTH.2 (it needs the middleware). Not done: equal-time login for unknown emails (a missing account answers faster than a wrong password) |
+| AUTH.2 | 2026-10-03 | | `middleware/auth.ts` (`requireAuth`), `types/express.d.ts` (`req.user`), `GET /auth/me` (route-level `requireAuth` + a DB lookup), `app.use(requireAuth)` after `authRouter`. Tested: all 9 data routes + `/auth/me` + an unknown path give 401 with no token; tampered / wrong-secret / expired / `alg: none` / missing `Bearer ` all 401; valid token 200; deleted-user token on `/auth/me` 401; CORS preflight with `authorization` still 204. What bit me: a test server from AUTH.1 survived `TaskStop` and kept answering on the test port with old code, so the first run looked like auth wasn't working. Check what is on the port before trusting a test |
+| AUTH.3 | 2026-10-03 | | Required `userId` on every read/delete in all 3 repositories; `searchSimilar` and `sampleChunks` now INNER JOIN `documents` and filter on `documents.user_id` (replaces the old orphan filter); `getDocumentForUser` ownership check before DELETE's three deletes; `userId` through `prepareChat`, `generateQuiz`, `ingestPdf`; one `user:` log line per pipeline. Making `userId` required turned 15 call sites into compile errors, which is the checklist of what to change. Section 6 checklist run with two guests and a generated PDF: tests 1-10 and 15 all as expected; owner happy paths (upload, stream, follow-up using history, all-documents chat, quiz, delete) all work. What bit me: dotenv 17 prints a banner to stdout, which corrupted tokens made with `node -e` in tests (requests came back 400). Use `config({ quiet: true })`. Re-ran AUTH.2's expired and deleted-user token tests with clean tokens: still 401. Also: `step3-drizzle.ts` passed its document id where `userId` now goes and still compiled (both are strings), so positional string arguments are the one thing the compiler can't check. 65 orphan chunks are still in the table (unreachable now), to delete in AUTH.7 |
+| AUTH.4 | 2026-10-04 | | `api/client.ts` (token store + `authFetch` + `onUnauthorized`), `api/auth.ts` (`guestLogin`, `fetchMe`, plain fetch on purpose), `types/auth.ts`, `hooks/useAuth.ts` (module-level in-flight promise against StrictMode's double mount; stale-401 guard compares the rejected token with the current one), `components/common/SplashScreen.tsx`, `App.tsx` split into the `App` gate + `AppShell` with `key={user.id}`, all `api/*` on `authFetch`, `fetchDocuments`/`fetchSessions`/`fetchSessionMessages` now go through `parseJsonOrThrow`. Tested in a headless browser against the dev servers: first visit makes exactly ONE `POST /auth/guest` (StrictMode dedupe works) and every data request carries the Bearer header; refresh reuses the token via `/auth/me`; a corrupted token gives `/auth/me` 401 then a new guest with no error screen; upload works; a second browser profile is a different guest and sees no documents. 5 test guests + 1 test PDF deleted afterwards. Chat is still broken until AUTH.5 (`EventSource` can't send the header). `oxlint` shows 2 warnings, both pre-existing (`QuizModal.tsx`, `useChat.ts`) |
+| AUTH.5 | 2026-10-04 | | `streamChatMessage()` rewritten on `authFetch` + `res.body.getReader()` + a small `parseFrame()`; same signature and handlers, so `useChat.ts` is untouched; backend untouched. `finish()` guarantees exactly one `onDone`/`onError`; a body that ends without `done`/`error` gives "Connection lost"; `AbortError` from the cleanup is silent; non-200 bodies are now readable. Tested in a headless browser: real streamed answer + a follow-up that needed history, both with the Bearer header and no token in the URL; mocked streams for normal, CRLF, dropped connection, `event: error`, error-then-done (only the first counts), a `: ping` comment line, a 404 JSON body, and abort after 50 ms: all as expected. Noticed: aborting only stops the browser; the server finishes the request and still saves both messages (pre-existing, same as with EventSource) |
+| AUTH.6 | 2026-10-04 | | Built early, at Shiv's request (D2 had deferred it). `api/auth.ts` `login()` / `register()` (register sends the current guest token so the server upgrades in place); `useAuth` gains `login`, `register`, `logout` (logout = drop the token and start a fresh guest); `components/auth/AuthModal.tsx` (one modal, sign in / create account, server errors shown as-is, a note when a guest with files signs up (kept) or signs in (left behind)); `components/auth/AccountArea.tsx` in the sidebar footer (guest: "Sign up to keep them" + "I already have an account", no log out; registered: initial, email, log out). `closeAuth` is a `useCallback` so streaming re-renders don't re-run the modal's focus effect. Tested in a headless browser: sign up keeps the same user id and the uploaded document; short password caught client-side; log out gives an empty new guest; wrong password and duplicate email show the server's messages; logging back in restores the document. Fixed while testing: an old mobile rule (`.sidebar .icon-button { display: none }`) hid the Log out button, and `display: block !important` on the brand broke the logo layout. 4 test users deleted |
+| AUTH.7 | 2026-10-04 | | Code done: `GUEST_MAX_DOCUMENTS = 5` / `USER_MAX_DOCUMENTS = 10` / `AUTH_RATE_LIMIT = 20 per 15 min` in `config.ts`; `countDocuments()`; `checkDocumentCap` middleware placed BEFORE multer on `/upload` (403 with a sign-up hint for guests); `express-rate-limit` 8.7 in `middleware/rateLimit.ts`, one shared limiter on `/auth/guest`, `/auth/register`, `/auth/login` (not `/auth/me`); `app.set('trust proxy', 1)`; `ip:` log line on `/auth/guest`. Tested: 20 requests then 429 (and the counter is shared across routes), `RateLimit` + `Retry-After` headers present, `/` and `/auth/me` not limited; 5 uploads as a guest then 403, delete one and upload works again, same user as registered gets past 5. Found: locally a faked `X-Forwarded-For` header gets around the limiter, because no real proxy sits in front; on Render it depends on there being exactly 1 proxy hop, so check the `ip:` log line after deploy. DB before deploy: 0 documents, 0 unowned messages, 65 orphan chunks (all of `chunks`), 1 user. Remaining: Shiv runs the orphan-chunk SQL, sets `JWT_SECRET` on Render, merges |
 | AUTH.8 | | | |

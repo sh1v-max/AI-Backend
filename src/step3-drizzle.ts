@@ -39,7 +39,12 @@ async function main() {
 
   console.log('\nSearching via searchSimilar()...\n')
   const queryEmbedding = await getEmbedding('a cat napping on a blanket')
-  const results = await searchSimilar(queryEmbedding, 2, TEST_DOCUMENT_ID)
+  // Auth.3 — searchSimilar() now takes a userId and only searches documents
+  // that user owns. This Phase 1 script inserts bare chunks with no documents
+  // row, so today this search would find NOTHING. Kept compiling only as a
+  // record of Step 1.3 — and it still DELETEs the whole chunks table: never
+  // run it against the real database.
+  const results = await searchSimilar(queryEmbedding, 2, 'step3-no-user', TEST_DOCUMENT_ID)
 
   for (const row of results) {
     console.log(`  distance ${row.distance.toFixed(4)} — "${row.content}"`)

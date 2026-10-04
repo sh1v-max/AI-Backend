@@ -12,7 +12,8 @@ quizRouter.post('/quiz', withErrorHandling('POST /quiz', async (req, res) => {
   const t0 = Date.now()
   pipelineStart('quiz', 'POST /quiz')
 
-  const result = await generateQuiz({ documentId: req.body.documentId }, t0)
+  // Auth.3 — userId from the verified token, documentId from the body.
+  const result = await generateQuiz({ documentId: req.body.documentId, userId: req.user!.id }, t0)
   if (!result.ok) return res.status(result.status).json({ error: result.error })
 
   res.json({ documentId: result.documentId, quiz: result.quiz })

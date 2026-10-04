@@ -1,9 +1,13 @@
+import type { ReactNode } from 'react'
 import { PencilSimpleLine, SidebarSimple, X } from '@phosphor-icons/react'
 import { IconButton } from '../common/IconButton'
+import { BrandMark } from '../common/BrandMark'
 import { HistoryList } from './HistoryList'
 import type { SessionSummary } from '../../types/chat'
 
 interface SidebarProps {
+  // Auth.6 — the account area pinned to the bottom (built in App, which owns the user)
+  footer?: ReactNode
   sessions: SessionSummary[]
   activeSessionId: string | null
   collapsed: boolean
@@ -16,6 +20,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({
+  footer,
   sessions,
   activeSessionId,
   collapsed,
@@ -34,7 +39,14 @@ export function Sidebar({
       aria-label="Chat sidebar"
     >
       <div className="sidebar-header">
-        <span className="sidebar-brand">{!collapsed && 'DocMind'}</span>
+        <span className="sidebar-brand">
+          {!collapsed && (
+            <>
+              <BrandMark size={24} />
+              DocMind
+            </>
+          )}
+        </span>
         <IconButton
           onClick={onToggleCollapse}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -61,6 +73,8 @@ export function Sidebar({
           onDeleteSession={onDeleteSession}
         />
       )}
+
+      {footer}
     </aside>
   )
 }

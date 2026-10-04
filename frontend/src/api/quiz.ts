@@ -1,4 +1,4 @@
-import { API_URL, parseJsonOrThrow } from './client'
+import { authFetch, parseJsonOrThrow } from './client'
 import { log } from '../utils/logger'
 import type { Quiz } from '../types/quiz'
 
@@ -13,7 +13,7 @@ interface QuizResponse {
 export async function generateQuiz(documentId: string): Promise<QuizResponse> {
   log.info('api:quiz', `POST /quiz — document=${documentId}`)
 
-  const res = await fetch(`${API_URL}/quiz`, {
+  const res = await authFetch('/quiz', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ documentId }),

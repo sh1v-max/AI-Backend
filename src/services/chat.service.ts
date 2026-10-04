@@ -101,11 +101,16 @@ export type ChatPreparation =
 // documentId or the sentinel 'all' (ALL_DOCUMENTS) searches every document.
 // The scope string is also what gets saved on the chat messages, so a session
 // remembers which mode it was started in.
+//
+// Auth.3 — `userId` comes from the verified token (the route passes
+// req.user.id). It's a plain string, not `unknown` like the other inputs,
+// because it isn't client input: requireAuth already proved it. It scopes the
+// search, the history and the saved message to this one user.
 export async function prepareChat(
-  input: { documentId: unknown; message: unknown; sessionId: string },
+  input: { documentId: unknown; message: unknown; sessionId: string; userId: string },
   t0: number,
 ): Promise<ChatPreparation> {
-  const { message, sessionId } = input
+  const { message, sessionId, userId } = input
 
   // validating documentId
   // Absent/empty = "all documents". Anything present that isn't a string
@@ -129,6 +134,7 @@ export async function prepareChat(
   }
 
   step('chat', 1, 7, 'Request received')
+  detail(`user:       ${userId.slice(0, 8)}`)
   detail(`sessionId:  ${sessionId}`)
   detail(
     `documentId: ${documentId}${searchAll ? ' (searching every document)' : ''}`,
@@ -150,15 +156,18 @@ export async function prepareChat(
     3,
     7,
     searchAll
-      ? 'Searching stored chunks (across ALL documents, top 3 by cosine distance)...'
+      ? "Searching stored chunks (across ALL of this user's documents, top 3 by cosine distance)..."
       : 'Searching stored chunks (scoped to this documentId, top 3 by cosine distance)...',
   )
   const searchStart = Date.now()
 
-  // searchSimilar returns an array of relevant chunks
+  // searchSimilar returns an array of relevant chunks — only ever from this
+  // user's documents (Auth.3), so another user's documentId finds nothing and
+  // falls into the 404 just below.
   const relevantChunks = await searchSimilar(
     questionEmbedding,
     3,
+    userId,
     searchAll ? undefined : documentId,
   )
   timing(Date.now() - searchStart, `found ${relevantChunks.length} chunk(s)`)
@@ -193,13 +202,13 @@ export async function prepareChat(
   )
 
   // Get the most recent messages from this session
-  const history = await getRecentMessages(sessionId, HISTORY_LIMIT)
+  const history = await getRecentMessages(sessionId, userId, HISTORY_LIMIT)
   detail(`${history.length} prior message(s) in this session`)
 
   // Saved *before* generating, so history for the *next* turn already
   // includes this one — but built into *this* turn's prompt from the
   // `history` pulled a moment ago, not including the message being answered.
-  await insertMessage(sessionId, documentId, 'user', message)
+  await insertMessage(sessionId, userId, documentId, 'user', message)
 
   // In all-documents mode each chunk is labelled with its file, so the model
   // (and the citation instruction in the prompt) can tell the sources apart.

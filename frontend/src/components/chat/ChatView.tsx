@@ -1,4 +1,4 @@
-import { ClipboardText, SidebarSimple, Spinner } from '@phosphor-icons/react'
+import { ClipboardText, Files, FileText, SidebarSimple, Spinner } from '@phosphor-icons/react'
 import { IconButton } from '../common/IconButton'
 import { ChatPanel } from './ChatPanel'
 import { NewChatScreen } from './NewChatScreen'
@@ -77,7 +77,14 @@ export function ChatView({
               </select>
             </label>
           ) : activeDocument ? (
-            <span className="chat-main-subtitle">{activeDocument.filename}</span>
+            <span className="chat-main-subtitle">
+              {activeDocument.documentId === ALL_DOCUMENTS ? (
+                <Files size={16} aria-hidden />
+              ) : (
+                <FileText size={16} aria-hidden />
+              )}
+              <span className="chat-main-subtitle-text">{activeDocument.filename}</span>
+            </span>
           ) : (
             <span className="chat-main-subtitle chat-main-subtitle--muted">New chat</span>
           )}
@@ -111,6 +118,9 @@ export function ChatView({
           onInputChange={onInputChange}
           onSend={onSend}
           loading={loading}
+          scopeLabel={
+            activeDocument.documentId === ALL_DOCUMENTS ? 'all your documents' : activeDocument.filename
+          }
         />
       ) : (
         <NewChatScreen

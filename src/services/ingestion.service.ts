@@ -13,7 +13,13 @@ import { step, detail, timing, preview } from '../utils/pipelineLogger'
 // Steps 2-5 of the upload pipeline: parse → chunk → embed + store → save the document row
 // `file` is a Multer file object, which has the PDF bytes in `file.buffer` and the original filename in `file.originalname`. The file size is in `file.size`.
 // what this function does: It takes the uploaded file, turns it into searchable chunks in the database, and returns a summary of the new document so the caller knows what was created.
-export async function ingestPdf(file: { buffer: Buffer; originalname: string; size: number }) {
+// Auth.3 — `userId` (the uploader, from the token) is saved on the documents
+// row. The chunks don't store it: they belong to the document, and the
+// document has the owner.
+export async function ingestPdf(
+  file: { buffer: Buffer; originalname: string; size: number },
+  userId: string,
+) {
   // passing the buffer directly to PDFParse, which will handle it in memory
   const parser = new PDFParse({ data: file.buffer })
 
@@ -43,6 +49,7 @@ export async function ingestPdf(file: { buffer: Buffer; originalname: string; si
     // It saves one row in the documents table, a "card" describing this PDF
     const document = await insertDocument(
       documentId,
+      userId,
       file.originalname,
       file.size,
       result.text.length,
