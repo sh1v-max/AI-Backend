@@ -64,7 +64,8 @@ export function useChat(onMessageSent: () => void) {
     setActiveSessionId(null)
     setActiveDocument({ documentId, filename })
     setMessages([])
-    setChatInput('')
+    // UI.1 — no longer clears chatInput: on the home screen you can type the
+    // question first and attach the PDF after, and that must not wipe it.
     localStorage.removeItem(ACTIVE_SESSION_KEY)
   }
 
@@ -95,19 +96,26 @@ export function useChat(onMessageSent: () => void) {
     }
   }
 
-  async function sendMessage(message: string) {
-    if (!message || !activeDocument || chatLoading) {
+  // UI.2 — `target` is for a question that was queued while its PDF was still
+  // uploading. App calls startNewChat(doc) and then sendMessage(question, doc)
+  // in the same tick, and at that moment `activeDocument` in this closure is
+  // still the OLD value: setState doesn't change the variable this function
+  // already captured, it only schedules a re-render. So the document is passed
+  // in directly, and it's always a brand-new conversation.
+  async function sendMessage(message: string, target?: ActiveDocument) {
+    const document = target ?? activeDocument
+    if (!message || !document || chatLoading) {
       log.warn('useChat', 'sendMessage() ignored', {
         hasMessage: !!message,
-        hasActiveDocument: !!activeDocument,
+        hasActiveDocument: !!document,
         chatLoading,
       })
       return
     }
 
-    const documentId = activeDocument.documentId
-    const isNewSession = !activeSessionId
-    const sessionId = activeSessionId ?? crypto.randomUUID()
+    const documentId = document.documentId
+    const isNewSession = target ? true : !activeSessionId
+    const sessionId = (!target && activeSessionId) || crypto.randomUUID()
 
     log.info('useChat', `sendMessage() — session=${sessionId} (${isNewSession ? 'new' : 'existing'})`, {
       documentId,

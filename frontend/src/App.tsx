@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Sidebar } from './components/sidebar/Sidebar'
 import { ChatView } from './components/chat/ChatView'
 import { useDocuments } from './hooks/useDocuments'
@@ -28,7 +28,7 @@ interface AppShellProps {
 // it just only gets mounted once useAuth (below) has a token to send.
 // Auth.6 — plus the account area and the sign-in / sign-up modal.
 function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
-  const { documents, status, error, uploadFile, deleteDocument } = useDocuments()
+  const { documents, status, error, uploadingName, uploadFile, deleteDocument } = useDocuments()
   const { sessions, refresh: refreshSessions, deleteSession } = useSessions()
   const {
     activeSessionId,
@@ -44,6 +44,18 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
     sendMessage,
   } = useChat(refreshSessions)
   const quiz = useQuiz()
+
+  // UI.2 — a question sent while its PDF is still uploading waits here and is
+  // sent when the upload finishes. Kept twice on purpose: the state is for
+  // rendering (the "Will ask" chip), the ref is for handleUpload, which reads
+  // it AFTER an `await` — by then the `pendingQuestion` variable it captured
+  // when it started is stale, while ref.current is always the latest value.
+  const [pendingQuestion, setPendingQuestionState] = useState<string | null>(null)
+  const pendingQuestionRef = useRef<string | null>(null)
+  function setPendingQuestion(question: string | null) {
+    pendingQuestionRef.current = question
+    setPendingQuestionState(question)
+  }
 
   // Sidebar starts open on desktop, collapsed to an icon rail on demand.
   // Separate from the mobile drawer flag, which fully hides/shows the panel
@@ -68,11 +80,24 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
   async function handleUpload(file: File) {
     log.info('App', `[action] file selected for upload — "${file.name}"`)
     const doc = await uploadFile(file)
+    // UI.2 — whatever was queued during the upload, read now (not before the await)
+    const queued = pendingQuestionRef.current
+    setPendingQuestion(null)
     if (doc) {
+      // UI.1 — this no longer opens a chat by itself: it attaches the new
+      // document to the home screen's chat box, and the first question opens
+      // the chat. (Dropped mid-conversation, it starts a new one about the file.)
       startNewChat(doc.documentId, doc.filename)
       setMobileSidebarOpen(false)
+      if (queued) {
+        log.info('App', `[action] upload finished — sending the queued question`)
+        sendMessage(queued, { documentId: doc.documentId, filename: doc.filename })
+      }
     } else {
       log.warn('App', '[action] upload did not return a document — staying on new-chat screen')
+      // the question isn't lost: back into the box, in front of anything typed since
+      if (queued) setChatInput((prev) => (prev.trim() ? `${queued}
+${prev}` : queued))
     }
   }
 
@@ -87,6 +112,27 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
     log.info('App', '[action] picked "All documents"')
     startNewChat(ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL)
     setMobileSidebarOpen(false)
+  }
+
+  // UI.2 — send pressed while the PDF is still uploading
+  function handleQueueQuestion(message: string) {
+    log.info('App', '[action] question queued until the upload finishes', { message })
+    setPendingQuestion(message)
+    setChatInput('')
+  }
+
+  // UI.2 — the × on the "Will ask" chip: un-queue it, back into the box
+  function handleCancelQueued() {
+    const queued = pendingQuestionRef.current
+    log.info('App', '[action] queued question cancelled')
+    setPendingQuestion(null)
+    if (queued) setChatInput((prev) => (prev.trim() ? prev : queued))
+  }
+
+  // UI.1 — the × on the document chip in the home screen's chat box
+  function handleClearDocument() {
+    log.info('App', '[action] removed the picked document from the chat box')
+    resetToWelcome()
   }
 
   // Step 3.3 — the header's scope dropdown. A conversation's scope is fixed
@@ -180,20 +226,27 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
       )}
 
       <ChatView
+        activeSessionId={activeSessionId}
         activeDocument={activeDocument}
         messages={messages}
         input={chatInput}
         onInputChange={setChatInput}
-        onSend={sendMessage}
+        // a wrapper, so nothing can pass a second argument into `target` by accident
+        onSend={(message) => sendMessage(message)}
+        pendingQuestion={pendingQuestion}
+        onQueueQuestion={handleQueueQuestion}
+        onCancelQueued={handleCancelQueued}
         loading={chatLoading}
         restoring={restoring}
         onOpenSidebar={() => setMobileSidebarOpen(true)}
         documents={documents}
         uploadStatus={status}
         uploadError={error}
+        uploadingName={uploadingName}
         onUpload={handleUpload}
         onPickDocument={handlePickDocument}
         onPickAll={handlePickAll}
+        onClearDocument={handleClearDocument}
         onChangeScope={handleChangeScope}
         onDeleteDocument={handleDeleteDocument}
         onGenerateQuiz={handleGenerateQuiz}

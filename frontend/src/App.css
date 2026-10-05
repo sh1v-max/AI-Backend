@@ -547,11 +547,42 @@
 /* ---------- chat (right) ---------- */
 
 .chat-main {
+  position: relative; /* the drop overlay covers it */
   display: flex;
   flex-direction: column;
   min-width: 0;
   height: 100%;
   overflow: hidden;
+}
+
+/* UI.1 — shown while a PDF is dragged over the main area */
+.drop-overlay {
+  position: absolute;
+  inset: var(--space-3);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--color-accent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-background) 88%, transparent);
+  backdrop-filter: blur(2px);
+  pointer-events: none; /* the drag events keep going to the page under it */
+}
+
+.drop-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-accent-hover);
+}
+
+.drop-overlay-card p {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-foreground);
 }
 
 .chat-main-header {
@@ -648,9 +679,43 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--space-6);
-  padding: var(--space-6);
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-4);
   overflow-y: auto;
+}
+
+/* UI.1 — the chat box on the home screen: same component as in a chat,
+   without the panel padding (the screen already has its own) */
+.home-composer {
+  width: min(var(--chat-width), 100%);
+}
+
+.home-composer .composer {
+  padding: 0;
+}
+
+/* UI.2 — "attach a PDF first": a short shake + the hint in red */
+.home-composer--shake {
+  animation: nudge 360ms ease;
+}
+
+.home-composer--nudge .composer-hint {
+  color: var(--color-destructive);
+}
+
+@keyframes nudge {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-8px); }
+  40% { transform: translateX(7px); }
+  60% { transform: translateX(-5px); }
+  80% { transform: translateX(3px); }
+}
+
+/* people who asked the OS for less motion get the red hint, no shake */
+@media (prefers-reduced-motion: reduce) {
+  .home-composer--shake {
+    animation: none;
+  }
 }
 
 .new-chat-intro {
@@ -658,7 +723,8 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  max-width: 460px;
+  max-width: 520px;
+  margin-bottom: var(--space-2);
 }
 
 .new-chat-intro .brand-mark {
@@ -677,31 +743,13 @@
   line-height: 1.6;
 }
 
-.feature-row {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--space-2);
-  margin: var(--space-4) 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.feature-row li {
-  padding: 4px var(--space-3);
-  border-radius: 999px;
-  background: var(--color-accent-bg);
-  color: var(--color-accent-hover);
-  font-size: 12px;
-  font-weight: 500;
-}
-
 .new-chat-recent {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-3);
-  max-width: 480px;
+  max-width: var(--chat-width);
+  margin-top: var(--space-4);
 }
 
 .new-chat-recent-label {
@@ -731,15 +779,30 @@
   background: var(--color-accent-bg);
 }
 
-/* Step 3.3 — the "All documents" chip is the default choice, so it's tinted */
-.doc-chip--all {
+/* the icon keeps its size, the name gets the "…" */
+.doc-chip-button svg {
+  flex-shrink: 0;
+}
+
+.doc-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* UI.1 — the document currently attached to the chat box */
+.doc-chip--active {
   border-color: var(--color-accent);
   background: var(--color-accent-bg);
 }
 
-.doc-chip--all .doc-chip-button {
-  padding-right: var(--space-3);
+.doc-chip--active .doc-chip-button {
   font-weight: 500;
+}
+
+/* a chip with no delete button after it (the "All documents" one) */
+.doc-chip-button--solo {
+  padding-right: var(--space-3);
 }
 
 .doc-chip-button {
@@ -780,51 +843,6 @@
   color: var(--color-destructive);
 }
 
-.dropzone {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  text-align: center;
-  width: min(480px, 100%);
-  padding: var(--space-8) var(--space-6);
-  border: 1.5px dashed var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  color: var(--color-muted);
-  cursor: pointer;
-  transition: border-color 200ms ease, background-color 200ms ease;
-}
-
-.dropzone:hover {
-  border-color: var(--color-accent);
-  background: var(--color-accent-bg);
-}
-
-.dropzone--active {
-  border-color: var(--color-accent);
-  background: var(--color-accent-bg);
-}
-
-.dropzone--busy {
-  cursor: default;
-  pointer-events: none;
-}
-
-.dropzone-title {
-  margin: var(--space-2) 0 0;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--color-foreground);
-}
-
-.dropzone-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--color-muted);
-}
-
 /* ---------- chat panel ---------- */
 
 .chat-panel {
@@ -849,38 +867,11 @@
   margin: 0 auto;
 }
 
-/* ---- empty chat: heading + starter questions ---- */
-
-.chat-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: 12vh;
-  text-align: center;
-}
-
-.chat-empty-icon {
-  color: var(--color-accent-hover);
-}
-
-.chat-empty h2 {
-  font-size: 20px;
-  overflow-wrap: anywhere;
-}
-
-.chat-empty p {
-  margin: 0;
-  font-size: 14px;
-  color: var(--color-muted);
-}
-
 .suggestion-row {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: var(--space-2);
-  margin-top: var(--space-4);
 }
 
 .suggestion {
@@ -1214,7 +1205,7 @@
 
 .composer-box {
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
   gap: var(--space-2);
   width: min(var(--chat-width), 100%);
   margin: 0 auto;
@@ -1229,6 +1220,119 @@
 .composer-box:focus-within {
   border-color: var(--color-accent);
   box-shadow: var(--shadow-md), 0 0 0 3px var(--color-accent-bg);
+}
+
+.composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+/* UI.1 — with a paperclip in front, the box's left padding is the button's job */
+.composer-box:has(.composer-attach) {
+  padding-left: var(--space-2);
+}
+
+.composer-attach {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.composer-attach:hover:not(:disabled) {
+  background: var(--color-muted-bg);
+  color: var(--color-foreground);
+}
+
+.composer-attach:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-top: var(--space-1);
+}
+
+/* the attached-PDF chip inside the box */
+.attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 6px 5px var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-muted-bg);
+  color: var(--color-foreground);
+  font-size: 13px;
+}
+
+.attachment svg {
+  flex-shrink: 0;
+  color: var(--color-accent-hover);
+}
+
+.attachment-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.attachment--busy {
+  padding-right: var(--space-3);
+}
+
+/* UI.2 — the "Will ask: …" chip, tinted so it reads as "waiting", not "attached" */
+.attachment--queued {
+  max-width: min(360px, 100%);
+  border-color: var(--color-accent);
+  background: var(--color-accent-bg);
+}
+
+.attachment--queued .attachment-name {
+  font-weight: 400;
+}
+
+.attachment-status {
+  flex-shrink: 0;
+  color: var(--color-muted);
+}
+
+.attachment-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.attachment-remove:hover {
+  background: var(--color-border);
+  color: var(--color-foreground);
+}
+
+.attachment-remove svg {
+  color: inherit;
 }
 
 .composer-input {
@@ -1607,8 +1711,8 @@
     padding: var(--space-2) var(--space-3) var(--space-3);
   }
 
-  .chat-empty {
-    margin-top: 6vh;
+  .attachment-status {
+    display: none;
   }
 
   .new-chat-intro h1 {

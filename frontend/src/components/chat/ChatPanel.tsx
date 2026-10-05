@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react'
-import { ChatCircleText } from '@phosphor-icons/react'
 import { ChatTurn } from './ChatTurn'
 import { ChatInputForm } from './ChatInputForm'
 import { BrandMark } from '../common/BrandMark'
@@ -11,20 +10,12 @@ interface ChatPanelProps {
   onInputChange: (value: string) => void
   onSend: (message: string) => void
   loading: boolean
-  // what the empty state says it's about: a filename, or "All documents"
-  scopeLabel: string
 }
 
-// Starter questions for an empty chat. Clicking one sends it straight away,
-// so a first-time visitor (or a recruiter) sees an answer in one click
-// instead of facing a blank box.
-const SUGGESTIONS = [
-  'Summarize this in 5 bullet points',
-  'What are the key facts and numbers?',
-  'Explain the main idea simply',
-]
-
-export function ChatPanel({ messages, input, onInputChange, onSend, loading, scopeLabel }: ChatPanelProps) {
+// UI.1 — only shown once a conversation exists. The empty state with the
+// starter questions moved to the home screen (NewChatScreen), which is where
+// a new chat now starts.
+export function ChatPanel({ messages, input, onInputChange, onSend, loading }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const last = messages[messages.length - 1]
@@ -45,27 +36,12 @@ export function ChatPanel({ messages, input, onInputChange, onSend, loading, sco
             instead of stretching across a wide screen, which made long
             answers hard to read. */}
         <div className="chat-column">
-          {messages.length === 0 ? (
-            <div className="chat-empty">
-              <ChatCircleText size={28} weight="duotone" className="chat-empty-icon" aria-hidden />
-              <h2>Ask anything about {scopeLabel}</h2>
-              <p>Answers come only from your document, with the passages they used.</p>
-              <div className="suggestion-row">
-                {SUGGESTIONS.map((s) => (
-                  <button key={s} type="button" className="suggestion" onClick={() => onSend(s)} disabled={loading}>
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            messages.map((m, i) =>
-              // The empty placeholder (sources arrived, no text yet) stays hidden
-              // so it doesn't render as a blank bubble next to Thinking….
-              m.role === 'assistant' && !m.content && !m.isError ? null : (
-                <ChatTurn key={i} message={m} complete={!(loading && i === messages.length - 1)} />
-              ),
-            )
+          {messages.map((m, i) =>
+            // The empty placeholder (sources arrived, no text yet) stays hidden
+            // so it doesn't render as a blank bubble next to Thinking….
+            m.role === 'assistant' && !m.content && !m.isError ? null : (
+              <ChatTurn key={i} message={m} complete={!(loading && i === messages.length - 1)} />
+            ),
           )}
 
           {loading && !streamingStarted && (

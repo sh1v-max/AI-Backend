@@ -7,6 +7,9 @@ export function useDocuments() {
   const [documents, setDocuments] = useState<UploadedDocument[]>([])
   const [status, setStatus] = useState<UploadStatus>('idle')
   const [error, setError] = useState<string | null>(null)
+  // UI.1 — the name of the file being uploaded, for the progress chip in the
+  // home screen's chat box (status alone doesn't say WHICH file)
+  const [uploadingName, setUploadingName] = useState<string | null>(null)
 
   // Load whatever documents already exist on the server — not just ones this
   // tab uploaded itself. Without this, a document uploaded via Postman/curl
@@ -35,6 +38,7 @@ export function useDocuments() {
 
     setStatus('uploading')
     setError(null)
+    setUploadingName(file.name)
 
     try {
       const doc = await uploadDocument(file)
@@ -47,6 +51,8 @@ export function useDocuments() {
       setError(err instanceof Error ? err.message : 'Something went wrong')
       setStatus('error')
       return null
+    } finally {
+      setUploadingName(null)
     }
   }
 
@@ -63,5 +69,5 @@ export function useDocuments() {
     }
   }
 
-  return { documents, status, error, uploadFile, deleteDocument }
+  return { documents, status, error, uploadingName, uploadFile, deleteDocument }
 }
