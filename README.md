@@ -109,7 +109,7 @@ Every route except `/` and the three public `/auth` routes needs `Authorization:
 | `GET` | `/documents` | List uploaded documents |
 | `DELETE` | `/documents/:documentId` | Delete a document, its chunks, and every chat about it |
 | `POST` | `/chat` | `{ message, documentId?, sessionId? }` → `{ sessionId, answer, sources }` |
-| `GET` | `/chat-stream` | Same as `/chat`, streamed. Query params: `message`, `documentId?`, `sessionId?` |
+| `POST` | `/chat-stream` | Same as `/chat` (same JSON body), but the reply streams in as Server-Sent Events |
 | `GET` | `/sessions` | One summary per conversation, newest first |
 | `GET` | `/sessions/:sessionId/messages` | Full transcript of one conversation |
 | `DELETE` | `/sessions/:sessionId` | Delete one conversation |
@@ -117,7 +117,7 @@ Every route except `/` and the three public `/auth` routes needs `Authorization:
 
 **`documentId`** on chat is optional: leave it out (or send `"all"`) to search all of *your* documents. Each source comes back as `{ content, distance, documentId, filename }`.
 
-**`/chat-stream` is a `GET`** because it was built for the browser's `EventSource`, which can only send GET. `EventSource` can't send an `Authorization` header either, so the frontend now reads the stream with `fetch` and parses the events itself. It sends these events, in order:
+**`/chat-stream` is a `POST`**, and the frontend reads it with `fetch` and parses the events itself. It started as a `GET` with query params, because the browser's `EventSource` can only send GET, but `EventSource` also can't send an `Authorization` header, so it was replaced by `fetch`, and then the route moved to POST to keep the question out of the URL (and out of server logs). It sends these events, in order:
 
 | Event | Payload | When |
 |---|---|---|

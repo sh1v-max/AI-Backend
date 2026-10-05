@@ -95,7 +95,7 @@ export type ChatPreparation =
 // the route can send the response — this function never touches `res`.
 //
 // `documentId` and `message` come in as `unknown` because they're raw request
-// input (body for POST, query string for GET) — validating them is step 1.
+// input (the JSON body of both routes) — validating them is step 1.
 //
 // Step 3.3 — scope: a real documentId searches just that PDF; a missing/empty
 // documentId or the sentinel 'all' (ALL_DOCUMENTS) searches every document.
@@ -114,7 +114,7 @@ export async function prepareChat(
 
   // validating documentId
   // Absent/empty = "all documents". Anything present that isn't a string
-  // (e.g. ?documentId=a&documentId=b arrives as an array) is a client bug.
+  // (a number, an array, an object in the JSON body) is a client bug.
   if (
     input.documentId != null &&
     input.documentId !== '' &&

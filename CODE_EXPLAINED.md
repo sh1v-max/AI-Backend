@@ -525,7 +525,7 @@ Streaming is nothing more than "write pieces into a response that stays open, in
 **Files:** [chat.routes.ts:42-101](src/routes/chat.routes.ts#L42-L101) (`GET /chat-stream`), [llm.service.ts:31-80](src/services/llm.service.ts#L31-L80) (`streamAnswer`), [utils/errors.ts](src/utils/errors.ts), shared [chat.service.ts](src/services/chat.service.ts).
 
 ### Why GET, not POST?
-The browser's `EventSource` can **only send GET requests**. So `/chat-stream` takes `documentId`, `message`, `sessionId` as **query parameters** ([chat.routes.ts:44-46](src/routes/chat.routes.ts#L44-L46)) instead of a JSON body. (Trade-off: the message ends up in the URL — see [§7](#7-known-limitations-honest-list).)
+The browser's `EventSource` can **only send GET requests**. So `/chat-stream` takes `documentId`, `message`, `sessionId` as **query parameters** ([chat.routes.ts:44-46](src/routes/chat.routes.ts#L44-L46)) instead of a JSON body. (Trade-off: the message ends up in the URL.) **Update 2026-10-05:** this is history now. The frontend stopped using `EventSource` in Auth.5 (it can't send an `Authorization` header), so nothing forced GET anymore, and the route became `POST /chat-stream` with the same JSON body as `/chat`. See the Auth.5 section below.
 
 ### Part 1 — `streamAnswer()`: reading Gemini's stream — [llm.service.ts:36-80](src/services/llm.service.ts#L36-L80)
 
@@ -989,12 +989,12 @@ repository   WHERE ... AND user_id = userId       ← the filter lives in the SQ
 
 ## Auth.5 — streaming with `fetch` instead of `EventSource`
 
-**File:** [api/chat.ts](frontend/src/api/chat.ts) — [`streamChatMessage`, L71-L170](frontend/src/api/chat.ts#L71-L170)
+**File:** [api/chat.ts](frontend/src/api/chat.ts) — [`streamChatMessage`, L75-L177](frontend/src/api/chat.ts#L75-L177)
 
 The browser's `EventSource` takes a URL and nothing else, so it can't send an `Authorization` header: after Auth.2 every stream got a 401. `fetch` can send headers, and `res.body.getReader()` reads the response as it arrives. The price is parsing the SSE frames by hand, which is the same job `streamAnswer()` already does on the backend for Gemini's stream:
 
 ```
-authFetch('/chat-stream?…', { signal })
+authFetch('/chat-stream', { method: 'POST', JSON body, signal })
   not 200? → read the JSON error → onError(real message)
   loop: buffer += decode(chunk, { stream: true }), \r\n → \n
         split on "\n\n", keep the last (maybe half) frame in the buffer
@@ -1003,11 +1003,11 @@ authFetch('/chat-stream?…', { signal })
 ```
 
 - [`parseFrame`](frontend/src/api/chat.ts#L47-L55) reads `event:` and `data:` lines (no `event:` line = the default "message" event; `:` comment lines are skipped).
-- [`finish`](frontend/src/api/chat.ts#L89-L94) lets only the first `onDone`/`onError` through: `useChat` waits for exactly one.
+- [`finish`](frontend/src/api/chat.ts#L91-L96) lets only the first `onDone`/`onError` through: `useChat` waits for exactly one.
 - `{ stream: true }` on the decoder holds back half of a multi-byte character split across two network chunks.
-- An `AbortError` from the cleanup function is ignored on purpose ([L162-L167](frontend/src/api/chat.ts#L162-L167)).
+- An `AbortError` from the cleanup function is ignored on purpose ([L170-L175](frontend/src/api/chat.ts#L170-L175)).
 
-The signature and handlers didn't change, so `useChat.ts` didn't change, and the server didn't change at all. A bonus: `EventSource` could never read the body of a non-200 response, so a 400/404 used to show as "Connection lost"; now the server's real message reaches the user.
+The signature and handlers didn't change, so `useChat.ts` didn't change, and the server didn't change at all. (Later, on 2026-10-05, the request itself moved from `GET /chat-stream?…` to `POST /chat-stream` with a JSON body, since `fetch` can send any method; the response and the handlers stayed the same.) A bonus: `EventSource` could never read the body of a non-200 response, so a 400/404 used to show as "Connection lost"; now the server's real message reaches the user.
 
 ---
 
@@ -1104,7 +1104,7 @@ Follow a single message from the keyboard to the screen (streaming version, as o
 0. **Before anything:** on page load [`useAuth`](frontend/src/hooks/useAuth.ts#L52-L140) has already turned the saved token into a user (`GET /auth/me`), or made a guest (`POST /auth/guest`), and only then mounted the app ([App.tsx:239-247](frontend/src/App.tsx#L239-L247)).
 1. **You type and press Enter.** [`ChatInputForm`](frontend/src/components/chat/ChatInputForm.tsx#L14-L74) trims it and calls `onSubmit` → `sendMessage` in [useChat.ts](frontend/src/hooks/useChat.ts) (function `sendMessage`).
 2. **The user bubble appears immediately**; loading = true → the three "thinking" dots in [`ChatPanel`](frontend/src/components/chat/ChatPanel.tsx#L27-L89).
-3. **`fetch` opens** `GET /chat-stream?documentId=…&message=…&sessionId=…` with `Authorization: Bearer <token>` through [`authFetch`](frontend/src/api/client.ts#L70-L87), inside [`streamChatMessage`](frontend/src/api/chat.ts#L71-L170). The browser first sends a CORS preflight, which `cors()` answers.
+3. **`fetch` opens** `POST /chat-stream` with a JSON body `{ documentId, message, sessionId }` and `Authorization: Bearer <token>` through [`authFetch`](frontend/src/api/client.ts#L70-L87), inside [`streamChatMessage`](frontend/src/api/chat.ts#L75-L177). The browser first sends a CORS preflight, which `cors()` answers.
 4. **Express routes it**: [`requireAuth`](src/middleware/auth.ts#L16-L33) verifies the token and sets `req.user` ([app.ts:73](src/app.ts#L73)); the `/chat-stream` handler in [chat.routes.ts](src/routes/chat.routes.ts) runs inside `withErrorHandling` and reads `userId = req.user!.id`.
 5. **[`prepareChat()`](src/services/chat.service.ts#L109-L237)**, everything scoped to that user:
    - validates input → [embeddings.service.ts](src/services/embeddings.service.ts) calls Gemini to embed the question →
@@ -1115,7 +1115,7 @@ Follow a single message from the keyboard to the screen (streaming version, as o
 6. **SSE opens**; `meta` (session id + sources) is written. The frontend's [`parseFrame`](frontend/src/api/chat.ts#L47-L55) reads it and `useChat` adds the empty assistant bubble with sources.
 7. **[`streamAnswer`](src/services/llm.service.ts)** calls Gemini's streaming endpoint; each parsed piece is `yield`ed, and the route writes it as `data: {"text": …}`.
 8. **Each piece reaches the frontend's read loop**, is split into frames, dispatched as `onChunk` → `appendToAssistantBubble` → React re-renders the growing answer through [`Markdown`](frontend/src/components/chat/Markdown.tsx#L28-L36), and the view scrolls.
-9. **The stream ends**: the server saves the full reply (again with your `user_id`) and sends `event: done`; [`finish('done')`](frontend/src/api/chat.ts#L89-L94) fires `onDone`, the sidebar refreshes, and Copy + the sources toggle appear under the answer.
+9. **The stream ends**: the server saves the full reply (again with your `user_id`) and sends `event: done`; [`finish('done')`](frontend/src/api/chat.ts#L91-L96) fires `onDone`, the sidebar refreshes, and Copy + the sources toggle appear under the answer.
 
 Along the way, the backend terminal shows the colourful `[1/7] … [7/7]` trace (with a `user:` line), and the browser console shows `[DocMind:…]` lines.
 
@@ -1132,7 +1132,6 @@ Things that work but are deliberately simple — good to know, and several are f
 - **"All documents" retrieval is only as good as top-3.** Chunks from several PDFs compete for the same 3 slots, and *meta* questions ("which documents do you have?") can't be answered by chunk search — the model only sees the 3 nearest chunks, often all from one file. A future routing step (Phase 7) is the real fix.
 - **Orphan chunks exist in the database**: 65 chunk rows have no `documents` row (test uploads from before Step 2.2). Since auth they're unreachable in every search (no owner through the join). They can be cleaned up with SQL (`DELETE FROM chunks WHERE document_id NOT IN (SELECT id FROM documents)`) — not done automatically.
 - **`listSessions()` loads *every* message** of every session and reduces them in JavaScript ([repository L71-114](src/repositories/chatMessages.repository.ts#L71-L114)) — fine for a learning project, wasteful at scale.
-- **`/chat-stream` puts the user's message in the URL** (it was built GET-only for `EventSource`, and the `fetch`-based client kept the same route): it can appear in server logs, and very long messages could hit URL length limits. Now that the client uses `fetch`, moving it to a POST body is possible.
 - **The Gemini API key is sent in the URL** (`?key=`). Gemini also accepts it in an `x-goog-api-key` header, which keeps it out of URLs and logs.
 - **The upload's PDF check trusts the client's mimetype** ([documents.routes.ts:40](src/routes/documents.routes.ts#L40)).
 - **Errors are terminal-only** — writing them to a file (`logs/errors.log`) was discussed and intentionally deferred.

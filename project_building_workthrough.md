@@ -124,6 +124,7 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 
 **Step 3.2 — Stream the real chat reply** *(done)*
 - `GET /chat-stream?sessionId=...&documentId=...&message=...` — **GET, not POST**, because the browser's `EventSource` can only send GET requests, so everything travels as query params instead of a JSON body
+  - *Later (2026-10-05):* the frontend moved off `EventSource` in Auth.5 (no `Authorization` header possible), so the route became `POST /chat-stream` with the same JSON body as `/chat`, keeping the question out of the URL and the server logs. The SSE response didn't change.
 - Same 7-step pipeline as `/chat` (embed → search → load history → save user message → build prompt → generate → save assistant reply). To avoid maintaining the prompt twice, it was extracted into a shared `buildChatPrompt(context, history, message)` helper used by both routes
 - **`streamAnswer()`** in `llm.service.ts` (an `async function*` — it `yield`s pieces instead of returning once) calls Gemini's `streamGenerateContent?alt=sse`. It reads raw bytes with `res.body.getReader()`, decodes with `TextDecoder`, normalizes Gemini's `\r\n` line endings to `\n` (on the whole buffer, so a `\r\n` split across two network chunks is still caught), splits on the blank-line event boundary, keeps the trailing partial event in the buffer for the next read, and yields the `text` out of each `data: {...}` payload
 - The route's own SSE event protocol, which the frontend depends on:

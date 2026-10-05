@@ -16,7 +16,7 @@ import {
 
 // what this file does:
 // chatRouter.post('/chat'): handles a POST request to /chat
-// chatRouter.get('/chat-stream'): handles a GET request to /chat-stream for streaming responses
+// chatRouter.post('/chat-stream'): handles a POST request to /chat-stream for streaming responses
 
 export const chatRouter = Router()
 
@@ -89,22 +89,32 @@ chatRouter.post(
 // res.json(...)
 
 // Step 3.2 — same pipeline as /chat, but the reply arrives piece by piece.
-// GET + query params, not POST + JSON body — EventSource (what the browser
-// uses to consume SSE) can only send GET requests.
-chatRouter.get(
+//
+// This used to be GET + query params, because the browser's EventSource (the
+// first client) can only send GET. Since Auth.5 the frontend reads the stream
+// with fetch(), which can send any method, so it's now POST + a JSON body,
+// same as /chat. Why that's better:
+//  - the question no longer sits in the URL, and URLs end up in server/proxy
+//    request logs and browser history. A body doesn't.
+//  - no URL length limit (proxies reject very long URLs; a body has no such
+//    problem with a long pasted question).
+//  - GET means "read only, safe to repeat". This route saves two messages
+//    every time it runs, which is POST's job.
+// Only the REQUEST changed. The response is the same SSE stream as before —
+// the method of a request has nothing to do with how its response is sent.
+chatRouter.post(
   '/chat-stream',
   withErrorHandling(
-    'GET /chat-stream',
+    'POST /chat-stream',
     async (req, res) => {
       const t0 = Date.now()
-      // query because eventsource can only send GET requests, not POST with a JSON body. so the documentId, message, and sessionId are sent as query parameters in the URL instead of in the request body.
-      const documentId = req.query.documentId
-      const message = req.query.message
-      const sessionId = (req.query.sessionId as string) || randomUUID()
+      // from the JSON body now, exactly like POST /chat above
+      const { documentId, message } = req.body
+      const sessionId: string = req.body.sessionId || randomUUID()
       // Auth.3 — from the verified token, never from the query string
       const userId = req.user!.id
 
-      pipelineStart('chat', 'GET /chat-stream')
+      pipelineStart('chat', 'POST /chat-stream')
 
       // preparing chat
       const prep = await prepareChat({ documentId, message, sessionId, userId }, t0)
@@ -150,7 +160,7 @@ chatRouter.get(
         )
         res.end()
         console.error(
-          `[GET /chat-stream] streamAnswer failed: ${summarizeError(err)}`,
+          `[POST /chat-stream] streamAnswer failed: ${summarizeError(err)}`,
         )
         return
       }
@@ -165,7 +175,7 @@ chatRouter.get(
         await insertMessage(sessionId, userId, prep.documentId, 'assistant', fullAnswer)
       } catch (err) {
         console.error(
-          `[GET /chat-stream] could not save assistant reply: ${summarizeError(err)}`,
+          `[POST /chat-stream] could not save assistant reply: ${summarizeError(err)}`,
         )
       }
 
@@ -178,11 +188,11 @@ chatRouter.get(
   ),
 )
 
-// workflow for GET /chat-stream:
+// workflow for POST /chat-stream:
 // User sends:
-// "Explain this document"   (as query params, not a body)
+// "Explain this document"   (JSON body, same as /chat)
 //         ↓
-// GET /chat-stream
+// POST /chat-stream
 //         ↓
 // withErrorHandling()   (sse: true, so errors go out as `event: error` frames)
 //         ↓

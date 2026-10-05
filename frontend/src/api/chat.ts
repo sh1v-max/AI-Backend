@@ -54,17 +54,21 @@ function parseFrame(frame: string): { event: string; data: string } | null {
   return dataLines.length > 0 ? { event, data: dataLines.join('\n') } : null
 }
 
-// Step 3.2F — the params go in the URL (GET), not a JSON body like
-// sendChatMessage above. Returns a cleanup function that stops the stream
-// (call it if the component unmounts mid-stream).
+// Step 3.2F — streams the answer piece by piece. Returns a cleanup function
+// that stops the stream (call it if the component unmounts mid-stream).
 //
 // Auth.5 — this used the browser's EventSource, which CANNOT send an
 // Authorization header (its constructor takes a URL and nothing else), so
 // after Auth.2 every stream got a 401. It now uses fetch() and reads the
-// response body as a stream, which allows headers. The server didn't change
-// at all: same GET /chat-stream, same four frame types. The cost is that we
+// response body as a stream, which allows headers. The cost is that we
 // parse the SSE frames ourselves, which is the same job streamAnswer() does
 // on the backend for Gemini's stream.
+//
+// After that, nothing forced GET anymore (GET was only ever for EventSource),
+// so the request is now a POST with a JSON body, same as sendChatMessage
+// above: the question stays out of the URL (URLs land in server logs and
+// browser history) and there's no URL length limit. The response is the same
+// SSE stream with the same four frame types.
 //
 // The signature and the handlers are unchanged, so useChat.ts doesn't know
 // anything changed.
@@ -74,9 +78,7 @@ export function streamChatMessage(
   sessionId: string,
   handlers: StreamHandlers,
 ): () => void {
-  const params = new URLSearchParams({ documentId, message, sessionId })
-
-  log.info('api:chat', `GET /chat-stream — session=${sessionId} document=${documentId}`, { message })
+  log.info('api:chat', `POST /chat-stream — session=${sessionId} document=${documentId}`, { message })
 
   // AbortController is fetch's "cancel" button: controller.abort() stops the
   // request and makes the pending reader.read() throw an AbortError.
@@ -93,6 +95,7 @@ export function streamChatMessage(
     else handlers.onError(outcome.error)
   }
 
+  // this dispatch function is called for each SSE frame received from the server. it parses the frame and calls the appropriate handler based on the event type (meta, message, done, error). if the event is meta, it calls handlers.onMeta with the sessionId and sources. if the event is message, it calls handlers.onChunk with the text of the answer piece. if the event is done, it calls finish('done'). if the event is error, it calls finish with an error message.
   function dispatch(frame: string) {
     const parsed = parseFrame(frame)
     if (!parsed) return
@@ -118,7 +121,12 @@ export function streamChatMessage(
   }
 
   async function run() {
-    const res = await authFetch(`/chat-stream?${params}`, { signal: controller.signal })
+    const res = await authFetch('/chat-stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ documentId, message, sessionId }),
+      signal: controller.signal,
+    })
 
     // A real bonus over EventSource: it could never read the body of a
     // non-200 response, so a 400/404 showed up as "Connection lost". fetch
