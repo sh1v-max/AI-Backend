@@ -1,0 +1,125 @@
+<!doctype html>
+<!--
+  Source of frontend/public/how-to-start.pdf, the sample document a visitor can
+  open with one click. Edit this file, then regenerate the PDF (from the repo root):
+
+    "/c/Program Files/Google/Chrome/Application/chrome.exe" --headless --disable-gpu \
+      --no-pdf-header-footer --print-to-pdf="frontend/public/how-to-start.pdf" \
+      "file:///C:/Shiv/DocMind/frontend/sample-docs/how-to-start.html"
+
+  Chrome's print keeps a real text layer, which is what pdf-parse needs (no OCR).
+  Keep it short: every click uploads and embeds it again (~500 words = 1 chunk =
+  1 embedding call). And the chat answers ONLY from this text, so anything a
+  visitor might ask about DocMind has to actually be written here.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How to start with DocMind</title>
+<style>
+  @page { size: A4; margin: 18mm 18mm 18mm 18mm; }
+  body {
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.5;
+    color: #1f2328;
+    margin: 0;
+  }
+  header { border-bottom: 2px solid #4f46e5; padding-bottom: 10px; margin-bottom: 14px; }
+  h1 { font-size: 22pt; margin: 0 0 4px; color: #111827; }
+  .lead { margin: 0; color: #4b5563; }
+  h2 { font-size: 13pt; color: #4f46e5; margin: 16px 0 6px; break-after: avoid; }
+  p { margin: 0 0 8px; }
+  ul, ol { margin: 0 0 8px; padding-left: 20px; }
+  li { margin-bottom: 4px; }
+  strong { color: #111827; }
+  .faq p { margin-bottom: 6px; }
+  section { break-inside: avoid-page; }
+  footer { margin-top: 16px; padding-top: 8px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 9pt; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>How to start with DocMind</h1>
+  <p class="lead">A short guide to the app. This file is also a sample document: ask the chat anything about it to see how DocMind works.</p>
+</header>
+
+<section>
+<h2>1. What DocMind is</h2>
+<p>DocMind lets you upload a PDF and chat with it. You ask a question in plain words, DocMind finds the passages in your document that are most relevant to it, and then writes an answer based only on those passages. It does not use outside knowledge and it is told not to guess.</p>
+<p>Every answer shows the sources it used, so you can check it yourself. DocMind remembers the conversation, so follow-up questions like "explain the second point" or "what about the first one?" work. It can also turn a document into a five-question quiz.</p>
+</section>
+
+<section>
+<h2>2. Getting started in four steps</h2>
+<ol>
+  <li><strong>Upload a PDF.</strong> Drop a PDF onto the page or choose one from your computer. DocMind reads the text, splits it into chunks and indexes them. A short document is ready in a few seconds; a long one takes longer.</li>
+  <li><strong>Ask a question.</strong> Type it and press Enter. Shift+Enter adds a new line. The answer streams in piece by piece while it is being written. On an empty chat you can also click one of the suggested starter questions.</li>
+  <li><strong>Check the sources.</strong> Under each answer you can open the passages it was based on. If the answer and the passages ever disagree, trust the passages.</li>
+  <li><strong>Quiz yourself.</strong> With a single document open, choose Generate quiz. You get five multiple-choice questions with four options each. Pick your answers, click Check answers to see your score and the correct options, or regenerate for a new set.</li>
+</ol>
+</section>
+
+<section>
+<h2>3. One document or all of them</h2>
+<p>Each conversation searches either one document or all of your documents together. You pick this scope when the conversation starts. Switching the scope starts a new conversation, and the old one stays in your history in the sidebar.</p>
+<p>When you search all documents, the answer names the file each piece of information came from. A quiz always needs a single document, so it is not available in the "All documents" mode.</p>
+</section>
+
+<section>
+<h2>4. Tips for better answers</h2>
+<ul>
+  <li><strong>Be specific.</strong> "What does the report say about pricing?" works much better than "tell me stuff".</li>
+  <li><strong>Use the document's key terms.</strong> Search matches meaning, not exact words, but naming the topic the way the document does still helps it find the right passage.</li>
+  <li><strong>Ask for a format.</strong> For example "in 5 bullet points", "as a table" or "in simple words".</li>
+  <li><strong>Big summaries work best on short documents.</strong> For each question DocMind reads only the 3 most relevant passages, not the whole file. On a long document, ask about one part at a time.</li>
+  <li><strong>"Not in the document" usually means exactly that.</strong> DocMind says so plainly instead of making something up. Try rephrasing, or ask about a specific section.</li>
+  <li><strong>Questions about your files themselves</strong>, like "which documents do I have?", can't be answered by the chat, because it only sees passages from inside documents. Your list of documents is shown in the app.</li>
+</ul>
+</section>
+
+<section>
+<h2>5. What works and what doesn't</h2>
+<ul>
+  <li><strong>PDFs with real text work.</strong> Files typed or exported from Word, Google Docs, LaTeX and similar tools are fine.</li>
+  <li><strong>Scanned pages and photos don't.</strong> A scan is just a picture of text, and DocMind has no OCR, so it finds nothing to read.</li>
+  <li><strong>Text only.</strong> Images and charts are ignored. Tables are read as plain text, so their layout can come out jumbled.</li>
+  <li><strong>File size:</strong> up to 10 MB per PDF.</li>
+  <li><strong>How many files:</strong> a guest can keep up to 5 documents and a registered account up to 10. Delete one to make room for another.</li>
+</ul>
+</section>
+
+<section>
+<h2>6. Your account and your files</h2>
+<ul>
+  <li><strong>No sign-up needed to try it.</strong> Every visitor automatically gets a guest account.</li>
+  <li><strong>Your files are private.</strong> Your documents and conversations belong to your account. Other visitors can't see, search, chat with or delete them.</li>
+  <li><strong>A guest session lives in this browser for 30 days.</strong> If you clear your browser data or open DocMind on another device, you start as a new guest and the old files can't be reached.</li>
+  <li><strong>Sign up to keep your files.</strong> Create an account with an email and a password of at least 8 characters, and everything you uploaded as a guest moves to that account. Signing in to an account you already have does not bring the guest files along.</li>
+  <li><strong>Deleting is permanent.</strong> Deleting a document also deletes every conversation about it. Deleting a conversation leaves the document alone.</li>
+</ul>
+</section>
+
+<section>
+<h2>7. How it works under the hood</h2>
+<p>DocMind is a RAG app. RAG stands for retrieval-augmented generation: first retrieve the relevant passages, then let a language model generate an answer from them.</p>
+<p><strong>When you upload a PDF</strong>, the text is extracted and split into chunks of about 500 words. Each chunk is turned into an embedding by Google's gemini-embedding-001 model. An embedding is a list of 3072 numbers that captures what the text means, so texts with similar meaning get similar numbers. The chunks and their embeddings are stored in a Postgres database with the pgvector extension.</p>
+<p><strong>When you ask a question</strong>, the question is turned into an embedding the same way. pgvector finds the 3 chunks whose embeddings are closest in meaning. Those chunks, the last 8 messages of the conversation and your question go into one prompt for Gemini (gemini-flash-lite-latest). The answer is streamed back to the browser with Server-Sent Events, and both messages are saved so the conversation can be continued later.</p>
+<p><strong>When you generate a quiz</strong>, DocMind takes chunks from across the whole document and asks Gemini for JSON in a fixed shape. The reply is checked with Zod: exactly 5 questions, each with 4 different options and one correct answer. An invalid reply is retried once. The options are then shuffled in code, because language models tend to put the correct answer in the same position too often.</p>
+<p><strong>The stack:</strong> a React, Vite and TypeScript frontend hosted on Vercel; a Node.js, Express 5 and TypeScript API hosted on Render; Postgres on Neon with Drizzle ORM; and JWT login with bcrypt-hashed passwords.</p>
+</section>
+
+<section class="faq">
+<h2>8. Quick questions</h2>
+<p><strong>Why was the first load slow?</strong> The server runs on a free plan that goes to sleep when nobody is using it. The first visit wakes it up, which can take up to a minute. After that it is fast.</p>
+<p><strong>Why did the answer say the document doesn't cover it?</strong> None of the 3 passages it found contained the answer. Rephrase the question, use words from the document, or ask about a narrower part.</p>
+<p><strong>Can I chat with more than one document at once?</strong> Yes. Choose "All documents" as the scope and DocMind searches every file you have uploaded.</p>
+<p><strong>Should I upload private files?</strong> Better not. To create embeddings and answers, the text of your document and your questions are sent to Google's Gemini API, on its free tier. Use DocMind for documents you are comfortable sharing that way. You can delete any document or conversation at any time.</p>
+<p><strong>Who built DocMind?</strong> Shiv Shankar Singh (GitHub: sh1v-max), as a hands-on project to learn how AI backends work: embeddings, vector search, RAG, conversation memory, streaming and structured output.</p>
+</section>
+
+<footer>DocMind sample document. Upload your own PDF any time to start chatting with it.</footer>
+
+</body>
+</html>
