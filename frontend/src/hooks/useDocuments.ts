@@ -56,6 +56,13 @@ export function useDocuments() {
     }
   }
 
+  // UI.3 — for a failure that happens before uploadFile() is even called
+  // (fetching the sample PDF), shown in the same error banner as an upload error
+  function showUploadError(message: string) {
+    setError(message)
+    setStatus('error')
+  }
+
   async function deleteDocument(documentId: string): Promise<boolean> {
     log.info('useDocuments', `deleteDocument() called — ${documentId}`)
     try {
@@ -69,5 +76,5 @@ export function useDocuments() {
     }
   }
 
-  return { documents, status, error, uploadingName, uploadFile, deleteDocument }
+  return { documents, status, error, uploadingName, uploadFile, showUploadError, deleteDocument }
 }

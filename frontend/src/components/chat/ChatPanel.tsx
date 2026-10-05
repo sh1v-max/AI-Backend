@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react'
 import { ChatTurn } from './ChatTurn'
 import { ChatInputForm } from './ChatInputForm'
+import { ScopeSelect } from './ScopeSelect'
 import { BrandMark } from '../common/BrandMark'
 import type { ChatMessage } from '../../types/chat'
+import type { UploadedDocument } from '../../types/document'
 
 interface ChatPanelProps {
   messages: ChatMessage[]
@@ -10,12 +12,25 @@ interface ChatPanelProps {
   onInputChange: (value: string) => void
   onSend: (message: string) => void
   loading: boolean
+  // UI.4 — for the scope picker in the chat box
+  activeDocument: { documentId: string; filename: string } | null
+  documents: UploadedDocument[]
+  onChangeScope: (documentId: string) => void
 }
 
 // UI.1 — only shown once a conversation exists. The empty state with the
 // starter questions moved to the home screen (NewChatScreen), which is where
 // a new chat now starts.
-export function ChatPanel({ messages, input, onInputChange, onSend, loading }: ChatPanelProps) {
+export function ChatPanel({
+  messages,
+  input,
+  onInputChange,
+  onSend,
+  loading,
+  activeDocument,
+  documents,
+  onChangeScope,
+}: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const last = messages[messages.length - 1]
@@ -59,7 +74,24 @@ export function ChatPanel({ messages, input, onInputChange, onSend, loading }: C
         </div>
       </div>
 
-      <ChatInputForm value={input} onChange={onInputChange} onSubmit={onSend} disabled={loading} />
+      <ChatInputForm
+        value={input}
+        onChange={onInputChange}
+        onSubmit={onSend}
+        disabled={loading}
+        toolbar={
+          activeDocument && (
+            // no switching mid-answer: a new chat would swap the messages out
+            // from under the stream that's still writing into them
+            <ScopeSelect
+              activeDocument={activeDocument}
+              documents={documents}
+              onChange={onChangeScope}
+              disabled={loading}
+            />
+          )
+        }
+      />
     </div>
   )
 }

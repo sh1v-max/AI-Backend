@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
-import { ClipboardText, Files, FileText, SidebarSimple, Spinner, UploadSimple } from '@phosphor-icons/react'
+import { ClipboardText, SidebarSimple, Spinner, UploadSimple } from '@phosphor-icons/react'
 import { IconButton } from '../common/IconButton'
 import { ChatPanel } from './ChatPanel'
 import { NewChatScreen } from './NewChatScreen'
 import type { ChatMessage } from '../../types/chat'
-import { ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL } from '../../types/document'
+import { ALL_DOCUMENTS } from '../../types/document'
 import type { UploadedDocument, UploadStatus } from '../../types/document'
 
 interface ChatViewProps {
@@ -25,6 +25,7 @@ interface ChatViewProps {
   uploadError: string | null
   uploadingName: string | null
   onUpload: (file: File) => void
+  onTrySample: () => void
   onPickDocument: (doc: UploadedDocument) => void
   onPickAll: () => void
   onClearDocument: () => void
@@ -58,6 +59,7 @@ export function ChatView({
   uploadError,
   uploadingName,
   onUpload,
+  onTrySample,
   onPickDocument,
   onPickAll,
   onClearDocument,
@@ -71,6 +73,10 @@ export function ChatView({
   // uploading a document now keeps you on the home screen with that document
   // attached to the box, and the first question sent is what opens the chat.
   const inConversation = activeSessionId !== null || messages.length > 0
+  // the first question, same as a session's title in the sidebar; while an
+  // opened conversation is still loading, the document name stands in
+  const conversationTitle =
+    messages.find((m) => m.role === 'user')?.content ?? activeDocument?.filename ?? 'Conversation'
 
   // UI.1 — drop a PDF anywhere on the main area. dragenter/dragleave fire for
   // every child element the pointer crosses, so a plain true/false flag would
@@ -140,35 +146,12 @@ export function ChatView({
         </IconButton>
 
         <div className="chat-main-title">
-          {inConversation && activeDocument && documents.length > 1 ? (
-            // Step 3.3 — the scope toggle. A conversation's scope is fixed once
-            // it starts (its messages are saved against one documentId), so
-            // picking a different one starts a fresh chat; the old one stays
-            // in the sidebar history.
-            <label className="scope-select">
-              <span className="scope-select-label">Searching in</span>
-              <select
-                value={activeDocument.documentId}
-                onChange={(e) => onChangeScope(e.target.value)}
-                title="Switching starts a new chat"
-                aria-label="Which documents to search"
-              >
-                <option value={ALL_DOCUMENTS}>{ALL_DOCUMENTS_LABEL}</option>
-                {documents.map((doc) => (
-                  <option key={doc.documentId} value={doc.documentId}>
-                    {doc.filename}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : inConversation && activeDocument ? (
+          {/* UI.4 — the header names the conversation now (its first question,
+              like the sidebar history does). Which document it searches moved
+              into the chat box, see ScopeSelect. */}
+          {inConversation ? (
             <span className="chat-main-subtitle">
-              {activeDocument.documentId === ALL_DOCUMENTS ? (
-                <Files size={16} aria-hidden />
-              ) : (
-                <FileText size={16} aria-hidden />
-              )}
-              <span className="chat-main-subtitle-text">{activeDocument.filename}</span>
+              <span className="chat-main-subtitle-text">{conversationTitle}</span>
             </span>
           ) : (
             <span className="chat-main-subtitle chat-main-subtitle--muted">New chat</span>
@@ -197,7 +180,16 @@ export function ChatView({
           <Spinner size={22} weight="bold" className="spin" aria-hidden />
         </div>
       ) : inConversation ? (
-        <ChatPanel messages={messages} input={input} onInputChange={onInputChange} onSend={onSend} loading={loading} />
+        <ChatPanel
+          messages={messages}
+          input={input}
+          onInputChange={onInputChange}
+          onSend={onSend}
+          loading={loading}
+          activeDocument={activeDocument}
+          documents={documents}
+          onChangeScope={onChangeScope}
+        />
       ) : (
         <NewChatScreen
           activeDocument={activeDocument}
@@ -212,6 +204,7 @@ export function ChatView({
           onQueueQuestion={onQueueQuestion}
           onCancelQueued={onCancelQueued}
           onUpload={onUpload}
+          onTrySample={onTrySample}
           onPickDocument={onPickDocument}
           onPickAll={onPickAll}
           onClearDocument={onClearDocument}

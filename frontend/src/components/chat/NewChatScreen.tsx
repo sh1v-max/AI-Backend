@@ -1,7 +1,8 @@
 import { useRef, useState, type AnimationEvent } from 'react'
-import { ClockCountdown, Files, FileText, Spinner, TrashSimple, X, XCircle } from '@phosphor-icons/react'
+import { ArrowRight, ClockCountdown, Files, FileText, Spinner, TrashSimple, X, XCircle } from '@phosphor-icons/react'
 import { BrandMark } from '../common/BrandMark'
 import { ChatInputForm } from './ChatInputForm'
+import { SAMPLE_FILENAME } from '../../api/sample'
 import { ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL } from '../../types/document'
 import type { UploadedDocument, UploadStatus } from '../../types/document'
 
@@ -12,6 +13,14 @@ const SUGGESTIONS = [
   'Summarize this in 5 bullet points',
   'What are the key facts and numbers?',
   'Explain the main idea simply',
+]
+
+// UI.3 — for the sample document: questions it can actually answer, which
+// also happen to show off what DocMind does
+const SAMPLE_SUGGESTIONS = [
+  'How does DocMind work under the hood?',
+  'What kind of PDFs work?',
+  'How do I keep my files?',
 ]
 
 interface NewChatScreenProps {
@@ -30,6 +39,8 @@ interface NewChatScreenProps {
   onQueueQuestion: (message: string) => void
   onCancelQueued: () => void
   onUpload: (file: File) => void
+  // UI.3 — the one-click "How to start.pdf" sample
+  onTrySample: () => void
   onPickDocument: (doc: UploadedDocument) => void
   onPickAll: () => void
   onClearDocument: () => void
@@ -53,6 +64,7 @@ export function NewChatScreen({
   onQueueQuestion,
   onCancelQueued,
   onUpload,
+  onTrySample,
   onPickDocument,
   onPickAll,
   onClearDocument,
@@ -194,9 +206,24 @@ export function NewChatScreen({
         </div>
       )}
 
+      {/* UI.3 — no PDF handy? One click: upload the sample (or attach the
+          copy uploaded earlier) and the starter questions below take over. */}
+      {!activeDocument && !uploading && (
+        <button type="button" className="sample-card" onClick={onTrySample}>
+          <span className="sample-card-icon" aria-hidden>
+            <FileText size={20} weight="duotone" />
+          </span>
+          <span className="sample-card-text">
+            <strong>No PDF handy? Try “{SAMPLE_FILENAME}”</strong>
+            <span>A short guide to DocMind. Ask it how the app works.</span>
+          </span>
+          <ArrowRight size={16} className="sample-card-arrow" aria-hidden />
+        </button>
+      )}
+
       {activeDocument && !uploading && (
         <div className="suggestion-row">
-          {SUGGESTIONS.map((s) => (
+          {(activeDocument.filename === SAMPLE_FILENAME ? SAMPLE_SUGGESTIONS : SUGGESTIONS).map((s) => (
             <button key={s} type="button" className="suggestion" onClick={() => onSend(s)}>
               {s}
             </button>

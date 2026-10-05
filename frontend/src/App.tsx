@@ -12,6 +12,7 @@ import { AuthModal, type AuthMode } from './components/auth/AuthModal'
 import { AccountArea } from './components/auth/AccountArea'
 import type { User } from './types/auth'
 import { log } from './utils/logger'
+import { fetchSamplePdf, SAMPLE_FILENAME } from './api/sample'
 import { ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL } from './types/document'
 import type { UploadedDocument } from './types/document'
 import type { SessionSummary } from './types/chat'
@@ -28,7 +29,7 @@ interface AppShellProps {
 // it just only gets mounted once useAuth (below) has a token to send.
 // Auth.6 — plus the account area and the sign-in / sign-up modal.
 function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
-  const { documents, status, error, uploadingName, uploadFile, deleteDocument } = useDocuments()
+  const { documents, status, error, uploadingName, uploadFile, showUploadError, deleteDocument } = useDocuments()
   const { sessions, refresh: refreshSessions, deleteSession } = useSessions()
   const {
     activeSessionId,
@@ -98,6 +99,33 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
       // the question isn't lost: back into the box, in front of anything typed since
       if (queued) setChatInput((prev) => (prev.trim() ? `${queued}
 ${prev}` : queued))
+    }
+  }
+
+  // UI.3 — the "How to start.pdf" button. Already uploaded -> just attach that
+  // copy (no second upload, no extra embedding calls, no extra slot used).
+  // Otherwise fetch the PDF that ships with the frontend and upload it like
+  // any other file. The ref stops a double click from uploading it twice: the
+  // fetch happens before status turns 'uploading', so the UI can't block it yet.
+  const sampleLoading = useRef(false)
+  async function handleTrySample() {
+    const existing = documents.find((d) => d.filename === SAMPLE_FILENAME)
+    if (existing) {
+      log.info('App', '[action] sample already uploaded — attaching the existing copy')
+      startNewChat(existing.documentId, existing.filename)
+      return
+    }
+    if (sampleLoading.current) return
+    sampleLoading.current = true
+    log.info('App', '[action] trying the sample document')
+    try {
+      const file = await fetchSamplePdf()
+      await handleUpload(file)
+    } catch (err) {
+      log.error('App', 'could not load the sample PDF', err)
+      showUploadError(err instanceof Error ? err.message : "Couldn't load the sample document.")
+    } finally {
+      sampleLoading.current = false
     }
   }
 
@@ -244,6 +272,7 @@ ${prev}` : queued))
         uploadError={error}
         uploadingName={uploadingName}
         onUpload={handleUpload}
+        onTrySample={handleTrySample}
         onPickDocument={handlePickDocument}
         onPickAll={handlePickAll}
         onClearDocument={handleClearDocument}

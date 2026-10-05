@@ -18,6 +18,9 @@ interface ChatInputFormProps {
   attachDisabled?: boolean
   placeholder?: string
   hint?: string
+  // UI.4 — extra controls on the bottom row, next to the paperclip (the
+  // "Searching: report.pdf ▾" scope picker in a conversation)
+  toolbar?: ReactNode
 }
 
 // How tall the box may grow before it scrolls instead (~8 lines).
@@ -36,6 +39,7 @@ export function ChatInputForm({
   attachDisabled = false,
   placeholder = 'Ask a question…',
   hint = DEFAULT_HINT,
+  toolbar,
 }: ChatInputFormProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -77,7 +81,22 @@ export function ChatInputForm({
       <div className="composer-box">
         {attachments && <div className="composer-attachments">{attachments}</div>}
 
-        <div className="composer-row">
+        {/* UI.4 — text on top, a toolbar row under it (paperclip, scope, send),
+            the layout most chat apps use: the text gets the full width and
+            the controls have room to grow. */}
+        <textarea
+          ref={textareaRef}
+          className="composer-input"
+          placeholder={placeholder}
+          value={value}
+          rows={1}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={disabled}
+          aria-label="Chat message"
+        />
+
+        <div className="composer-toolbar">
           {onAttach && (
             <button
               type="button"
@@ -90,17 +109,7 @@ export function ChatInputForm({
               <Paperclip size={18} weight="regular" />
             </button>
           )}
-          <textarea
-            ref={textareaRef}
-            className="composer-input"
-            placeholder={placeholder}
-            value={value}
-            rows={1}
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={disabled}
-            aria-label="Chat message"
-          />
+          {toolbar}
           <button
             type="submit"
             className="composer-send"
