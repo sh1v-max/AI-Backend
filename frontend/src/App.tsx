@@ -7,6 +7,7 @@ import { useChat } from './hooks/useChat'
 import { useQuiz } from './hooks/useQuiz'
 import { useAuth } from './hooks/useAuth'
 import { QuizModal } from './components/quiz/QuizModal'
+import { QuizPickerModal } from './components/quiz/QuizPickerModal'
 import { SplashScreen } from './components/common/SplashScreen'
 import { AuthModal, type AuthMode } from './components/auth/AuthModal'
 import { AccountArea } from './components/auth/AccountArea'
@@ -181,14 +182,25 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
     if (doc) startNewChat(doc.documentId, doc.filename)
   }
 
-  // Step 4.2F — Generate quiz. UI.5 — it's in each document's ⋯ menu in the
-  // sidebar now (it was a header button, only there for the open document),
-  // so it gets the document passed in. "All documents" never reaches here:
-  // the menu only lists real documents.
-  function handleQuizDocument(doc: UploadedDocument) {
-    log.info('App', `[action] generate quiz — "${doc.filename}" (${doc.documentId})`)
-    quiz.generate(doc.documentId, doc.filename)
+  // UI.6 — the sidebar's "Quiz yourself" button opens a picker of every
+  // document; picking one generates its quiz (Step 4.2F) in QuizModal.
+  // (UI.5 had it in each document's ⋯ menu; the header button before that.)
+  // useCallback: the picker's Escape listener depends on onClose, and a new
+  // function every render (each streamed piece of an answer) would re-attach it.
+  const [quizPickerOpen, setQuizPickerOpen] = useState(false)
+  const closeQuizPicker = useCallback(() => setQuizPickerOpen(false), [])
+
+  function handleOpenQuizPicker() {
+    log.info('App', '[action] "Quiz yourself" clicked — opening the document picker')
+    setQuizPickerOpen(true)
     setMobileSidebarOpen(false)
+  }
+
+  // "All documents" never reaches here: the picker only lists real documents.
+  function handlePickQuizDocument(doc: UploadedDocument) {
+    log.info('App', `[action] generate quiz — "${doc.filename}" (${doc.documentId})`)
+    setQuizPickerOpen(false)
+    quiz.generate(doc.documentId, doc.filename)
   }
 
   function handleSelectSession(session: (typeof sessions)[number]) {
@@ -251,6 +263,7 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
         onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
         onCloseMobile={() => setMobileSidebarOpen(false)}
         onNewChat={handleNewChat}
+        onOpenQuiz={handleOpenQuizPicker}
         onSelectSession={handleSelectSession}
         onDeleteSession={handleDeleteSession}
         documents={documents}
@@ -261,7 +274,6 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
         uploadDisabled={chatLoading}
         onUpload={handleUpload}
         onChatDocument={handlePickDocument}
-        onQuizDocument={handleQuizDocument}
         onDeleteDocument={handleDeleteDocument}
       />
 
@@ -293,6 +305,13 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
         onPickAll={handlePickAll}
         onClearDocument={handleClearDocument}
         onChangeScope={handleChangeScope}
+      />
+
+      <QuizPickerModal
+        open={quizPickerOpen}
+        documents={documents}
+        onPick={handlePickQuizDocument}
+        onClose={closeQuizPicker}
       />
 
       <QuizModal

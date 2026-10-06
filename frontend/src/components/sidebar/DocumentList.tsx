@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChatCircleText, ClipboardText, DotsThree, FileText, Plus, Spinner, TrashSimple } from '@phosphor-icons/react'
+import { ChatCircleText, DotsThree, FileText, Plus, Spinner, TrashSimple } from '@phosphor-icons/react'
 import { USER_MAX_DOCUMENTS } from '../../types/document'
 import type { UploadedDocument } from '../../types/document'
 
@@ -15,7 +15,6 @@ interface DocumentListProps {
   uploadDisabled: boolean
   onUpload: (file: File) => void
   onChat: (doc: UploadedDocument) => void
-  onQuiz: (doc: UploadedDocument) => void
   onDelete: (doc: UploadedDocument) => void
 }
 
@@ -33,8 +32,8 @@ const MENU_WIDTH = 176
 // UI.5 — the sidebar's Documents section. Documents used to appear only as
 // chips on the new-chat screen, so once you were in a conversation there was
 // nowhere to see or manage them. Now: the list, a + to upload, the cap, and a
-// ⋯ menu per file with the three things you can do with one (chat, quiz,
-// delete). The quiz button moved here from the chat header.
+// ⋯ menu per file (new chat about it, delete). UI.6 — quizzes have their own
+// button under "New chat" now (QuizPickerModal), so they're not in this menu.
 export function DocumentList({
   documents,
   activeDocumentId,
@@ -44,7 +43,6 @@ export function DocumentList({
   uploadDisabled,
   onUpload,
   onChat,
-  onQuiz,
   onDelete,
 }: DocumentListProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -189,10 +187,6 @@ export function DocumentList({
           <button type="button" role="menuitem" onClick={() => act(onChat, menuDoc)}>
             <ChatCircleText size={16} aria-hidden />
             New chat about it
-          </button>
-          <button type="button" role="menuitem" onClick={() => act(onQuiz, menuDoc)}>
-            <ClipboardText size={16} aria-hidden />
-            Generate quiz
           </button>
           <button type="button" role="menuitem" className="doc-menu-danger" onClick={() => act(onDelete, menuDoc)}>
             <TrashSimple size={16} aria-hidden />

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { PencilSimpleLine, SidebarSimple, X } from '@phosphor-icons/react'
+import { ClipboardText, PencilSimpleLine, SidebarSimple, X } from '@phosphor-icons/react'
 import { IconButton } from '../common/IconButton'
 import { BrandMark } from '../common/BrandMark'
 import { HistoryList } from './HistoryList'
@@ -17,6 +17,8 @@ interface SidebarProps {
   onToggleCollapse: () => void
   onCloseMobile: () => void
   onNewChat: () => void
+  // UI.6 — opens the "which document?" quiz picker
+  onOpenQuiz: () => void
   onSelectSession: (session: SessionSummary) => void
   onDeleteSession: (session: SessionSummary) => void
   // UI.5 — the Documents section
@@ -28,7 +30,6 @@ interface SidebarProps {
   uploadDisabled: boolean
   onUpload: (file: File) => void
   onChatDocument: (doc: UploadedDocument) => void
-  onQuizDocument: (doc: UploadedDocument) => void
   onDeleteDocument: (doc: UploadedDocument) => void
 }
 
@@ -41,6 +42,7 @@ export function Sidebar({
   onToggleCollapse,
   onCloseMobile,
   onNewChat,
+  onOpenQuiz,
   onSelectSession,
   onDeleteSession,
   documents,
@@ -51,7 +53,6 @@ export function Sidebar({
   uploadDisabled,
   onUpload,
   onChatDocument,
-  onQuizDocument,
   onDeleteDocument,
 }: SidebarProps) {
   return (
@@ -88,6 +89,12 @@ export function Sidebar({
         {!collapsed && <span>New chat</span>}
       </button>
 
+      {/* UI.6 — quizzes get their own entry point, right under New chat */}
+      <button type="button" className="new-chat-button sidebar-quiz-button" onClick={onOpenQuiz} title="Quiz yourself">
+        <ClipboardText size={17} weight="regular" aria-hidden />
+        {!collapsed && <span>Quiz yourself</span>}
+      </button>
+
       {/* UI.5 — documents and chats share one scroll area, so a long list of
           either never pushes the other (or the account area) off screen */}
       {!collapsed && (
@@ -101,7 +108,6 @@ export function Sidebar({
             uploadDisabled={uploadDisabled}
             onUpload={onUpload}
             onChat={onChatDocument}
-            onQuiz={onQuizDocument}
             onDelete={onDeleteDocument}
           />
           <section className="sidebar-section" aria-label="Chats">
