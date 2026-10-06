@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
-import { ClipboardText, SidebarSimple, Spinner, UploadSimple } from '@phosphor-icons/react'
+import { SidebarSimple, Spinner, UploadSimple } from '@phosphor-icons/react'
 import { IconButton } from '../common/IconButton'
 import { ChatPanel } from './ChatPanel'
 import { NewChatScreen } from './NewChatScreen'
 import type { ChatMessage } from '../../types/chat'
-import { ALL_DOCUMENTS } from '../../types/document'
 import type { UploadedDocument, UploadStatus } from '../../types/document'
 
 interface ChatViewProps {
@@ -30,9 +29,6 @@ interface ChatViewProps {
   onPickAll: () => void
   onClearDocument: () => void
   onChangeScope: (documentId: string) => void
-  onDeleteDocument: (doc: UploadedDocument) => void
-  onGenerateQuiz: () => void
-  quizLoading: boolean
 }
 
 // A drag carries "Files" in its types only when it's a file from the OS —
@@ -64,9 +60,6 @@ export function ChatView({
   onPickAll,
   onClearDocument,
   onChangeScope,
-  onDeleteDocument,
-  onGenerateQuiz,
-  quizLoading,
 }: ChatViewProps) {
   // UI.1 — the home screen and the conversation are told apart by whether a
   // conversation exists yet, NOT by whether a document is picked: picking or
@@ -158,21 +151,6 @@ export function ChatView({
           )}
         </div>
 
-        {/* Step 4.2F — a quiz needs one document's worth of chunks in reading
-            order (see quiz.service.ts), so this is hidden for "All documents"
-            and when no document is picked yet. */}
-        {activeDocument && activeDocument.documentId !== ALL_DOCUMENTS && (
-          <button
-            type="button"
-            className="quiz-generate-button"
-            onClick={onGenerateQuiz}
-            disabled={quizLoading}
-            title="Generate a quiz from this document"
-          >
-            <ClipboardText size={15} weight="regular" aria-hidden />
-            <span className="quiz-generate-button-label">Generate quiz</span>
-          </button>
-        )}
       </header>
 
       {restoring ? (
@@ -208,7 +186,6 @@ export function ChatView({
           onPickDocument={onPickDocument}
           onPickAll={onPickAll}
           onClearDocument={onClearDocument}
-          onDeleteDocument={onDeleteDocument}
         />
       )}
 

@@ -1,5 +1,5 @@
 import { useRef, useState, type AnimationEvent } from 'react'
-import { ArrowRight, ClockCountdown, Files, FileText, Spinner, TrashSimple, X, XCircle } from '@phosphor-icons/react'
+import { ArrowRight, ClockCountdown, Files, FileText, Spinner, X, XCircle } from '@phosphor-icons/react'
 import { BrandMark } from '../common/BrandMark'
 import { ChatInputForm } from './ChatInputForm'
 import { SAMPLE_FILENAME } from '../../api/sample'
@@ -44,7 +44,6 @@ interface NewChatScreenProps {
   onPickDocument: (doc: UploadedDocument) => void
   onPickAll: () => void
   onClearDocument: () => void
-  onDeleteDocument: (doc: UploadedDocument) => void
 }
 
 // UI.1 — the home screen is now the chat box itself (it used to be a big
@@ -68,7 +67,6 @@ export function NewChatScreen({
   onPickDocument,
   onPickAll,
   onClearDocument,
-  onDeleteDocument,
 }: NewChatScreenProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const uploading = uploadStatus === 'uploading'
@@ -233,13 +231,15 @@ export function NewChatScreen({
 
       {documents.length > 0 && (
         <div className="new-chat-recent">
+          {/* UI.5 — just for picking now; managing (delete, quiz) lives in
+              the sidebar's ⋯ menus */}
           <span className="new-chat-recent-label">Your documents</span>
           <div className="doc-chip-row">
             {/* Step 3.3 — search every document at once. Only worth offering
                 when there's more than one to search. */}
             {documents.length > 1 && (
               <div className={`doc-chip ${isAll ? 'doc-chip--active' : ''}`}>
-                <button type="button" className="doc-chip-button doc-chip-button--solo" onClick={onPickAll}>
+                <button type="button" className="doc-chip-button" onClick={onPickAll}>
                   <Files size={14} weight="regular" aria-hidden />
                   {ALL_DOCUMENTS_LABEL} ({documents.length})
                 </button>
@@ -253,18 +253,6 @@ export function NewChatScreen({
                 <button type="button" className="doc-chip-button" onClick={() => onPickDocument(doc)}>
                   <FileText size={14} weight="regular" aria-hidden />
                   <span className="doc-chip-name">{doc.filename}</span>
-                </button>
-                <button
-                  type="button"
-                  className="doc-chip-delete"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onDeleteDocument(doc)
-                  }}
-                  aria-label={`Delete "${doc.filename}"`}
-                  title="Delete document"
-                >
-                  <TrashSimple size={12} weight="regular" />
                 </button>
               </div>
             ))}

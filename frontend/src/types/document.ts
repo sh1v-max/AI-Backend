@@ -14,3 +14,9 @@ export type UploadStatus = 'idle' | 'uploading' | 'error'
 // treats a missing documentId the same way.
 export const ALL_DOCUMENTS = 'all'
 export const ALL_DOCUMENTS_LABEL = 'All documents'
+
+// UI.5 — the per-user document caps, for the sidebar's "3 / 5" counter. Must
+// match GUEST_MAX_DOCUMENTS / USER_MAX_DOCUMENTS in the backend's config.ts;
+// the backend is what actually enforces them (403 on /upload).
+export const GUEST_MAX_DOCUMENTS = 5
+export const USER_MAX_DOCUMENTS = 10

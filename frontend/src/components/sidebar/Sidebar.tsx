@@ -3,7 +3,9 @@ import { PencilSimpleLine, SidebarSimple, X } from '@phosphor-icons/react'
 import { IconButton } from '../common/IconButton'
 import { BrandMark } from '../common/BrandMark'
 import { HistoryList } from './HistoryList'
+import { DocumentList } from './DocumentList'
 import type { SessionSummary } from '../../types/chat'
+import type { UploadedDocument } from '../../types/document'
 
 interface SidebarProps {
   // Auth.6 — the account area pinned to the bottom (built in App, which owns the user)
@@ -17,6 +19,17 @@ interface SidebarProps {
   onNewChat: () => void
   onSelectSession: (session: SessionSummary) => void
   onDeleteSession: (session: SessionSummary) => void
+  // UI.5 — the Documents section
+  documents: UploadedDocument[]
+  activeDocumentId: string | null
+  maxDocuments: number
+  isGuest: boolean
+  uploading: boolean
+  uploadDisabled: boolean
+  onUpload: (file: File) => void
+  onChatDocument: (doc: UploadedDocument) => void
+  onQuizDocument: (doc: UploadedDocument) => void
+  onDeleteDocument: (doc: UploadedDocument) => void
 }
 
 export function Sidebar({
@@ -30,6 +43,16 @@ export function Sidebar({
   onNewChat,
   onSelectSession,
   onDeleteSession,
+  documents,
+  activeDocumentId,
+  maxDocuments,
+  isGuest,
+  uploading,
+  uploadDisabled,
+  onUpload,
+  onChatDocument,
+  onQuizDocument,
+  onDeleteDocument,
 }: SidebarProps) {
   return (
     <aside
@@ -65,13 +88,34 @@ export function Sidebar({
         {!collapsed && <span>New chat</span>}
       </button>
 
+      {/* UI.5 — documents and chats share one scroll area, so a long list of
+          either never pushes the other (or the account area) off screen */}
       {!collapsed && (
-        <HistoryList
-          sessions={sessions}
-          activeSessionId={activeSessionId}
-          onSelectSession={onSelectSession}
-          onDeleteSession={onDeleteSession}
-        />
+        <div className="sidebar-scroll">
+          <DocumentList
+            documents={documents}
+            activeDocumentId={activeDocumentId}
+            maxDocuments={maxDocuments}
+            isGuest={isGuest}
+            uploading={uploading}
+            uploadDisabled={uploadDisabled}
+            onUpload={onUpload}
+            onChat={onChatDocument}
+            onQuiz={onQuizDocument}
+            onDelete={onDeleteDocument}
+          />
+          <section className="sidebar-section" aria-label="Chats">
+            <div className="sidebar-section-header">
+              <h3 className="sidebar-section-label">Chats</h3>
+            </div>
+            <HistoryList
+              sessions={sessions}
+              activeSessionId={activeSessionId}
+              onSelectSession={onSelectSession}
+              onDeleteSession={onDeleteSession}
+            />
+          </section>
+        </div>
       )}
 
       {footer}

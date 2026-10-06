@@ -182,8 +182,216 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  padding: var(--space-1) var(--space-2) var(--space-3);
+  padding: 0 var(--space-2) var(--space-3);
+}
+
+/* ---- UI.5: the sidebar's scroll area, holding Documents + Chats ---- */
+
+.sidebar-scroll {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+}
+
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-1) var(--space-4);
+}
+
+.sidebar-section-label {
+  flex: 1;
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+/* "3 / 5" */
+.doc-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-muted);
+}
+
+.doc-count--full {
+  color: var(--color-destructive);
+  font-weight: 600;
+}
+
+.sidebar-section-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-foreground);
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+
+.sidebar-section-action:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  background: var(--color-accent-bg);
+  color: var(--color-accent-hover);
+}
+
+.sidebar-section-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.doc-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0 var(--space-2);
+  list-style: none;
+}
+
+.doc-item {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--color-foreground);
+  transition: background-color 150ms ease;
+}
+
+.doc-item:hover,
+.doc-item--menu-open {
+  background: var(--color-muted-bg);
+}
+
+.doc-item--active {
+  background: var(--color-accent-bg);
+  color: var(--color-accent-hover);
+  font-weight: 500;
+}
+
+.doc-item-button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 7px var(--space-2);
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.doc-item-button svg {
+  flex-shrink: 0;
+  color: var(--color-accent-hover);
+}
+
+.doc-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* the ⋯ button: shown on hover, while its menu is open, or with keyboard focus */
+.doc-item-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  margin-right: 2px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 150ms ease;
+}
+
+.doc-item:hover .doc-item-more,
+.doc-item--menu-open .doc-item-more,
+.doc-item-more:focus-visible {
+  opacity: 1;
+}
+
+/* no hover on a touch screen, so there the ⋯ is always visible */
+@media (hover: none) {
+  .doc-item-more {
+    opacity: 1;
+  }
+}
+
+.doc-item-more:hover {
+  background: var(--color-border);
+  color: var(--color-foreground);
+}
+
+.doc-list-empty,
+.doc-cap-note {
+  margin: 0;
+  padding: var(--space-1) var(--space-4) var(--space-2);
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.doc-cap-note {
+  color: var(--color-destructive);
+}
+
+/* the ⋯ menu (position: fixed, placed by DocumentList) */
+.doc-menu {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+}
+
+.doc-menu button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-foreground);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.doc-menu button:hover,
+.doc-menu button:focus-visible {
+  background: var(--color-muted-bg);
+  outline: none;
+}
+
+.doc-menu .doc-menu-danger {
+  color: var(--color-destructive);
+}
+
+.doc-menu .doc-menu-danger:hover,
+.doc-menu .doc-menu-danger:focus-visible {
+  background: var(--color-destructive-bg);
 }
 
 .history-group-label {
@@ -265,7 +473,7 @@
   flex-direction: column;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-8) var(--space-4);
+  padding: var(--space-4);
   color: var(--color-muted);
   text-align: center;
 }
@@ -831,17 +1039,13 @@
   font-weight: 500;
 }
 
-/* a chip with no delete button after it (the "All documents" one) */
-.doc-chip-button--solo {
-  padding-right: var(--space-3);
-}
 
 .doc-chip-button {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
   min-width: 0;
-  padding: var(--space-2) 0 var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border: none;
   background: transparent;
   color: var(--color-foreground);
@@ -851,27 +1055,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.doc-chip-delete {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  flex-shrink: 0;
-  margin-right: 2px;
-  border: none;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--color-muted);
-  cursor: pointer;
-  transition: background-color 150ms ease, color 150ms ease;
-}
-
-.doc-chip-delete:hover {
-  background: var(--color-destructive-bg);
-  color: var(--color-destructive);
 }
 
 /* ---------- chat panel ---------- */
@@ -1496,36 +1679,6 @@
   text-align: center;
 }
 
-/* ---------- quiz button (chat header) ---------- */
-
-.quiz-generate-button {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex-shrink: 0;
-  padding: 6px var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  color: var(--color-foreground);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: border-color 150ms ease, background-color 150ms ease;
-}
-
-.quiz-generate-button:hover:not(:disabled) {
-  border-color: var(--color-accent);
-  background: var(--color-accent-bg);
-  color: var(--color-accent-hover);
-}
-
-.quiz-generate-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 /* ---------- quiz modal (Step 4.2F) ---------- */
 
 .quiz-overlay {
@@ -1801,12 +1954,6 @@
     z-index: 20;
   }
 
-  /* Icon-only on a narrow header, same pattern as the sidebar's mobile-only
-     icon buttons — there isn't room for the label next to the sidebar
-     toggle and a possibly-long document name. */
-  .quiz-generate-button-label {
-    display: none;
-  }
 
   .chat-messages {
     padding: var(--space-4) var(--space-3);

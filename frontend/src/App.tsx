@@ -13,7 +13,7 @@ import { AccountArea } from './components/auth/AccountArea'
 import type { User } from './types/auth'
 import { log } from './utils/logger'
 import { fetchSamplePdf, SAMPLE_FILENAME } from './api/sample'
-import { ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL } from './types/document'
+import { ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL, GUEST_MAX_DOCUMENTS, USER_MAX_DOCUMENTS } from './types/document'
 import type { UploadedDocument } from './types/document'
 import type { SessionSummary } from './types/chat'
 import './App.css'
@@ -80,6 +80,12 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
 
   async function handleUpload(file: File) {
     log.info('App', `[action] file selected for upload — "${file.name}"`)
+    // UI.5 — an upload can now start from anywhere (the sidebar's +, a drop
+    // mid-conversation), but its progress chip lives on the home screen. Go
+    // there first, so there's something to look at while it runs. The open
+    // conversation isn't lost: it's in the sidebar's history.
+    if (activeSessionId || messages.length > 0) resetToWelcome()
+    setMobileSidebarOpen(false)
     const doc = await uploadFile(file)
     // UI.2 — whatever was queued during the upload, read now (not before the await)
     const queued = pendingQuestionRef.current
@@ -97,8 +103,7 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
     } else {
       log.warn('App', '[action] upload did not return a document — staying on new-chat screen')
       // the question isn't lost: back into the box, in front of anything typed since
-      if (queued) setChatInput((prev) => (prev.trim() ? `${queued}
-${prev}` : queued))
+      if (queued) setChatInput((prev) => (prev.trim() ? `${queued}\n${prev}` : queued))
     }
   }
 
@@ -163,7 +168,8 @@ ${prev}` : queued))
     resetToWelcome()
   }
 
-  // Step 3.3 — the header's scope dropdown. A conversation's scope is fixed
+  // Step 3.3 — the scope picker (UI.4: in the chat box now, it was in the
+  // header). A conversation's scope is fixed
   // when it starts, so switching begins a new chat (the old one stays in history).
   function handleChangeScope(documentId: string) {
     log.info('App', `[action] scope changed to ${documentId}`)
@@ -175,14 +181,14 @@ ${prev}` : queued))
     if (doc) startNewChat(doc.documentId, doc.filename)
   }
 
-  // Step 4.2F — the header's "Generate quiz" button. Only shown when
-  // activeDocument is a real, single document (never null, never "All
-  // documents" — see the guard in ChatView), but the check stays here too
-  // since a handler shouldn't assume the UI enforced its own precondition.
-  function handleGenerateQuiz() {
-    if (!activeDocument || activeDocument.documentId === ALL_DOCUMENTS) return
-    log.info('App', `[action] generate quiz — "${activeDocument.filename}" (${activeDocument.documentId})`)
-    quiz.generate(activeDocument.documentId, activeDocument.filename)
+  // Step 4.2F — Generate quiz. UI.5 — it's in each document's ⋯ menu in the
+  // sidebar now (it was a header button, only there for the open document),
+  // so it gets the document passed in. "All documents" never reaches here:
+  // the menu only lists real documents.
+  function handleQuizDocument(doc: UploadedDocument) {
+    log.info('App', `[action] generate quiz — "${doc.filename}" (${doc.documentId})`)
+    quiz.generate(doc.documentId, doc.filename)
+    setMobileSidebarOpen(false)
   }
 
   function handleSelectSession(session: (typeof sessions)[number]) {
@@ -247,6 +253,16 @@ ${prev}` : queued))
         onNewChat={handleNewChat}
         onSelectSession={handleSelectSession}
         onDeleteSession={handleDeleteSession}
+        documents={documents}
+        activeDocumentId={activeDocument?.documentId ?? null}
+        maxDocuments={user.isGuest ? GUEST_MAX_DOCUMENTS : USER_MAX_DOCUMENTS}
+        isGuest={user.isGuest}
+        uploading={status === 'uploading'}
+        uploadDisabled={chatLoading}
+        onUpload={handleUpload}
+        onChatDocument={handlePickDocument}
+        onQuizDocument={handleQuizDocument}
+        onDeleteDocument={handleDeleteDocument}
       />
 
       {mobileSidebarOpen && (
@@ -277,9 +293,6 @@ ${prev}` : queued))
         onPickAll={handlePickAll}
         onClearDocument={handleClearDocument}
         onChangeScope={handleChangeScope}
-        onDeleteDocument={handleDeleteDocument}
-        onGenerateQuiz={handleGenerateQuiz}
-        quizLoading={quiz.loading}
       />
 
       <QuizModal
