@@ -864,75 +864,6 @@
   padding: 0;
 }
 
-/* UI.3 — the "No PDF handy? Try How to start.pdf" button */
-.sample-card {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  width: min(440px, 100%);
-  padding: var(--space-3) var(--space-4);
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-lg);
-  background: transparent;
-  color: var(--color-foreground);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 150ms ease, background-color 150ms ease;
-}
-
-.sample-card:hover {
-  border-color: var(--color-accent);
-  border-style: solid;
-  background: var(--color-accent-bg);
-}
-
-.sample-card:focus-visible {
-  outline: 2px solid var(--color-ring);
-  outline-offset: 2px;
-}
-
-.sample-card-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  flex-shrink: 0;
-  border-radius: var(--radius-md);
-  background: var(--color-accent-bg);
-  color: var(--color-accent-hover);
-}
-
-.sample-card-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-}
-
-.sample-card-text strong {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.sample-card-text span {
-  font-size: 12.5px;
-  color: var(--color-muted);
-}
-
-.sample-card-arrow {
-  flex-shrink: 0;
-  color: var(--color-muted);
-  transition: transform 150ms ease, color 150ms ease;
-}
-
-.sample-card:hover .sample-card-arrow {
-  transform: translateX(3px);
-  color: var(--color-accent-hover);
-}
-
 /* UI.2 — "attach a PDF first": a short shake + the hint in red */
 .home-composer--shake {
   animation: nudge 360ms ease;
@@ -1016,6 +947,29 @@
 .doc-chip:hover {
   border-color: var(--color-accent);
   background: var(--color-accent-bg);
+}
+
+/* UI.3 — the "sample" tag on the How to start.pdf chip */
+.doc-chip-tag {
+  flex-shrink: 0;
+  margin-left: 2px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--color-accent-bg);
+  color: var(--color-accent-hover);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* not uploaded yet: dashed, like a slot waiting to be filled */
+.doc-chip--sample {
+  border-style: dashed;
+}
+
+.doc-chip-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 /* the icon keeps its size, the name gets the "…" */
