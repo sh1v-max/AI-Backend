@@ -51,10 +51,23 @@ export const documents = pgTable('documents', {
   // that's already deployed (it just never fills it in). A row with no owner
   // matches no user, so nobody can see it.
   userId: text('user_id'),
+  // BG.0 — where the document is in its life: 'processing' (row exists, the
+  // queue worker is still embedding its chunks), 'ready' (fully searchable)
+  // or 'failed' (every retry used up). Only 'ready' documents are searched or
+  // quizzed. DEFAULT 'ready' is what made the SQL below safe on the live
+  // table: every existing row became ready instantly, and the code deployed
+  // before BG never writes this column, so its uploads are ready too.
+  status: text('status').notNull().default('ready'), // 'processing' | 'ready' | 'failed'
+  // BG.0 — a short, user-safe reason when status = 'failed' (never a stack
+  // trace or SQL; the full error goes to the terminal via summarizeError()).
+  error: text('error'),
 })
 // equivalent sql query (Auth.0):
 // ALTER TABLE documents ADD COLUMN user_id TEXT;
 // CREATE INDEX documents_user_id_idx ON documents (user_id);
+// (BG.0):
+// ALTER TABLE documents ADD COLUMN status TEXT NOT NULL DEFAULT 'ready';
+// ALTER TABLE documents ADD COLUMN error TEXT;
 
 // the chunks table schema
 // Auth.0 — chunks deliberately get NO user_id. A chunk belongs to a document
