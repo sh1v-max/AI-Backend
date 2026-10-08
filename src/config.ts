@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import type { DefaultJobOptions, WorkerOptions } from 'bullmq'
 
 // Constants shared across routes/services live here so there's one place to
 // change them, instead of magic numbers scattered through the route files.
@@ -61,6 +62,61 @@ export const AUTH_RATE_WINDOW_MS = 15 * 60 * 1000
 // side, can be fixed from the dashboard without a code change. Locally there
 // is no proxy, so the value doesn't matter.
 export const TRUST_PROXY_HOPS = Number(process.env.TRUST_PROXY_HOPS ?? 3)
+
+// BG.0 — background jobs (Phase 6, see background-jobs-plan.md).
+// Uploads answer right away; the slow part (embedding every chunk with
+// Gemini) runs later in a BullMQ worker that takes jobs from a Redis queue.
+
+// The queue's name. BullMQ stores everything about it in Redis under keys
+// like "<prefix>:ingest-pdf:...".
+export const INGEST_QUEUE = 'ingest-pdf'
+
+// Redis connection (Upstash, a rediss:// URL = TLS) and the key prefix.
+// Local dev and Render share ONE free Upstash database, so each environment
+// gets its own prefix (docmind-dev locally, docmind on Render). Different
+// prefix = a different queue, so the laptop's worker never takes production's
+// jobs. No defaults on purpose: a forgotten prefix on Render must not quietly
+// fall back to the dev queue. Both are checked when the queue starts (BG.2).
+export const REDIS_URL = process.env.REDIS_URL
+export const BULLMQ_PREFIX = process.env.BULLMQ_PREFIX
+
+// Start the worker inside the API process unless RUN_WORKER=false. Render's
+// free tier has no separate worker service, so in production it runs here.
+// Locally, set it to false when not working on Phase 6: an idle worker still
+// talks to Redis and spends the free plan's 500K commands a month.
+export const RUN_WORKER = process.env.RUN_WORKER !== 'false'
+
+// What every ingest job gets unless told otherwise.
+export const INGEST_JOB_OPTIONS = {
+  // Gemini's "high demand" 503s are real and usually pass on their own, so a
+  // failed job is tried 3 times in total before it counts as failed.
+  attempts: 3,
+  // Wait 5 s before the 2nd try and 10 s before the 3rd (doubling each time).
+  backoff: { type: 'exponential', delay: 5000 },
+  // The documents row is the record of what happened; a finished job's chunk
+  // text has no reason to sit in Redis (256 MB free limit).
+  removeOnComplete: true,
+  // Keep the last 50 failed jobs so they can be looked at in Upstash's data
+  // browser.
+  removeOnFail: 50,
+} satisfies DefaultJobOptions
+
+// How the worker behaves. The last three are tuned for Upstash's free plan:
+// BullMQ talks to Redis even when there's nothing to do, and with the defaults
+// that alone would use up more than the 500K commands a month.
+export const INGEST_WORKER_OPTIONS = {
+  // One document at a time: the Gemini free tier is rate limited anyway.
+  concurrency: 1,
+  // How long (seconds) one "any jobs?" wait lasts when the queue is empty.
+  // Default 5 → about 6x more idle commands.
+  drainDelay: 30,
+  // How often (ms) to look for jobs whose worker died mid-job. Default 30 s.
+  stalledInterval: 300_000,
+  // How long (ms) a running job's lock lasts before it's considered stalled
+  // (BullMQ renews it while the job runs). Default 30 s; a slow Gemini call
+  // on Render's 0.1 CPU shouldn't make a job that's still running look dead.
+  lockDuration: 60_000,
+} satisfies Partial<WorkerOptions>
 
 // What the client sees when a network step (Gemini, Neon) fails — the real
 // cause goes to the terminal instead (see utils/errors.ts).

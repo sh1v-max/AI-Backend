@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "step3": "ts-node src/step3-drizzle.ts",
     "step4": "ts-node src/step4-quiz-zod.ts",
+    "step5": "ts-node src/step5-bullmq.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -28,12 +29,14 @@
   "homepage": "https://github.com/sh1v-max/AI-Backend#readme",
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "bullmq": "^6.3.11",
     "chalk": "^4.1.2",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
+    "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.3.0",
     "pdf-parse": "^2.4.5",
