@@ -864,6 +864,39 @@
   padding: 0;
 }
 
+/* UI.3 — "Don't have a PDF? Try our sample": one line, the button looks like a link */
+.sample-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-muted);
+}
+
+.sample-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-accent-hover);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sample-link:hover {
+  text-decoration: underline;
+}
+
+.sample-link:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 /* UI.2 — "attach a PDF first": a short shake + the hint in red */
 .home-composer--shake {
   animation: nudge 360ms ease;
@@ -947,29 +980,6 @@
 .doc-chip:hover {
   border-color: var(--color-accent);
   background: var(--color-accent-bg);
-}
-
-/* UI.3 — the "sample" tag on the How to start.pdf chip */
-.doc-chip-tag {
-  flex-shrink: 0;
-  margin-left: 2px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--color-accent-bg);
-  color: var(--color-accent-hover);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-/* not uploaded yet: dashed, like a slot waiting to be filled */
-.doc-chip--sample {
-  border-style: dashed;
-}
-
-.doc-chip-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
 }
 
 /* the icon keeps its size, the name gets the "…" */

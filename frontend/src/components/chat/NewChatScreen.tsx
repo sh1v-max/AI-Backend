@@ -71,8 +71,6 @@ export function NewChatScreen({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const uploading = uploadStatus === 'uploading'
   const isAll = activeDocument?.documentId === ALL_DOCUMENTS
-  // UI.3 — once it's in your documents, the sample is just one of the chips
-  const sampleUploaded = documents.some((d) => d.filename === SAMPLE_FILENAME)
   // UI.2 — "attach a PDF first" is two things: the red hint, which stays
   // until a document is attached (so there's time to read it), and the shake,
   // which ends with its animation so the next blocked send can play it again.
@@ -206,6 +204,20 @@ export function NewChatScreen({
         </div>
       )}
 
+      {/* UI.3 — no PDF handy? One click: upload the sample (or attach the
+          copy uploaded earlier) and the starter questions below take over.
+          Kept to one plain line of text with a link-style button: the first
+          version was a big dashed card that competed with the chat box. */}
+      {!activeDocument && !uploading && (
+        <p className="sample-line">
+          Don't have a PDF?{' '}
+          <button type="button" className="sample-link" onClick={onTrySample}>
+            <FileText size={14} weight="bold" aria-hidden />
+            Try our sample
+          </button>
+        </p>
+      )}
+
       {activeDocument && !uploading && (
         <div className="suggestion-row">
           {(activeDocument.filename === SAMPLE_FILENAME ? SAMPLE_SUGGESTIONS : SUGGESTIONS).map((s) => (
@@ -216,56 +228,36 @@ export function NewChatScreen({
         </div>
       )}
 
-      {/* UI.3 — the sample PDF is offered as a chip in this row, as if it were
-          a file you already have (tagged "sample"), so it needs no extra
-          explaining: click it like any document. Until it's uploaded, a click
-          uploads it (onTrySample); after that it's a normal chip. So the row
-          is shown even with no documents, then just holding the sample.
-          UI.5 — picking only; managing (delete) lives in the sidebar. */}
-      <div className="new-chat-recent">
-        <span className="new-chat-recent-label">
-          {documents.length > 0 ? 'Your documents' : 'No PDF yet? Start with ours'}
-        </span>
-        <div className="doc-chip-row">
-          {/* Step 3.3 — search every document at once. Only worth offering
-              when there's more than one to search. */}
-          {documents.length > 1 && (
-            <div className={`doc-chip ${isAll ? 'doc-chip--active' : ''}`}>
-              <button type="button" className="doc-chip-button" onClick={onPickAll}>
-                <Files size={14} weight="regular" aria-hidden />
-                {ALL_DOCUMENTS_LABEL} ({documents.length})
-              </button>
-            </div>
-          )}
-          {documents.map((doc) => (
-            <div
-              key={doc.documentId}
-              className={`doc-chip ${activeDocument?.documentId === doc.documentId ? 'doc-chip--active' : ''}`}
-            >
-              <button type="button" className="doc-chip-button" onClick={() => onPickDocument(doc)}>
-                <FileText size={14} weight="regular" aria-hidden />
-                <span className="doc-chip-name">{doc.filename}</span>
-                {doc.filename === SAMPLE_FILENAME && <span className="doc-chip-tag">sample</span>}
-              </button>
-            </div>
-          ))}
-          {!sampleUploaded && (
-            <div className="doc-chip doc-chip--sample">
-              <button
-                type="button"
-                className="doc-chip-button"
-                onClick={onTrySample}
-                disabled={uploading}
-                title="A short guide to DocMind. Click to add it and ask it how the app works."
+      {documents.length > 0 && (
+        <div className="new-chat-recent">
+          {/* UI.5 — just for picking now; managing (delete) lives in the
+              sidebar's ⋯ menus */}
+          <span className="new-chat-recent-label">Your documents</span>
+          <div className="doc-chip-row">
+            {/* Step 3.3 — search every document at once. Only worth offering
+                when there's more than one to search. */}
+            {documents.length > 1 && (
+              <div className={`doc-chip ${isAll ? 'doc-chip--active' : ''}`}>
+                <button type="button" className="doc-chip-button" onClick={onPickAll}>
+                  <Files size={14} weight="regular" aria-hidden />
+                  {ALL_DOCUMENTS_LABEL} ({documents.length})
+                </button>
+              </div>
+            )}
+            {documents.map((doc) => (
+              <div
+                key={doc.documentId}
+                className={`doc-chip ${activeDocument?.documentId === doc.documentId ? 'doc-chip--active' : ''}`}
               >
-                <FileText size={14} weight="regular" aria-hidden />
-                <span className="doc-chip-name">{SAMPLE_FILENAME}</span>
-                <span className="doc-chip-tag">sample</span>
-              </button>
-            </div>
-          )}
+                <button type="button" className="doc-chip-button" onClick={() => onPickDocument(doc)}>
+                  <FileText size={14} weight="regular" aria-hidden />
+                  <span className="doc-chip-name">{doc.filename}</span>
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
