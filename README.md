@@ -16,13 +16,14 @@ It comes with a React frontend that exercises every endpoint the way a real clie
 ## What it does
 
 - **Your own private space, no sign-up needed.** Every visitor silently gets a guest account and only ever sees their own documents and chats. Sign up later to keep them and use them on any device.
-- **Upload a PDF.** It gets parsed, split into chunks, turned into embeddings, and stored in Postgres with pgvector.
+- **Attach a PDF and ask in one go.** The home screen is the chat box: attach (or drop) a PDF, type your question, send. If the upload is still running, the question waits for it and goes out on its own. Behind the scenes the PDF is parsed, split into chunks, turned into embeddings, and stored in Postgres with pgvector.
+- **No PDF handy?** "Try our sample" uploads a short guide to DocMind itself, with starter questions it can actually answer.
 - **Chat with it.** Ask questions, get answers grounded only in your document, formatted (lists, bold, tables), with the source passages shown under every reply.
 - **It remembers the conversation.** Follow-ups like *"what about the second one?"* work, and a page refresh brings you back to the same chat.
 - **Answers stream in live**, word by word, instead of arriving all at once.
-- **Search one PDF or all of them.** Default is every uploaded document; answers name which PDF they came from.
-- **Generate a quiz.** 5 multiple-choice questions from the document, validated before they ever reach the UI, then check your answers.
-- **Conversation history.** A ChatGPT-style sidebar, grouped by day, with delete for chats and documents.
+- **Search one PDF or all of them.** A picker inside the chat box; default is every uploaded document, and answers name which PDF they came from.
+- **Quiz yourself.** Pick a document, get 5 multiple-choice questions, validated before they ever reach the UI, then check your answers.
+- **Sidebar.** Your documents (with a counter against your limit and a menu per file) and your conversations, grouped by day, each deletable.
 
 ---
 
@@ -88,6 +89,7 @@ sign up ──► the same guest row gets an email + password hash, so its files
 | Validation | Zod (for request input *and* for the model's output) |
 | Auth | JWT (`jsonwebtoken`, HS256), `bcryptjs` for passwords, `express-rate-limit` |
 | Streaming | Server-Sent Events |
+| Background jobs | BullMQ + Upstash Redis (in progress: set up and measured, uploads don't use it yet) |
 | Frontend | React 19, Vite, TypeScript, `react-markdown` |
 
 Everything runs on free tiers. No card needed anywhere.
@@ -132,9 +134,9 @@ Every route except `/` and the three public `/auth` routes needs `Authorization:
 
 ```
 src/
-  index.ts            starts the server (7 lines)
+  index.ts            starts the server (~10 lines)
   app.ts              builds the Express app, mounts the routes
-  config.ts           shared constants (limits, token lifetimes, ...)
+  config.ts           shared constants (limits, token lifetimes, queue settings, ...)
   middleware/         requireAuth (checks the JWT), the /auth rate limiter
   routes/             thin: read the request, call a service, send the response
     auth.routes.ts        /auth/guest, /auth/register, /auth/login, /auth/me
@@ -153,13 +155,15 @@ src/
   db/                 Drizzle schema + connection
   schemas/            Zod schemas (the quiz, register/login bodies)
   utils/              error handling, chunking, colored pipeline logs
-  step1-4 *.ts        standalone learning scripts from each phase
+  step1-5 *.ts        standalone learning scripts from each phase (step5 = BullMQ)
 
 frontend/src/
   api/                fetch calls only
   hooks/              state + async logic (useAuth, useChat, useQuiz, ...)
-  components/         UI (sidebar, chat, quiz, upload, sign in / sign up)
+  components/         UI (sidebar, chat + home screen, quiz, sign in / sign up)
   App.tsx             waits for a user (guest or signed in), then wires it together
+
+frontend/public/how-to-start.pdf    the sample document (source: frontend/sample-docs/)
 ```
 
 ---
@@ -194,7 +198,9 @@ CREATE TABLE documents (
   text_length INTEGER NOT NULL,
   chunk_count INTEGER NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  user_id TEXT
+  user_id TEXT,
+  status TEXT NOT NULL DEFAULT 'ready',  -- 'processing' | 'ready' | 'failed' (for background jobs)
+  error TEXT                             -- why it failed, when status = 'failed'
 );
 
 CREATE TABLE chunks (
@@ -218,7 +224,7 @@ CREATE INDEX documents_user_id_idx ON documents (user_id);
 CREATE INDEX chat_messages_user_session_idx ON chat_messages (user_id, session_id);
 ```
 
-(These match `src/db/schema.ts`. `chunks` has no `user_id`: a chunk belongs to a document, and the document has the owner.)
+(These match `src/db/schema.ts`. `chunks` has no `user_id`: a chunk belongs to a document, and the document has the owner. The `status`/`error` columns are needed even now: the code already reads them, and every upload is `ready` until the queue is wired in.)
 
 ### 2. Run the backend
 
@@ -234,9 +240,15 @@ GEMINI_API_KEY=your-key-from-ai-studio
 DATABASE_URL=postgresql://...your neon connection string...
 FRONTEND_URL=http://localhost:5173
 JWT_SECRET=a-long-random-string
+
+# Optional for now: only `npm run step5` (the BullMQ learning script) uses these
+REDIS_URL=rediss://default:password@your-db.upstash.io:6379
+BULLMQ_PREFIX=docmind-dev
 ```
 
 Generate the secret with `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`. The server refuses to start without it.
+
+For Redis, a free [Upstash](https://upstash.com) database works (no card). Use the `rediss://` URL (two s's = TLS). `BULLMQ_PREFIX` keeps local and production jobs apart when they share one Redis.
 
 ```bash
 npm run dev        # API on http://localhost:3000
@@ -251,7 +263,7 @@ cp .env.example .env     # VITE_API_URL=http://localhost:3000
 npm run dev              # UI on http://localhost:5173
 ```
 
-Open `http://localhost:5173`, upload a PDF, and start asking.
+Open `http://localhost:5173`, attach a PDF (or click "Try our sample"), and start asking.
 
 > Only PDFs with a real text layer work (typed or exported documents). Scanned PDFs are just images and would need OCR.
 
@@ -264,7 +276,7 @@ The API runs on a **Render** free web service and redeploys on every push to `ma
 | Build command | `npm install --include=dev && npm run build` (TypeScript is a dev dependency) |
 | Start command | `node dist/index.js` |
 | Health check path | `/` |
-| Env vars | `GEMINI_API_KEY`, `DATABASE_URL`, `FRONTEND_URL` (comma-separated list of allowed origins), `JWT_SECRET` (its own value, not the local one), `TRUST_PROXY_HOPS` (how many proxies sit in front of the app; see below) |
+| Env vars | `GEMINI_API_KEY`, `DATABASE_URL`, `FRONTEND_URL` (comma-separated list of allowed origins), `JWT_SECRET` (its own value, not the local one), `TRUST_PROXY_HOPS` (how many proxies sit in front of the app; see below), `REDIS_URL` + `BULLMQ_PREFIX=docmind` (already set, not used until the queue is wired in) |
 
 `npm run build` uses `tsconfig.build.json`, which compiles only the app (not the `stepN` learning scripts) into `dist/`.
 
@@ -288,13 +300,14 @@ A few things that aren't obvious from the code alone:
 - **Guests are real users.** A first visit creates a user row with no email or password, so a guest's token goes through exactly the same checks as an account's. Signing up fills in that same row, which is why a guest's files survive it.
 - **Ownership lives in the SQL.** Every repository function that reads or deletes takes the user's id as a *required* argument, so forgetting the filter is a TypeScript error instead of a data leak. Someone else's document returns 404, not 403, so its id isn't even confirmed to exist.
 - **Protected by default.** The auth check is mounted before every data route in one place, so a route added later is protected without anyone remembering to do it.
+- **An idle queue worker isn't free.** A BullMQ worker keeps polling Redis even with nothing to do. Measured over 5 idle minutes: 118 Redis commands with default settings (about 1M a month if it never sleeps, double Upstash's free 500K) vs 19 with `drainDelay: 30` and `stalledInterval: 300000` (about 164K). The tuned values are in `src/config.ts`; `npm run step5` repeats the measurement.
 - **A token in a header, not a cookie.** The frontend and API live on different sites, where cookies are third-party and increasingly blocked. The tradeoff is that the token sits in `localStorage`, so answers are rendered as markdown *without* raw HTML.
 
 ---
 
 ## Known limitations
 
-- PDF upload embeds chunks one by one inside the request, so large PDFs are slow (background jobs are the planned fix).
+- PDF upload embeds chunks one by one inside the request, so large PDFs are slow. Background jobs are the fix and in progress (Redis and the status column are in place, the queue isn't wired in yet).
 - Chunking is a simple 500-word split, no overlap and no respect for paragraphs.
 - "Search all documents" shares the top 3 results across every PDF, so a vague question can end up answered from one file. It also can't answer questions *about* your collection, like "which documents do you have?"
 - Memory is the last 8 messages. Older messages are dropped, not summarized.
@@ -319,4 +332,4 @@ This repo doubles as a learning log:
 
 ## What's next
 
-Background jobs for PDF ingestion (BullMQ + Redis), then agents and tool calling, multi-step workflows, and tests.
+Finishing background jobs for PDF ingestion: upload answers right away with `202`, a BullMQ worker embeds the chunks, and the UI shows the document going from processing to ready. Then agents and tool calling, multi-step workflows, and tests.
