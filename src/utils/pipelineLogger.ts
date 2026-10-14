@@ -13,6 +13,9 @@ const THEMES = {
   chat: chalk.magenta,
   quiz: chalk.blueBright,
   auth: chalk.yellow,
+  // BG.2 — the background ingest worker. Its jobs run in between requests,
+  // so they get their own colour to stand out from request traffic.
+  queue: chalk.green,
 }
 
 type Pipeline = keyof typeof THEMES
@@ -23,9 +26,11 @@ export function pipelineStart(pipeline: Pipeline, title: string) {
   console.log(`\n${color(line)} ${color.bold(title)} ${color(line)}`)
 }
 
-export function pipelineEnd(pipeline: Pipeline, totalMs: number) {
+// BG.2 — `label` because a queue job isn't a request: its line reads
+// "Total job time" instead.
+export function pipelineEnd(pipeline: Pipeline, totalMs: number, label = 'Total request time') {
   const color = THEMES[pipeline]
-  console.log(chalk.green.bold(`✓ Total request time: ${totalMs}ms`))
+  console.log(chalk.green.bold(`✓ ${label}: ${totalMs}ms`))
   console.log(color('─'.repeat(60)))
 }
 

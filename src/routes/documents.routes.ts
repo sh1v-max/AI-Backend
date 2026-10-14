@@ -97,7 +97,7 @@ documentsRouter.post('/upload', checkDocumentCap, upload.single('file'), async (
     return res.status(400).json({ error: 'Only PDF files are supported' })
   }
 
-  step('upload', 1, 5, `File received: "${req.file.originalname}" (${req.file.size} bytes)`)
+  step('upload', 1, 4, `File received: "${req.file.originalname}" (${req.file.size} bytes)`)
   detail(`user: ${req.user!.id.slice(0, 8)}`)
 
   const document = await ingestPdf(req.file, req.user!.id)

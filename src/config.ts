@@ -118,6 +118,18 @@ export const INGEST_WORKER_OPTIONS = {
   lockDuration: 60_000,
 } satisfies Partial<WorkerOptions>
 
+// BG.2 — what a user sees on a document whose job failed every attempt.
+// Short and safe on purpose: the real error (Gemini 503, a DB error with its
+// SQL...) goes to the terminal through summarizeError(), never to the client.
+export const INGEST_FAILED_MESSAGE = 'Could not process this PDF. Delete it and upload it again.'
+
+// BG.2 — on SIGTERM (every Render deploy) the worker is given this long to
+// finish the job it's on before the process exits anyway. Render waits about
+// 30 s after SIGTERM before killing the process, so stay under that. A job
+// cut off here isn't lost: it's picked up again as a stalled job after the
+// restart, and running a job twice is safe (it starts by deleting its chunks).
+export const SHUTDOWN_TIMEOUT_MS = 20_000
+
 // What the client sees when a network step (Gemini, Neon) fails — the real
 // cause goes to the terminal instead (see utils/errors.ts).
 export const CONNECTION_ERROR_MESSAGE =

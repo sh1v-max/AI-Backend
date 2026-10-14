@@ -8,8 +8,15 @@ import { documents } from '../db/schema'
 // everyone's documents. The filter lives here, in the SQL, so no caller can
 // skip it.
 
+// BG.2 — the three states a document can be in (see the status column in
+// schema.ts). A union type instead of plain `string`, so a typo like
+// 'readdy' is a compile error.
+export type DocumentStatus = 'processing' | 'ready' | 'failed'
+
 // insert a new document
 // Auth.3 — userId records who uploaded it; it's what every read below filters on.
+// BG.2 — `status` defaults to 'ready' so existing callers don't change; the
+// queued upload (BG.3) inserts 'processing' and the worker flips it later.
 export async function insertDocument(
   id: string,
   userId: string,
@@ -17,16 +24,42 @@ export async function insertDocument(
   fileSizeBytes: number,
   textLength: number,
   chunkCount: number,
+  status: DocumentStatus = 'ready',
 ) {
   const [document] = await db
     .insert(documents)
-    .values({ id, userId, filename, fileSizeBytes, textLength, chunkCount })
+    .values({ id, userId, filename, fileSizeBytes, textLength, chunkCount, status })
     // returning() is used to return the inserted document row after the insert operation. this allows the caller to get the document metadata without having to query the database again. it returns as an array with one element, so we destructure it to get the first element (the inserted document)
     .returning()
   return document
 }
 // equivalent sql query:
-// INSERT INTO documents (id, user_id, filename, file_size_bytes, text_length, chunk_count) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
+// INSERT INTO documents (id, user_id, filename, file_size_bytes, text_length, chunk_count, status) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *
+
+// BG.2 — the worker moves a document to 'ready' or 'failed'. Same owner
+// filter as everything else in this file (the worker gets userId from the
+// job, which only /upload writes, from the token).
+//
+// Returns whether a row was actually updated, and the worker relies on that:
+// false = the document no longer exists (the user deleted it while its job
+// ran), so the chunks the job just stored belong to nothing and must go.
+// Checking "does it exist?" and then updating would be two queries with a gap
+// in between where a delete could land; one UPDATE answers both at once.
+export async function setDocumentStatus(
+  id: string,
+  userId: string,
+  status: DocumentStatus,
+  error: string | null = null,
+): Promise<boolean> {
+  const updated = await db
+    .update(documents)
+    .set({ status, error })
+    .where(and(eq(documents.id, id), eq(documents.userId, userId)))
+    .returning({ id: documents.id })
+  return updated.length > 0
+}
+// equivalent sql query:
+// UPDATE documents SET status = $1, error = $2 WHERE id = $3 AND user_id = $4 RETURNING id
 
 // list one user's documents, newest first
 export async function listDocuments(userId: string) {
