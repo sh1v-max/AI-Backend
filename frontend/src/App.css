@@ -303,6 +303,35 @@
   white-space: nowrap;
 }
 
+/* BG.4 — a document that's still processing or failed: listed, not clickable */
+.doc-item-button:disabled {
+  cursor: default;
+}
+
+.doc-item--unavailable .doc-item-name {
+  color: var(--color-muted);
+}
+
+.doc-item-button svg.doc-item-icon--failed {
+  color: var(--color-destructive);
+}
+
+.doc-item-button .spin {
+  color: var(--color-muted);
+}
+
+.doc-item-status {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-muted);
+}
+
+.doc-item-status--failed {
+  color: var(--color-destructive);
+}
+
 /* the ⋯ button: shown on hover, while its menu is open, or with keyboard focus */
 .doc-item-more {
   display: flex;
@@ -1674,11 +1703,17 @@
   transition: border-color 150ms ease, background-color 150ms ease;
 }
 
-.quiz-picker-item:hover,
+/* BG.4 — :not(:disabled), so a document that isn't ready doesn't light up */
+.quiz-picker-item:not(:disabled):hover,
 .quiz-picker-item:focus-visible {
   border-color: var(--color-accent);
   background: var(--color-accent-bg);
   outline: none;
+}
+
+.quiz-picker-item:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .quiz-picker-icon {

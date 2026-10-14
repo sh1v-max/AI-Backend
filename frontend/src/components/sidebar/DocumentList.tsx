@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChatCircleText, DotsThree, FileText, Plus, Spinner, TrashSimple } from '@phosphor-icons/react'
+import { ChatCircleText, DotsThree, FileText, Plus, Spinner, TrashSimple, WarningCircle } from '@phosphor-icons/react'
 import { USER_MAX_DOCUMENTS } from '../../types/document'
 import type { UploadedDocument } from '../../types/document'
 
@@ -148,14 +148,38 @@ export function DocumentList({
           {documents.map((doc) => {
             const isActive = doc.documentId === activeDocumentId
             const menuOpen = menu?.documentId === doc.documentId
+            // BG.4 — a document still processing (or failed) is listed, so the
+            // user sees it exists, but can't be opened yet. Its ⋯ menu still
+            // works: Delete is how a failed one gets cleaned up.
+            const processing = doc.status === 'processing'
+            const failed = doc.status === 'failed'
+            const title = processing
+              ? `${doc.filename} — still processing, ready in a moment`
+              : failed
+                ? `${doc.filename} — ${doc.error ?? 'failed to process'}`
+                : doc.filename
             return (
               <li
                 key={doc.documentId}
-                className={`doc-item ${isActive ? 'doc-item--active' : ''} ${menuOpen ? 'doc-item--menu-open' : ''}`}
+                className={`doc-item ${isActive ? 'doc-item--active' : ''} ${menuOpen ? 'doc-item--menu-open' : ''} ${processing || failed ? 'doc-item--unavailable' : ''}`}
               >
-                <button type="button" className="doc-item-button" onClick={() => onChat(doc)} title={doc.filename}>
-                  <FileText size={15} aria-hidden />
+                <button
+                  type="button"
+                  className="doc-item-button"
+                  onClick={() => onChat(doc)}
+                  disabled={processing || failed}
+                  title={title}
+                >
+                  {processing ? (
+                    <Spinner size={15} className="spin" aria-hidden />
+                  ) : failed ? (
+                    <WarningCircle size={15} className="doc-item-icon--failed" aria-hidden />
+                  ) : (
+                    <FileText size={15} aria-hidden />
+                  )}
                   <span className="doc-item-name">{doc.filename}</span>
+                  {processing && <span className="doc-item-status">Processing…</span>}
+                  {failed && <span className="doc-item-status doc-item-status--failed">Failed</span>}
                 </button>
                 <button
                   type="button"
@@ -184,10 +208,13 @@ export function DocumentList({
           aria-label={`Actions for "${menuDoc.filename}"`}
           style={{ top: menu.top, left: menu.left, width: MENU_WIDTH }}
         >
-          <button type="button" role="menuitem" onClick={() => act(onChat, menuDoc)}>
-            <ChatCircleText size={16} aria-hidden />
-            New chat about it
-          </button>
+          {/* BG.4 — only a ready document can be chatted with */}
+          {menuDoc.status === 'ready' && (
+            <button type="button" role="menuitem" onClick={() => act(onChat, menuDoc)}>
+              <ChatCircleText size={16} aria-hidden />
+              New chat about it
+            </button>
+          )}
           <button type="button" role="menuitem" className="doc-menu-danger" onClick={() => act(onDelete, menuDoc)}>
             <TrashSimple size={16} aria-hidden />
             Delete

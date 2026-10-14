@@ -22,7 +22,8 @@ export function QuizPickerModal({ open, documents, onPick, onClose }: QuizPicker
   // Escape closes; focus starts on the first document so the keyboard can pick
   useEffect(() => {
     if (!open) return
-    listRef.current?.querySelector('button')?.focus()
+    // BG.4 — skip disabled (not-ready) documents when placing focus
+    listRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose()
     }
@@ -62,7 +63,15 @@ export function QuizPickerModal({ open, documents, onPick, onClose }: QuizPicker
             <ul className="quiz-picker-list" ref={listRef}>
               {documents.map((doc) => (
                 <li key={doc.documentId}>
-                  <button type="button" className="quiz-picker-item" onClick={() => onPick(doc)}>
+                  {/* BG.4 — a quiz samples the document's stored chunks, so it
+                      needs a ready document; the others are shown, disabled,
+                      with their status instead of the upload time */}
+                  <button
+                    type="button"
+                    className="quiz-picker-item"
+                    onClick={() => onPick(doc)}
+                    disabled={doc.status !== 'ready'}
+                  >
                     <span className="quiz-picker-icon" aria-hidden>
                       <FileText size={18} weight="duotone" />
                     </span>
@@ -70,7 +79,11 @@ export function QuizPickerModal({ open, documents, onPick, onClose }: QuizPicker
                       <span className="quiz-picker-name">{doc.filename}</span>
                       <span className="quiz-picker-meta">
                         {formatFileSize(doc.fileSizeBytes)}
-                        {doc.createdAt && ` · uploaded ${formatRelativeTime(doc.createdAt)}`}
+                        {doc.status === 'processing'
+                          ? ' · still processing…'
+                          : doc.status === 'failed'
+                            ? ' · failed to process'
+                            : doc.createdAt && ` · uploaded ${formatRelativeTime(doc.createdAt)}`}
                       </span>
                     </span>
                     <CaretRight size={14} className="quiz-picker-arrow" aria-hidden />

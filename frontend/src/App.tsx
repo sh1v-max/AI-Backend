@@ -47,6 +47,12 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
   } = useChat(refreshSessions)
   const quiz = useQuiz()
 
+  // BG.4 — only these can be chatted with or picked as a scope: a document
+  // still processing (or failed) has no complete set of chunks to search.
+  // The sidebar still lists every document, with its status, and the cap
+  // counts every document (the backend does too).
+  const readyDocuments = documents.filter((d) => d.status === 'ready')
+
   // UI.2 — a question sent while its PDF is still uploading waits here and is
   // sent when the upload finishes. Kept twice on purpose: the state is for
   // rendering (the "Will ask" chip), the ref is for handleUpload, which reads
@@ -116,6 +122,16 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
   const sampleLoading = useRef(false)
   async function handleTrySample() {
     const existing = documents.find((d) => d.filename === SAMPLE_FILENAME)
+    // BG.4 — only a READY copy can be attached; one still processing or
+    // failed would just answer 409 on the first question.
+    if (existing && existing.status === 'processing') {
+      showUploadError('The sample is still being processed. Try again in a moment.')
+      return
+    }
+    if (existing && existing.status === 'failed') {
+      showUploadError('The sample failed to process. Delete it from the sidebar, then try again.')
+      return
+    }
     if (existing) {
       log.info('App', '[action] sample already uploaded — attaching the existing copy')
       startNewChat(existing.documentId, existing.filename)
@@ -136,6 +152,11 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
   }
 
   function handlePickDocument(doc: UploadedDocument) {
+    // BG.4 — the lists already disable these; this is the backstop
+    if (doc.status !== 'ready') {
+      log.warn('App', `[action] "${doc.filename}" is ${doc.status} — can't chat with it yet`)
+      return
+    }
     log.info('App', `[action] picked existing document — "${doc.filename}" (${doc.documentId})`)
     startNewChat(doc.documentId, doc.filename)
     setMobileSidebarOpen(false)
@@ -178,7 +199,7 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
       startNewChat(ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL)
       return
     }
-    const doc = documents.find((d) => d.documentId === documentId)
+    const doc = readyDocuments.find((d) => d.documentId === documentId)
     if (doc) startNewChat(doc.documentId, doc.filename)
   }
 
@@ -295,7 +316,9 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
         loading={chatLoading}
         restoring={restoring}
         onOpenSidebar={() => setMobileSidebarOpen(true)}
-        documents={documents}
+        // BG.4 — the home screen's chips, "All documents (N)" and the scope
+        // picker only offer documents that are ready
+        documents={readyDocuments}
         uploadStatus={status}
         uploadError={error}
         uploadingName={uploadingName}

@@ -1,6 +1,6 @@
 import { authFetch, parseJsonOrThrow } from './client'
 import { log } from '../utils/logger'
-import type { UploadedDocument } from '../types/document'
+import type { DocumentStatus, UploadedDocument } from '../types/document'
 
 interface DocumentRecord {
   id: string
@@ -9,6 +9,10 @@ interface DocumentRecord {
   textLength: number
   chunkCount: number
   createdAt: string
+  // BG.4 — optional in the type on purpose: a backend from before Phase 6
+  // doesn't send them, and those documents are always ready
+  status?: DocumentStatus
+  error?: string | null
 }
 
 export async function fetchDocuments(): Promise<UploadedDocument[]> {
@@ -27,6 +31,8 @@ export async function fetchDocuments(): Promise<UploadedDocument[]> {
     textLength: d.textLength,
     chunkCount: d.chunkCount,
     createdAt: d.createdAt,
+    status: d.status ?? 'ready',
+    error: d.error ?? null,
   }))
 }
 
@@ -44,8 +50,11 @@ export async function uploadDocument(file: File): Promise<UploadedDocument> {
     body: formData,
   })
 
+  // BG.4 — 202 Accepted now (status 'processing'): the server has the file and
+  // has queued the slow part. res.ok is true for any 2xx, so this needs no
+  // change; it's the status field that says whether it's usable yet.
   const data = await parseJsonOrThrow(res)
-  log.info('api:documents', 'upload complete', data)
+  log.info('api:documents', `upload accepted (${res.status}), status: ${data.status ?? 'ready'}`, data)
 
   return {
     documentId: data.documentId,
@@ -54,6 +63,9 @@ export async function uploadDocument(file: File): Promise<UploadedDocument> {
     textLength: data.textLength,
     chunkCount: data.chunkCount,
     createdAt: data.createdAt,
+    // a pre-Phase-6 backend answers 200 with no status: the document is ready
+    status: data.status ?? 'ready',
+    error: null,
   }
 }
 
