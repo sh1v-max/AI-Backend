@@ -37,7 +37,9 @@ export async function sampleChunks(
     // innerJoin = only rows that have a match on BOTH sides. A chunk with no
     // documents row (an old orphan) has no owner, so it can never match.
     .innerJoin(documents, eq(chunks.documentId, documents.id))
-    .where(and(eq(chunks.documentId, documentId), eq(documents.userId, userId)))
+    // BG.3 — only a 'ready' document: one still processing has only some of
+    // its chunks stored, so a quiz would only cover its first pages.
+    .where(and(eq(chunks.documentId, documentId), eq(documents.userId, userId), eq(documents.status, 'ready')))
     .orderBy(asc(chunks.id))
 
   // if there are fewer chunks than we want, return them all
@@ -52,7 +54,7 @@ export async function sampleChunks(
 // equivalent sql query (the spacing is done in TypeScript afterwards):
 // SELECT c.content FROM chunks c
 // INNER JOIN documents d ON c.document_id = d.id
-// WHERE c.document_id = $1 AND d.user_id = $2
+// WHERE c.document_id = $1 AND d.user_id = $2 AND d.status = 'ready'
 // ORDER BY c.id
 
 // this function deletes all chunks for one document
@@ -113,10 +115,14 @@ export async function searchSimilar(
       // the old "skip orphan chunks in all-documents mode" filter — orphans
       // can never match a user_id, in either mode.
       .innerJoin(documents, eq(chunks.documentId, documents.id))
+      // BG.3 — and only 'ready' documents, in both modes. A document still
+      // processing has some of its chunks stored already; searching them
+      // would answer from half a PDF. In "all documents" mode this is the
+      // whole rule: a processing PDF is simply skipped until it's ready.
       .where(
         documentId
-          ? and(eq(chunks.documentId, documentId), eq(documents.userId, userId))
-          : eq(documents.userId, userId),
+          ? and(eq(chunks.documentId, documentId), eq(documents.userId, userId), eq(documents.status, 'ready'))
+          : and(eq(documents.userId, userId), eq(documents.status, 'ready')),
       )
       .orderBy(distance)
       .limit(limit)
@@ -126,8 +132,8 @@ export async function searchSimilar(
 // SELECT c.content, c.embedding <=> $1 AS distance, c.document_id, d.filename
 // FROM chunks c
 // INNER JOIN documents d ON c.document_id = d.id
-// WHERE c.document_id = $2 AND d.user_id = $3
+// WHERE c.document_id = $2 AND d.user_id = $3 AND d.status = 'ready'
 // ORDER BY distance
 // LIMIT $4
-// (all documents: WHERE d.user_id = $2 instead — every chunk of every document this user owns)
+// (all documents: WHERE d.user_id = $2 AND d.status = 'ready' instead — every chunk of every document this user owns)
 // what this mean is that the function will return the content, distance, documentId, and filename of the most similar chunks to the queryEmbedding, ordered by distance, and limited to the specified number of results. If a documentId is provided, it will only search within that document, otherwise, it will search across all documents.

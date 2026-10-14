@@ -76,19 +76,23 @@ export async function listDocuments(userId: string) {
 // Returns null for both "no such document" and "someone else's document" —
 // the caller answers 404 either way, so a stranger can't even learn that an
 // id exists.
+// BG.3 — also returns `status`, so chat and quiz can tell "yours, but still
+// processing" (409) from "not yours / doesn't exist" (404) in the same query.
 export async function getDocumentForUser(
   id: string,
   userId: string,
-): Promise<{ id: string; filename: string } | null> {
+): Promise<{ id: string; filename: string; status: DocumentStatus } | null> {
   const [document] = await db
-    .select({ id: documents.id, filename: documents.filename })
+    .select({ id: documents.id, filename: documents.filename, status: documents.status })
     .from(documents)
     .where(and(eq(documents.id, id), eq(documents.userId, userId)))
     .limit(1)
-  return document ?? null
+  // The column is plain TEXT in Postgres; only this code ever writes it, with
+  // one of the three DocumentStatus values, so the cast is safe.
+  return document ? { ...document, status: document.status as DocumentStatus } : null
 }
 // equivalent sql query:
-// SELECT id, filename FROM documents WHERE id = $1 AND user_id = $2 LIMIT 1
+// SELECT id, filename, status FROM documents WHERE id = $1 AND user_id = $2 LIMIT 1
 
 // Auth.7 — how many documents this user has, for the upload cap. count() makes
 // Postgres do the counting and send back one number, instead of sending every

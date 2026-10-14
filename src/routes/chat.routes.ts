@@ -205,7 +205,7 @@ chatRouter.post(
 //    ├── load the last 8 messages (history)
 //    ├── save user's question to history
 //    └── build the prompt
-//         ↓   (if !prep.ok → 400/404 JSON, stop)
+//         ↓   (if !prep.ok → 400/404/409 JSON, stop)
 // res.writeHead(200, text/event-stream)   ← stream opens BEFORE the LLM is called
 //         ↓
 // res.write(event: meta { sessionId, sources })

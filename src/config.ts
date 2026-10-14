@@ -111,6 +111,13 @@ export const INGEST_WORKER_OPTIONS = {
   // Default 5 → about 6x more idle commands.
   drainDelay: 30,
   // How often (ms) to look for jobs whose worker died mid-job. Default 30 s.
+  // The price of 5 min (measured in BG.3): a job whose process was killed
+  // mid-job resumes up to ~2 intervals later, about 10 min. A check only
+  // marks active jobs as suspects; the NEXT check moves the ones whose lock
+  // expired back to the queue, and a dead process's last check can still be
+  // blocking the new one for a while. Graceful shutdown (queue/shutdown.ts)
+  // avoids this on normal deploys; it only matters after a crash, or a job
+  // still running when SHUTDOWN_TIMEOUT_MS runs out.
   stalledInterval: 300_000,
   // How long (ms) a running job's lock lasts before it's considered stalled
   // (BullMQ renews it while the job runs). Default 30 s; a slow Gemini call
@@ -127,8 +134,22 @@ export const INGEST_FAILED_MESSAGE = 'Could not process this PDF. Delete it and 
 // finish the job it's on before the process exits anyway. Render waits about
 // 30 s after SIGTERM before killing the process, so stay under that. A job
 // cut off here isn't lost: it's picked up again as a stalled job after the
-// restart, and running a job twice is safe (it starts by deleting its chunks).
+// restart (up to ~10 min later, see stalledInterval above), and running a
+// job twice is safe (it starts by deleting its chunks).
 export const SHUTDOWN_TIMEOUT_MS = 20_000
+
+// BG.3 — how long POST /upload waits for Redis to accept the job before it
+// gives up with a 503. Needed because when Redis has been unreachable since
+// the server started, BullMQ waits for a first connection that never comes
+// and add() would hang forever (checked in bullmq 6's source). If Redis comes
+// back and the job lands after all, the worker finds the document row already
+// deleted by the 503 path and exits quietly.
+export const ENQUEUE_TIMEOUT_MS = 5_000
+
+// BG.3 — what chat and quiz answer (409) for a document that exists and is
+// the caller's, but isn't usable yet / anymore.
+export const DOCUMENT_PROCESSING_MESSAGE = 'This document is still processing. Try again in a moment.'
+export const DOCUMENT_FAILED_MESSAGE = 'This document failed to process. Delete it and upload it again.'
 
 // What the client sees when a network step (Gemini, Neon) fails — the real
 // cause goes to the terminal instead (see utils/errors.ts).

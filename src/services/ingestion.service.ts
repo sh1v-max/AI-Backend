@@ -2,9 +2,11 @@ import { randomUUID } from 'crypto'
 import { PDFParse } from 'pdf-parse'
 import { getEmbedding } from './embeddings.service'
 import { insertChunk } from '../repositories/chunks.repository'
-import { insertDocument } from '../repositories/documents.repository'
+import { insertDocument, deleteDocument, type DocumentStatus } from '../repositories/documents.repository'
+import { enqueueIngest } from '../queue/ingest.queue'
 import { chunkText } from '../utils/chunkText'
-import { step, detail, timing, preview } from '../utils/pipelineLogger'
+import { summarizeError } from '../utils/errors'
+import { step, detail, timing, preview, rejected, failed } from '../utils/pipelineLogger'
 
 // PDF in, plain text out.
 // chunk that text, embed each chunk, store it — a document
@@ -25,7 +27,7 @@ type UploadedFile = { buffer: Buffer; originalname: string; size: number }
 // Milliseconds to about a second, so it stays inside the request. That also
 // means a PDF with no text layer can be refused straight away (BG.3) instead
 // of turning into a job that fails later.
-export async function parsePdf(file: UploadedFile): Promise<{ text: string; chunks: string[] }> {
+export async function parsePdf(file: UploadedFile): Promise<{ text: string; chunks: string[]; hasText: boolean }> {
   // passing the buffer directly to PDFParse, which will handle it in memory
   const parser = new PDFParse({ data: file.buffer })
 
@@ -35,9 +37,15 @@ export async function parsePdf(file: UploadedFile): Promise<{ text: string; chun
     const result = await parser.getText()
     timing(Date.now() - extractStart, `extracted ${result.text.length} characters`)
 
+    // BG.3 — "is there any real text?" has to be asked per page: pdf-parse v2
+    // adds a "-- 1 of 3 --" marker per page to result.text, so even a PDF
+    // with no text layer at all comes back as a non-empty string (found while
+    // testing: a drawn-only page gave 12 characters and 1 chunk).
+    const hasText = result.pages.some((page) => page.text.trim().length > 0)
+
     const chunks = chunkText(result.text)
     step('upload', 3, 4, `Split into ${chunks.length} chunk(s)`)
-    return { text: result.text, chunks }
+    return { text: result.text, chunks, hasText }
   } finally {
     // pdf-parse holds resources for the parsed document; release them even
     // when getText() throws.
@@ -62,32 +70,83 @@ export async function embedAndStoreChunks(documentId: string, chunks: string[]):
   }
 }
 
-// The whole upload in one go, still inside the request: parse → chunk →
-// embed + store → save the document row.
+// BG.3 — POST /upload's work, now that the slow half runs on the queue:
+//   parse + chunk (in the request) → insert the documents row as
+//   'processing' → hand the chunks to the queue → return.
+// The route answers 202 Accepted right away ("got it, working on it"); the
+// worker embeds the chunks and flips the row to 'ready' (or 'failed').
+//
+// Like prepareChat()/generateQuiz(), it returns `{ ok: false, status, error }`
+// for the expected failures and never touches req/res.
+//
 // Auth.3 — `userId` (the uploader, from the token) is saved on the documents
-// row. The chunks don't store it: they belong to the document, and the
-// document has the owner.
-// BG.2 — now just the two halves above, run back to back, so POST /upload
-// keeps working exactly as before until BG.3 moves the slow half onto the
-// queue. BG.3 deletes this function.
-export async function ingestPdf(file: UploadedFile, userId: string) {
-  const { text, chunks } = await parsePdf(file)
+// row and carried in the job. The chunks don't store it: they belong to the
+// document, and the document has the owner.
+export async function queuePdfIngestion(
+  file: UploadedFile,
+  userId: string,
+): Promise<
+  | { ok: false; status: number; error: string }
+  | {
+      ok: true
+      document: {
+        documentId: string
+        filename: string
+        fileSizeBytes: number
+        textLength: number
+        chunkCount: number
+        createdAt: Date
+        status: DocumentStatus
+      }
+    }
+> {
+  const { text, chunks, hasText } = await parsePdf(file)
+
+  // A scanned PDF (pages are images) has no text layer, so pdf-parse finds
+  // nothing to read. Refuse it now, while the user is still waiting, instead
+  // of storing an empty document or queueing a job that has nothing to embed.
+  // (Before BG.3 such a PDF was saved with 0 chunks and every chat with it
+  // answered "No document found".)
+  if (!hasText || chunks.length === 0) {
+    rejected('no text layer in this PDF (scanned image?)')
+    return {
+      ok: false,
+      status: 400,
+      error: 'This PDF has no text layer (is it a scanned image?). Only typed or exported PDFs are supported.',
+    }
+  }
+
   const documentId = randomUUID()
-  detail(`documentId: ${documentId}`)
+  // It saves one row in the documents table, a "card" describing this PDF.
+  // Real numbers already (text length and chunk count are known after
+  // chunking); status 'processing' until the worker is done.
+  const document = await insertDocument(documentId, userId, file.originalname, file.size, text.length, chunks.length, 'processing')
+  detail(`documentId: ${documentId} (saved as 'processing')`)
 
-  step('upload', 4, 4, 'Embedding + storing each chunk (in the request, until BG.3)...')
-  await embedAndStoreChunks(documentId, chunks)
-
-  // It saves one row in the documents table, a "card" describing this PDF
-  const document = await insertDocument(documentId, userId, file.originalname, file.size, text.length, chunks.length)
-  detail('Document metadata saved')
+  step('upload', 4, 4, `Queueing the embedding job (${chunks.length} chunk(s))...`)
+  try {
+    await enqueueIngest({ documentId, userId, chunks })
+  } catch (err) {
+    // Redis is down or too slow. Without a job nothing would ever finish
+    // this document, so undo the row; a 503 tells the client to try again
+    // later (and chat keeps working, it doesn't need Redis).
+    console.error(`[upload] could not queue the job: ${summarizeError(err)}`)
+    await deleteDocument(documentId, userId)
+    failed('upload queue unavailable — documents row removed again')
+    return { ok: false, status: 503, error: 'The upload queue is unavailable right now. Try again shortly.' }
+  }
+  detail('queued — the worker embeds the chunks in the background')
 
   return {
-    documentId,
-    filename: file.originalname,
-    fileSizeBytes: file.size,
-    textLength: text.length,
-    chunkCount: chunks.length,
-    createdAt: document.createdAt,
+    ok: true,
+    document: {
+      documentId,
+      filename: file.originalname,
+      fileSizeBytes: file.size,
+      textLength: text.length,
+      chunkCount: chunks.length,
+      createdAt: document.createdAt,
+      status: 'processing',
+    },
   }
 }

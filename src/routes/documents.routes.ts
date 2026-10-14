@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express'
 import multer from 'multer'
-import { ingestPdf } from '../services/ingestion.service'
+import { queuePdfIngestion } from '../services/ingestion.service'
 import { deleteChunksByDocumentId } from '../repositories/chunks.repository'
 import { listDocuments, deleteDocument, getDocumentForUser, countDocuments } from '../repositories/documents.repository'
 import { deleteMessagesByDocumentId } from '../repositories/chatMessages.repository'
@@ -72,9 +72,19 @@ documentsRouter.delete('/documents/:documentId', async (req, res) => {
     return res.status(404).json({ error: 'No document found with that documentId' })
   }
 
+  // BG.3 — the row goes FIRST, then its chunks and messages. The order
+  // matters when the document's ingest job is still running: the worker
+  // finishes with "mark this document ready", an UPDATE that reports whether
+  // it found the row.
+  //   - row already gone → the worker sees that and deletes the chunks it stored
+  //   - worker finished first → the chunk delete below runs after it, and gets them all
+  // With chunks first and the row last, a worker storing its last chunk in
+  // between would still find the row, mark it ready, and leave its chunks
+  // behind once the row was deleted (orphans, like the 65 cleaned up on
+  // 2026-10-05).
+  await deleteDocument(documentId, userId)
   await deleteChunksByDocumentId(documentId)
   await deleteMessagesByDocumentId(documentId, userId)
-  await deleteDocument(documentId, userId)
   res.json({ deleted: documentId })
 })
 
@@ -91,7 +101,7 @@ documentsRouter.post('/upload', checkDocumentCap, upload.single('file'), async (
     })
   }
 
-  // check that the uploaded file is a PDF. If not, reject the request with a 400 status code and an error message. This ensures that only PDF files are processed by the ingestPdf function.
+  // check that the uploaded file is a PDF. If not, reject the request with a 400 status code and an error message. This ensures that only PDF files are processed by queuePdfIngestion.
   if (req.file.mimetype !== 'application/pdf') {
     rejected(`wrong mimetype (${req.file.mimetype})`)
     return res.status(400).json({ error: 'Only PDF files are supported' })
@@ -100,9 +110,13 @@ documentsRouter.post('/upload', checkDocumentCap, upload.single('file'), async (
   step('upload', 1, 4, `File received: "${req.file.originalname}" (${req.file.size} bytes)`)
   detail(`user: ${req.user!.id.slice(0, 8)}`)
 
-  const document = await ingestPdf(req.file, req.user!.id)
+  // BG.3 — parse + chunk here, then queue the embedding. 202 Accepted = "got
+  // it, still working on it": the document comes back as 'processing', and
+  // the client watches GET /documents until it turns 'ready'.
+  const result = await queuePdfIngestion(req.file, req.user!.id)
 
   pipelineEnd('upload', Date.now() - t0)
 
-  res.json(document)
+  if (!result.ok) return res.status(result.status).json({ error: result.error })
+  res.status(202).json(result.document)
 })

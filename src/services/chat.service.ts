@@ -5,6 +5,7 @@ import {
   getRecentMessages,
 } from '../repositories/chatMessages.repository'
 import { HISTORY_LIMIT, ALL_DOCUMENTS } from '../config'
+import { checkDocumentReady } from './documents.service'
 import {
   pipelineEnd,
   step,
@@ -141,6 +142,18 @@ export async function prepareChat(
   )
   detail(`message:    "${message}"`)
 
+  // BG.3 — one document: is it the caller's AND ready? 404 / 409 here, before
+  // the question is embedded (no Gemini call for a request that can't
+  // succeed). "All documents" needs no check: searchSimilar only searches
+  // ready documents, so a processing one is just left out.
+  if (!searchAll) {
+    const readiness = await checkDocumentReady(documentId, userId)
+    if (!readiness.ok) {
+      pipelineEnd('chat', Date.now() - t0)
+      return readiness
+    }
+  }
+
   step('chat', 2, 7, 'Embedding the question...')
   const embedStart = Date.now()
 
@@ -175,7 +188,7 @@ export async function prepareChat(
   if (relevantChunks.length === 0) {
     notFound(
       searchAll
-        ? 'No chunks found — no documents have been uploaded yet'
+        ? 'No chunks found — no ready documents yet'
         : 'No chunks found for this documentId — does it exist?',
     )
     pipelineEnd('chat', Date.now() - t0)
@@ -183,7 +196,7 @@ export async function prepareChat(
       ok: false,
       status: 404,
       error: searchAll
-        ? 'No documents have been uploaded yet'
+        ? 'No documents are ready yet. Upload a PDF, or wait for one to finish processing.'
         : 'No document found with that documentId',
     }
   }

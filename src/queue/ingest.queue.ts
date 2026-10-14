@@ -1,5 +1,5 @@
 import { Queue } from 'bullmq'
-import { INGEST_JOB_OPTIONS, INGEST_QUEUE } from '../config'
+import { ENQUEUE_TIMEOUT_MS, INGEST_JOB_OPTIONS, INGEST_QUEUE } from '../config'
 import { getQueueConnection, getQueueSettings } from './connection'
 
 // BG.2 — the producer side of PDF ingestion: what POST /upload uses (BG.3) to
@@ -35,8 +35,24 @@ export function getIngestQueue(): Queue<IngestJobData> {
 // add() resolves once Redis has stored the job; nothing has run yet.
 // jobId = documentId: BullMQ ignores an add() whose jobId already exists, so
 // the same document can't end up queued twice.
+//
+// BG.3 — with a time limit. If Redis dropped AFTER connecting, add() already
+// fails at once (enableOfflineQueue: false). But if Redis has been
+// unreachable since startup, BullMQ waits for the first connection forever,
+// so without this race an upload would hang instead of getting its 503.
 export async function enqueueIngest(data: IngestJobData) {
-  return getIngestQueue().add('ingest', data, { jobId: data.documentId })
+  let timer: NodeJS.Timeout | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Redis didn't accept the job within ${ENQUEUE_TIMEOUT_MS / 1000} s`)),
+      ENQUEUE_TIMEOUT_MS,
+    )
+  })
+  try {
+    return await Promise.race([getIngestQueue().add('ingest', data, { jobId: data.documentId }), timeout])
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 // Shutdown. close() doesn't close a connection it was handed, so the Redis

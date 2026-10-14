@@ -2,6 +2,7 @@ import { generateAnswer } from './llm.service'
 import { sampleChunks } from '../repositories/chunks.repository'
 import { Quiz, QuizQuestion, quizResponseSchema, QUIZ_LENGTH, OPTIONS_PER_QUESTION } from '../schemas/quiz.schema'
 import { ALL_DOCUMENTS } from '../config'
+import { checkDocumentReady } from './documents.service'
 import { pipelineEnd, step, detail, timing, preview, rejected, notFound, failed } from '../utils/pipelineLogger'
 
 // Step 4.2 — POST /quiz: turn the Step 4.1 experiment into a real endpoint.
@@ -119,6 +120,15 @@ export async function generateQuiz(
   step('quiz', 1, 4, 'Request received')
   detail(`user:       ${userId.slice(0, 8)}`)
   detail(`documentId: ${documentId}`)
+
+  // BG.3 — 404 if it isn't the caller's, 409 if it's still processing or
+  // failed. Before sampling, so the answer says WHY there's no quiz instead
+  // of a generic "not found".
+  const readiness = await checkDocumentReady(documentId, userId)
+  if (!readiness.ok) {
+    pipelineEnd('quiz', Date.now() - t0)
+    return readiness
+  }
 
   step('quiz', 2, 4, 'Sampling chunks spread across the document...')
   const sampleStart = Date.now()
