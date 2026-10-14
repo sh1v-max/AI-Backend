@@ -198,11 +198,13 @@ Right now `/upload` blocks the HTTP request while it parses, chunks, and embeds 
 - Learn: [How to Build a Job Queue in Node.js with BullMQ and Redis](https://oneuptime.com/blog/post/2026-01-06-nodejs-job-queue-bullmq-redis/view) + [Building a Scalable Queue System with BullMQ & Redis (YouTube)](https://www.youtube.com/watch?v=vFI_Nf2PWFQ). Docs: [docs.bullmq.io](https://docs.bullmq.io/)
 - Understand: queue vs job vs worker, why "nobody is waiting" work (embedding a big PDF) shouldn't block a request, retries/backoff when a job fails
 - Set up: free [Upstash](https://upstash.com) Redis instance (no card needed), connect BullMQ to it
+- ✅ **How it turned out:** done as `npm run step5` (a throwaway queue: one job works, one is retried after its backoff, one fails for good). The surprise was the idle cost: BullMQ keeps polling Redis with nothing to do, and with its defaults that's ~1M commands a month, double Upstash's free 500K. Tuning `drainDelay` (5 s → 30 s) and `stalledInterval` (30 s → 5 min) brought it to ~164K, measured, not estimated.
 
 **Step A.2 — Move PDF ingestion into a job (5h)**
 - Build: `POST /upload` now just saves the file and enqueues an `ingest-pdf` job, returning immediately with a `documentId` and status `processing`. A separate `worker.ts` process picks up the job, does the parse → chunk → embed → store pipeline, and updates the document's status to `ready` when done.
 - Add a `GET /documents/:id/status` endpoint so the frontend (or you, testing with curl) can poll whether ingestion finished.
 - This is the OFFLINE/ONLINE split — a genuinely real architectural pattern. Name it exactly like that in interviews: "ingestion is offline work, nobody's waiting on it, so it runs on a queue; chat is online work, a human is waiting, so it runs inline and streams."
+- ✅ **How it turned out:** three changes from the plan above. (1) The job carries the chunk **texts**, not the file: parsing is fast and the PDF bytes only exist in the request, so it stays there, and a scanned PDF gets a `400` immediately. (2) The worker runs **inside the API process**: Render's free tier has no background workers (`npm run worker` exists for later). (3) No `/status` endpoint: `GET /documents` carries `status`, and the frontend polls it. The job is idempotent (deletes the document's chunks first), tested with a forced mid-job failure and a hard kill. Chat/quiz answer `409` until the document is ready. Live, the first check found Render using the laptop's queue prefix; the queue's key count gave it away. Details: [background-jobs-plan.md](background-jobs-plan.md) §9.
 
 ---
 

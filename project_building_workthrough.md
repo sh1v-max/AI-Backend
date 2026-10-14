@@ -220,17 +220,24 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 
 *Topic: [09-background-jobs-bullmq](topics/09-background-jobs-bullmq)*
 
-**Step 6.1 — Redis + BullMQ concepts**
-- Set up a free Upstash Redis instance, connect BullMQ to it
-- Understand queue vs job vs worker, and why "nobody is waiting" work shouldn't block a request
+Built from [background-jobs-plan.md](background-jobs-plan.md) (steps BG.0–BG.6; its §9 results log has every test and everything that bit). Line-linked explanation in [CODE_EXPLAINED.md](CODE_EXPLAINED.md#phase-6--background-jobs-bullmq).
 
-**Step 6.2 — Move PDF ingestion into a job**
-- `/upload` now just saves the file and enqueues an `ingest-pdf` job, returns immediately with `documentId` + status `processing`
-- A separate `worker.ts` process does parse → chunk → embed → store, updates status to `ready`
-- Add `GET /documents/:id/status` to poll ingestion state
+**Step 6.1 — Redis + BullMQ concepts** *(done — BG.0 + BG.1, run with `npm run step5`)*
+- Free **Upstash** Redis in Oregon (same region as the Render service), `rediss://` (TLS), eviction off; `bullmq` 6 + `ioredis` 6. `documents.status` (`processing`/`ready`/`failed`, `DEFAULT 'ready'` so the live table was safe) + `documents.error`
+- `src/step5-bullmq.ts`: 3 jobs on a throwaway queue — one works, one fails once and is retried after the backoff, one fails for good — with every event logged
+- **Measured the idle cost** (BullMQ talks to Redis even with nothing to do, and Upstash's free plan is 500K commands/month): 5 idle minutes = 118 commands with the defaults (~1M/month, double the free plan) vs 19 with `drainDelay: 30` + `stalledInterval: 300000` (~164K/month)
+
+**Step 6.2 — Move PDF ingestion into a job** *(done — BG.2 → BG.5)*
+- **Not exactly as first written:** the job carries the **chunk texts**, not the file — `/upload` parses + chunks in the request (fast, and the PDF bytes only exist there), so a PDF with no text is refused with `400` straight away, and Redis never holds a 10 MB file
+- `/upload` saves the row as `processing`, enqueues `ingest-pdf` (`jobId = documentId`) and answers **`202`**; the worker (`workers/ingest.worker.ts`) embeds + stores and sets `ready`, or `failed` after 3 attempts (5 s → 10 s backoff)
+- **The worker runs inside the API process**, not as a separate `worker.ts` service: Render's free plan has no background workers. `src/worker.ts` + `npm run worker` exist so moving it out later is configuration, not a rewrite
+- **No `GET /documents/:id/status`:** `GET /documents` already returns every row, now with `status`, and the frontend polls it every 2 s while something is processing. Its `uploadFile()` resolves only once the document is `ready`, so the existing "Will ask" queued question works unchanged
+- **Idempotent job:** it deletes the document's chunks first, then inserts all of them. Tested with a forced failure on chunk 2 (retried, every chunk stored once) and with the server hard-killed mid-job (resumed after the restart, stored once)
+- Chat on one document and `/quiz` answer **`409`** while it's processing or failed; "all documents" search and quiz sampling only read `ready` documents; `DELETE` removes the row first so a still-running job can't leave orphan chunks
+- **What bit:** `pdf-parse` adds a page marker even to empty pages (a scanned PDF looked like it had text); the crash recovery takes up to ~2 stalled intervals (~10 min, measured), not one; BullMQ's `add()` waits forever if Redis was down from the start (5 s timeout added); and live, Render had the laptop's `BULLMQ_PREFIX` (`docmind-dev`), so both shared one queue — caught by the key count, fixed
 - Output: the offline/online split — ingestion is offline, chat is online
 
-**Milestone:** large PDF uploads no longer block the request.
+**Milestone:** large PDF uploads no longer block the request. *(Reached — live 2026-10-14, re-verified 2026-10-15.)*
 
 ---
 

@@ -16,7 +16,7 @@ It comes with a React frontend that exercises every endpoint the way a real clie
 ## What it does
 
 - **Your own private space, no sign-up needed.** Every visitor silently gets a guest account and only ever sees their own documents and chats. Sign up later to keep them and use them on any device.
-- **Attach a PDF and ask in one go.** The home screen is the chat box: attach (or drop) a PDF, type your question, send. If the upload is still running, the question waits for it and goes out on its own. Behind the scenes the PDF is parsed, split into chunks, turned into embeddings, and stored in Postgres with pgvector.
+- **Attach a PDF and ask in one go.** The home screen is the chat box: attach (or drop) a PDF, type your question, send. If the PDF is still being processed, the question waits for it and goes out on its own. Behind the scenes the PDF is parsed and split into chunks right away, then a background worker turns the chunks into embeddings and stores them in Postgres with pgvector, while the sidebar shows it as "Processing…".
 - **No PDF handy?** "Try our sample" uploads a short guide to DocMind itself, with starter questions it can actually answer.
 - **Chat with it.** Ask questions, get answers grounded only in your document, formatted (lists, bold, tables), with the source passages shown under every reply.
 - **It remembers the conversation.** Follow-ups like *"what about the second one?"* work, and a page refresh brings you back to the same chat.
@@ -31,12 +31,24 @@ It comes with a React frontend that exercises every endpoint the way a real clie
 
 ### 1. Ingestion (when you upload)
 
+The slow part (one Gemini call per chunk) runs on a queue, so the upload request doesn't wait for it:
+
 ```
-PDF ──► multer (in memory) ──► pdf-parse ──► plain text
-    ──► split into ~500-word chunks
-    ──► embed each chunk (Gemini, 3072 numbers each)
-    ──► store in Postgres/pgvector, tagged with a documentId
+POST /upload ──► multer (in memory) ──► pdf-parse ──► plain text   (no text at all? 400 right away)
+             ──► split into ~500-word chunks
+             ──► documents row, status 'processing'
+             ──► job { documentId, userId, chunk texts } ──► Redis (BullMQ)
+      ◄── 202 { documentId, status: 'processing' }          (about a second)
+
+worker ◄── takes the job from Redis
+       ──► delete any chunks this document already has   (so a retry never duplicates)
+       ──► embed each chunk (Gemini, 3072 numbers each) ──► store in Postgres/pgvector
+       ──► status 'ready'   (or 'failed' after 3 attempts, 5 s then 10 s apart)
+
+browser ──► polls GET /documents every 2 s until it's ready
 ```
+
+On the free tier the worker runs inside the API's own process (Render's free plan has no separate worker service); `npm run worker` runs it on its own.
 
 ### 2. Chat (every time you ask)
 
@@ -89,7 +101,7 @@ sign up ──► the same guest row gets an email + password hash, so its files
 | Validation | Zod (for request input *and* for the model's output) |
 | Auth | JWT (`jsonwebtoken`, HS256), `bcryptjs` for passwords, `express-rate-limit` |
 | Streaming | Server-Sent Events |
-| Background jobs | BullMQ + Upstash Redis (in progress: set up and measured, uploads don't use it yet) |
+| Background jobs | BullMQ + Upstash Redis (free tier), worker inside the API process |
 | Frontend | React 19, Vite, TypeScript, `react-markdown` |
 
 Everything runs on free tiers. No card needed anywhere.
@@ -107,8 +119,8 @@ Every route except `/` and the three public `/auth` routes needs `Authorization:
 | `POST` | `/auth/register` | `{ email, password }` → `{ token, user }`. Sent with a guest's token, it upgrades that guest so its files stay (public, rate-limited) |
 | `POST` | `/auth/login` | `{ email, password }` → `{ token, user }` (public, rate-limited) |
 | `GET` | `/auth/me` | Who the token belongs to |
-| `POST` | `/upload` | Upload a PDF (`multipart/form-data`, field `file`). Parses, chunks, embeds, stores. Guests can keep 5 documents, accounts 10. |
-| `GET` | `/documents` | List uploaded documents |
+| `POST` | `/upload` | Upload a PDF (`multipart/form-data`, field `file`). Parses and chunks it, queues the embedding, answers **`202`** with `status: "processing"`. `400` for a PDF with no text, `503` if the queue is down. Guests can keep 5 documents, accounts 10. |
+| `GET` | `/documents` | List uploaded documents, each with `status` (`processing` / `ready` / `failed`) and `error` |
 | `DELETE` | `/documents/:documentId` | Delete a document, its chunks, and every chat about it |
 | `POST` | `/chat` | `{ message, documentId?, sessionId? }` → `{ sessionId, answer, sources }` |
 | `POST` | `/chat-stream` | Same as `/chat` (same JSON body), but the reply streams in as Server-Sent Events |
@@ -117,7 +129,7 @@ Every route except `/` and the three public `/auth` routes needs `Authorization:
 | `DELETE` | `/sessions/:sessionId` | Delete one conversation |
 | `POST` | `/quiz` | `{ documentId }` → `{ documentId, quiz }` (5 validated questions) |
 
-**`documentId`** on chat is optional: leave it out (or send `"all"`) to search all of *your* documents. Each source comes back as `{ content, distance, documentId, filename }`.
+**`documentId`** on chat is optional: leave it out (or send `"all"`) to search all of *your* ready documents. Each source comes back as `{ content, distance, documentId, filename }`. Chat or quiz on one document that's still processing (or failed) answers `409`.
 
 **`/chat-stream` is a `POST`**, and the frontend reads it with `fetch` and parses the events itself. It started as a `GET` with query params, because the browser's `EventSource` can only send GET, but `EventSource` also can't send an `Authorization` header, so it was replaced by `fetch`, and then the route moved to POST to keep the question out of the URL (and out of server logs). It sends these events, in order:
 
@@ -134,7 +146,7 @@ Every route except `/` and the three public `/auth` routes needs `Authorization:
 
 ```
 src/
-  index.ts            starts the server (~10 lines)
+  index.ts            starts the server and the queue worker
   app.ts              builds the Express app, mounts the routes
   config.ts           shared constants (limits, token lifetimes, queue settings, ...)
   middleware/         requireAuth (checks the JWT), the /auth rate limiter
@@ -146,11 +158,15 @@ src/
     quiz.routes.ts        /quiz
   services/           the actual work, never touches req/res
     auth.service.ts       sign/verify tokens, guest, register, login
-    ingestion.service.ts  parse → chunk → embed → store
+    ingestion.service.ts  parse + chunk (request), embed + store (worker), queue the job
+    documents.service.ts  "is this document ready?" (404 / 409) for chat and quiz
     chat.service.ts       the shared chat pipeline + prompt
     quiz.service.ts       generate → validate → retry → shuffle
     llm.service.ts        Gemini calls (normal + streaming)
     embeddings.service.ts Gemini embeddings
+  queue/              Redis connections, the ingest queue, graceful shutdown
+  workers/            the ingest worker (embed + store, retries, status)
+  worker.ts           the worker on its own (`npm run worker`)
   repositories/       the only place SQL lives; every query takes the user's id
   db/                 Drizzle schema + connection
   schemas/            Zod schemas (the quiz, register/login bodies)
@@ -224,7 +240,7 @@ CREATE INDEX documents_user_id_idx ON documents (user_id);
 CREATE INDEX chat_messages_user_session_idx ON chat_messages (user_id, session_id);
 ```
 
-(These match `src/db/schema.ts`. `chunks` has no `user_id`: a chunk belongs to a document, and the document has the owner. The `status`/`error` columns are needed even now: the code already reads them, and every upload is `ready` until the queue is wired in.)
+(These match `src/db/schema.ts`. `chunks` has no `user_id`: a chunk belongs to a document, and the document has the owner.)
 
 ### 2. Run the backend
 
@@ -240,18 +256,17 @@ GEMINI_API_KEY=your-key-from-ai-studio
 DATABASE_URL=postgresql://...your neon connection string...
 FRONTEND_URL=http://localhost:5173
 JWT_SECRET=a-long-random-string
-
-# Optional for now: only `npm run step5` (the BullMQ learning script) uses these
 REDIS_URL=rediss://default:password@your-db.upstash.io:6379
 BULLMQ_PREFIX=docmind-dev
+# RUN_WORKER=false   # optional: don't start the queue worker with npm run dev
 ```
 
-Generate the secret with `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`. The server refuses to start without it.
+Generate the secret with `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`. The server refuses to start without it, or without `REDIS_URL` and `BULLMQ_PREFIX`.
 
-For Redis, a free [Upstash](https://upstash.com) database works (no card). Use the `rediss://` URL (two s's = TLS). `BULLMQ_PREFIX` keeps local and production jobs apart when they share one Redis.
+For Redis, a free [Upstash](https://upstash.com) database works (no card). Use the `rediss://` URL from the ioredis/Node tab (two s's = TLS), not the `redis-cli` command, and keep eviction off (BullMQ needs its keys to stay). `BULLMQ_PREFIX` keeps local and production jobs apart when they share one Redis: use a different value per environment (`docmind-dev` locally, `docmind` in production). An idle worker still talks to Redis, so set `RUN_WORKER=false` when you're not working on uploads; uploads then wait in the queue until a worker runs.
 
 ```bash
-npm run dev        # API on http://localhost:3000
+npm run dev        # API on http://localhost:3000, with the queue worker inside it
 ```
 
 ### 3. Run the frontend
@@ -276,9 +291,11 @@ The API runs on a **Render** free web service and redeploys on every push to `ma
 | Build command | `npm install --include=dev && npm run build` (TypeScript is a dev dependency) |
 | Start command | `node dist/index.js` |
 | Health check path | `/` |
-| Env vars | `GEMINI_API_KEY`, `DATABASE_URL`, `FRONTEND_URL` (comma-separated list of allowed origins), `JWT_SECRET` (its own value, not the local one), `TRUST_PROXY_HOPS` (how many proxies sit in front of the app; see below), `REDIS_URL` + `BULLMQ_PREFIX=docmind` (already set, not used until the queue is wired in) |
+| Env vars | `GEMINI_API_KEY`, `DATABASE_URL`, `FRONTEND_URL` (comma-separated list of allowed origins), `JWT_SECRET` (its own value, not the local one), `TRUST_PROXY_HOPS` (how many proxies sit in front of the app; see below), `REDIS_URL` + `BULLMQ_PREFIX=docmind` (**not** the local value: a shared prefix would let your laptop's worker take production's jobs) |
 
 `npm run build` uses `tsconfig.build.json`, which compiles only the app (not the `stepN` learning scripts) into `dist/`.
+
+The queue worker starts inside this one web service (Render's free plan has no background-worker service). On every deploy Render sends `SIGTERM`; the app lets the worker finish the job in progress (up to 20 s) before it exits. A job cut off anyway is picked up again after the restart.
 
 On Render, requests pass through Cloudflare and then Render's own proxies before reaching the app. The rate limiter needs the visitor's real IP, so Express is told how many proxy hops to skip in `X-Forwarded-For` (`TRUST_PROXY_HOPS`). That number was measured, not guessed: the `RateLimit-Policy` response header contains a hash of the key the limiter used, which can be compared with a hash of your own IP. On Render the answer is 3 hops (client, Cloudflare edge, Render's front proxy).
 
@@ -300,6 +317,8 @@ A few things that aren't obvious from the code alone:
 - **Guests are real users.** A first visit creates a user row with no email or password, so a guest's token goes through exactly the same checks as an account's. Signing up fills in that same row, which is why a guest's files survive it.
 - **Ownership lives in the SQL.** Every repository function that reads or deletes takes the user's id as a *required* argument, so forgetting the filter is a TypeScript error instead of a data leak. Someone else's document returns 404, not 403, so its id isn't even confirmed to exist.
 - **Protected by default.** The auth check is mounted before every data route in one place, so a route added later is protected without anyone remembering to do it.
+- **Upload answers before the work is done.** The request only does what someone is waiting for (parse, chunk, save a `processing` row, queue a job) and returns `202`. The embedding happens in a worker, and the document is searchable once it's `ready`. Until then, chat and quiz on it answer `409` (it's yours, it just isn't usable yet), and "all documents" search simply skips it.
+- **Jobs are safe to run twice.** BullMQ retries a failed job and re-runs one whose worker died, so a job starts by deleting the chunks its document already has, then stores all of them. Tested with a forced failure halfway through, and with the server killed mid-job.
 - **An idle queue worker isn't free.** A BullMQ worker keeps polling Redis even with nothing to do. Measured over 5 idle minutes: 118 Redis commands with default settings (about 1M a month if it never sleeps, double Upstash's free 500K) vs 19 with `drainDelay: 30` and `stalledInterval: 300000` (about 164K). The tuned values are in `src/config.ts`; `npm run step5` repeats the measurement.
 - **A token in a header, not a cookie.** The frontend and API live on different sites, where cookies are third-party and increasingly blocked. The tradeoff is that the token sits in `localStorage`, so answers are rendered as markdown *without* raw HTML.
 
@@ -307,7 +326,9 @@ A few things that aren't obvious from the code alone:
 
 ## Known limitations
 
-- PDF upload embeds chunks one by one inside the request, so large PDFs are slow. Background jobs are the fix and in progress (Redis and the status column are in place, the queue isn't wired in yet).
+- The queue worker shares the API's process (free tier, 512 MB, a fraction of a CPU), so a big upload can slow chat down a little. A separate worker service would fix it with no code change (`npm run worker`).
+- If the server crashes in the middle of a job, the job resumes after the restart, but can take up to ~10 minutes to be noticed (the tuned stalled-job check runs every 5 minutes). Normal deploys aren't affected: the worker finishes its job first.
+- Embedding is still one Gemini call per chunk, one document at a time.
 - Chunking is a simple 500-word split, no overlap and no respect for paragraphs.
 - "Search all documents" shares the top 3 results across every PDF, so a vague question can end up answered from one file. It also can't answer questions *about* your collection, like "which documents do you have?"
 - Memory is the last 8 messages. Older messages are dropped, not summarized.
@@ -332,4 +353,4 @@ This repo doubles as a learning log:
 
 ## What's next
 
-Finishing background jobs for PDF ingestion: upload answers right away with `202`, a BullMQ worker embeds the chunks, and the UI shows the document going from processing to ready. Then agents and tool calling, multi-step workflows, and tests.
+Better answers (the prompt-quality plan in [prompt-improvement.md](prompt-improvement.md)), then agents and tool calling, multi-step workflows, and tests.

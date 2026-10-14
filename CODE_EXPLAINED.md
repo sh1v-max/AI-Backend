@@ -1,4 +1,4 @@
-# DocMind — Code Explained (Step 1.1 → auth + frontend redesign)
+# DocMind — Code Explained (Step 1.1 → auth + frontend redesign + Phase 6 background jobs)
 
 A file-by-file, line-linked walkthrough of everything built so far: **why** each piece exists, **what** it does, and **how** it's implemented. Every `[file:lines]` link jumps to the exact code (Ctrl+Click in VS Code).
 
@@ -34,6 +34,7 @@ How this relates to the other docs:
    - **Phase 4 — Quiz generation:** [Step 4.1 — Structured output with Zod](#step-41--structured-output-with-zod) · [Step 4.2 — `POST /quiz`](#step-42--post-quiz) · [Step 4.2F — Frontend: quiz UI](#step-42f--frontend-quiz-ui) · [Step 4.3 + 4.3F — checking answers](#step-43--43f--checking-answers)
    - **Auth — per-user data:** [the problem and the fix](#auth--per-user-data) · [Auth.0 schema](#auth0--the-schema) · [Auth.1 users + tokens](#auth1--users-tokens-and-the-auth-routes) · [Auth.2 requireAuth](#auth2--requireauth-and-default-deny) · [Auth.3 ownership](#auth3--ownership-in-every-query) · [Auth.4 frontend](#auth4--the-frontend-token-authfetch-useauth-the-gate) · [Auth.5 fetch streaming](#auth5--streaming-with-fetch-instead-of-eventsource) · [Auth.6 sign in UI](#auth6--sign-in-sign-up-log-out) · [Auth.7 limits + proxies](#auth7--document-caps-rate-limit-and-the-proxy-problem)
    - [Frontend redesign](#frontend-redesign)
+   - **Phase 6 — Background jobs:** [why](#phase-6--background-jobs-bullmq) · [BG.0 Redis + settings](#bg0--redis-the-column-the-settings) · [BG.1 idle cost](#bg1--the-learning-script-and-what-an-idle-worker-costs) · [BG.2 queue + worker](#bg2--the-queue-the-worker-the-idempotent-job) · [BG.3 API side](#bg3--the-api-side) · [BG.4 frontend](#bg4--the-frontend) · [BG.5 live + prefix](#bg5--live-and-the-prefix-that-was-wrong)
 5. [Cross-cutting: errors, logging, and the backend restructure](#5-cross-cutting-errors-logging-and-the-backend-restructure)
 6. [One chat message, end to end](#6-one-chat-message-end-to-end)
 7. [Known limitations (honest list)](#7-known-limitations-honest-list)
@@ -112,7 +113,7 @@ Before any step, the project needed a place to live.
 - Dependencies, each with one job: `express` (HTTP server), `cors` (allow the browser at :5173 to call :3000), `multer` (file uploads), `pdf-parse` (PDF → text), `pg` (Postgres driver), `drizzle-orm` (typed queries), `dotenv` (load `.env`), `chalk` (coloured terminal logs), `zod` (checks that the LLM's output has the right shape — Phase 4). `drizzle-kit` is the CLI for Drizzle (configured in [drizzle.config.ts](drizzle.config.ts)).
 
 ### [tsconfig.json](tsconfig.json)
-`"strict": true` — TypeScript's strictest checking (no implicit `any`, null-safety). It's why you see things like `documentId: unknown` followed by a `typeof documentId !== 'string'` check in [chat.service.ts:80-93](src/services/chat.service.ts#L80-L93).
+`"strict": true` — TypeScript's strictest checking (no implicit `any`, null-safety). It's why you see things like `documentId: unknown` followed by a `typeof documentId !== 'string'` check in [chat.service.ts:80-93](src/services/chat.service.ts#L81-L94).
 
 ### `.env` (never committed) and [.env.example](.env.example)
 Three keys: `GEMINI_API_KEY`, `DATABASE_URL` (Neon connection string), `FRONTEND_URL` (allowed CORS origin). `.env.example` is the committed template with no real values. The frontend has its own `frontend/.env` with `VITE_API_URL` (read at [client.ts:3](frontend/src/api/client.ts#L3)).
@@ -225,7 +226,7 @@ Step 1.2 scattered raw SQL strings and a copy-pasted `getEmbedding` through the 
 
 **[db/schema.ts](src/db/schema.ts) — tables as TypeScript** (the `chunks` table is the Phase 1 one; the others came later)
 - `chunks`: [L27-36](src/db/schema.ts#L27-L36) — `id` (serial primary key), `content` (text), `embedding` (`vector('embedding', { dimensions: 3072 })` at [L33](src/db/schema.ts#L33)), and `documentId` (which PDF this chunk came from, added in Step 2.2).
-- `documents`: [L16-23](src/db/schema.ts#L16-L23) — Step 2.2. `chat_messages`: [L45-54](src/db/schema.ts#L45-L54) — Step 2.4.
+- `documents`: [L16-23](src/db/schema.ts#L16-L23) — Step 2.2. `chat_messages`: [L45-54](src/db/schema.ts#L45-L64) — Step 2.4.
 - Every other file imports these definitions, so a typo in a column name is a compile error, not a runtime surprise.
 
 **[services/embeddings.service.ts](src/services/embeddings.service.ts) — the shared embedder**
@@ -233,11 +234,11 @@ Step 1.2 scattered raw SQL strings and a copy-pasted `getEmbedding` through the 
 
 **[repositories/chunks.repository.ts](src/repositories/chunks.repository.ts)**
 - `insertChunk(content, embedding, documentId)` — [L6-14](src/repositories/chunks.repository.ts#L6-L14): `db.insert(chunks).values(...)`. The SQL equivalent is in the comment at [L15-16](src/repositories/chunks.repository.ts#L15-L16).
-- `searchSimilar(queryEmbedding, limit, documentId?)` — [L56-86](src/repositories/chunks.repository.ts#L56-L86):
-  - [L62](src/repositories/chunks.repository.ts#L62): `cosineDistance(chunks.embedding, queryEmbedding)` builds the same `<=>` expression as a reusable value; `.mapWith(Number)` makes sure the result comes back as a JS number.
-  - [L66-85](src/repositories/chunks.repository.ts#L66-L85): `select content + distance (+ documentId, filename since Step 3.3) → where documentId matches → order by distance → limit`. It returns `SimilarChunk[]`, nearest first.
+- `searchSimilar(queryEmbedding, limit, documentId?)` — [L56-86](src/repositories/chunks.repository.ts#L58-L88):
+  - [L62](src/repositories/chunks.repository.ts#L64): `cosineDistance(chunks.embedding, queryEmbedding)` builds the same `<=>` expression as a reusable value; `.mapWith(Number)` makes sure the result comes back as a JS number.
+  - [L66-85](src/repositories/chunks.repository.ts#L68-L87): `select content + distance (+ documentId, filename since Step 3.3) → where documentId matches → order by distance → limit`. It returns `SimilarChunk[]`, nearest first.
   - The `where documentId = …` filter is what keeps one PDF's answers from mixing in another PDF's text (Step 2.2 added it). Step 3.3 made `documentId` **optional** — see [Step 3.3](#step-33--multi-document-chat).
-- `deleteChunksByDocumentId` — [L39-41](src/repositories/chunks.repository.ts#L39-L41): used when a document is deleted (Step 2.5).
+- `deleteChunksByDocumentId` — [L39-41](src/repositories/chunks.repository.ts#L39-L43): used when a document is deleted (Step 2.5).
 
 **[step3-drizzle.ts](src/step3-drizzle.ts) — proof it works**
 Same experiment as Step 1.2 but through `insertChunk()` / `searchSimilar()` ([L34-41](src/step3-drizzle.ts#L34-L41)) — the caller never writes SQL. ⚠️ [L18](src/step3-drizzle.ts#L18) runs `DELETE FROM chunks` — **it wipes every chunk in the table, including your real PDFs'**. Don't re-run it against the live database.
@@ -255,17 +256,17 @@ Routes and services say *what* they want (`searchSimilar(embedding, 3, docId)`);
 
 ## Step 2.1 — Parse a PDF
 
-**Where it lives now:** [documents.routes.ts:11](src/routes/documents.routes.ts#L11) (multer), [documents.routes.ts:29-52](src/routes/documents.routes.ts#L29-L52) (`POST /upload`), and [ingestion.service.ts:17-25](src/services/ingestion.service.ts#L17-L25) (the parsing). Originally all of this was in `index.ts`; the backend restructure ([§5](#5-cross-cutting-errors-logging-and-the-backend-restructure)) moved it without changing behavior.
+**Where it lives now:** [documents.routes.ts:16-19](src/routes/documents.routes.ts#L16-L19) (multer), [documents.routes.ts:92-122](src/routes/documents.routes.ts#L92-L122) (`POST /upload`), and `parsePdf()` at [ingestion.service.ts:30-54](src/services/ingestion.service.ts#L30-L54) (the parsing). Originally all of this was in `index.ts`; the backend restructure ([§5](#5-cross-cutting-errors-logging-and-the-backend-restructure)) moved it without changing behavior, and Phase 6 split parsing from embedding ([BG.2](#bg2--the-queue-the-worker-the-idempotent-job)).
 
 ### Why we need it
 Users upload a **file**, but everything so far works on **text**. We need "PDF in → plain text out" before we can chunk or embed anything.
 
 ### How it works
-- **Multer** ([documents.routes.ts:11](src/routes/documents.routes.ts#L11)): `multer({ storage: multer.memoryStorage() })`. Multer is Express middleware for `multipart/form-data` (file uploads). `memoryStorage()` keeps the uploaded file **in RAM** as a `Buffer` instead of writing it to disk — simplest option for parsing straight away.
-- **The route** ([L29](src/routes/documents.routes.ts#L29)): `upload.single('file')` says "expect one file in the form field named `file`" and puts it on `req.file` (`buffer`, `originalname`, `size`, `mimetype`).
-- **Validation** ([L33-43](src/routes/documents.routes.ts#L33-L43)): no file → `400`; `mimetype !== 'application/pdf'` → `400`. Note the mimetype comes from the *client's* request header, so it's a convenience check, not a security guarantee.
-- **Parsing** ([ingestion.service.ts:19-25](src/services/ingestion.service.ts#L19-L25)): `new PDFParse({ data: file.buffer })` then `await parser.getText()` → `result.text`. `pdf-parse` only reads PDFs with a real **text layer** (typed/exported); scanned images would need OCR.
-- **Cleanup** ([ingestion.service.ts:62-64](src/services/ingestion.service.ts#L62-L64)): `finally { await parser.destroy() }` frees the parser even if something above threw.
+- **Multer** ([documents.routes.ts:16-19](src/routes/documents.routes.ts#L16-L19)): `multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES } })`. Multer is Express middleware for `multipart/form-data` (file uploads). `memoryStorage()` keeps the uploaded file **in RAM** as a `Buffer` instead of writing it to disk — simplest option for parsing straight away.
+- **The route** ([L92](src/routes/documents.routes.ts#L92)): `upload.single('file')` says "expect one file in the form field named `file`" and puts it on `req.file` (`buffer`, `originalname`, `size`, `mimetype`).
+- **Validation** ([L97-108](src/routes/documents.routes.ts#L97-L108)): no file → `400`; `mimetype !== 'application/pdf'` → `400`. Note the mimetype comes from the *client's* request header, so it's a convenience check, not a security guarantee.
+- **Parsing** ([ingestion.service.ts:32-37](src/services/ingestion.service.ts#L32-L37)): `new PDFParse({ data: file.buffer })` then `await parser.getText()` → `result.text`. `pdf-parse` only reads PDFs with a real **text layer** (typed/exported); scanned images would need OCR. Since BG.3 a PDF with no text is refused with `400` — decided on the **per-page** texts ([L44](src/services/ingestion.service.ts#L44)), because pdf-parse adds a `-- 1 of N --` marker to `result.text` even for empty pages.
+- **Cleanup** ([ingestion.service.ts:49-53](src/services/ingestion.service.ts#L49-L53)): `finally { await parser.destroy() }` frees the parser even if something above threw.
 
 ### Takeaway
 Multer turns an HTTP file upload into a `Buffer`; `pdf-parse` turns the buffer into a string. That string is the raw material for everything after.
@@ -277,27 +278,27 @@ Multer turns an HTTP file upload into a `Buffer`; `pdf-parse` turns the buffer i
 **Why a frontend at all:** to test each endpoint the way a real client would (real `FormData`, real `EventSource`, real CORS) instead of only via Postman. It's built alongside the backend, kept deliberately simple: Vite + React + TypeScript, no router, no state library.
 
 ### Entry and wiring
-- [main.tsx:6-10](frontend/src/main.tsx#L6-L10): mounts `<App />` inside `<StrictMode>`. StrictMode (dev only) intentionally runs some things **twice** to expose impure code — this is why the streaming state updater in [useChat.ts:125-133](frontend/src/hooks/useChat.ts#L125-L133) must be a pure function.
+- [main.tsx:6-10](frontend/src/main.tsx#L6-L10): mounts `<App />` inside `<StrictMode>`. StrictMode (dev only) intentionally runs some things **twice** to expose impure code — this is why the streaming state updater in [useChat.ts:125-133](frontend/src/hooks/useChat.ts#L133-L141) must be a pure function.
 - [vite.config.ts](frontend/vite.config.ts): just the React plugin. Vite serves the app on `localhost:5173`.
 
 ### CORS — why the backend needs [app.ts:42-47](src/app.ts#L42-L47)
-The page is served from `:5173` and calls the API on `:3000`. Those are **different origins**, and browsers block cross-origin requests unless the server says it's OK. `cors({ origin: FRONTEND_URL })` sends the allow header for exactly the frontend's origin ([config.ts:21](src/config.ts#L21), defaulting to `http://localhost:5173`).
+The page is served from `:5173` and calls the API on `:3000`. Those are **different origins**, and browsers block cross-origin requests unless the server says it's OK. `cors({ origin: FRONTEND_URL })` sends the allow header for exactly the frontend's origin ([config.ts:21](src/config.ts#L22), defaulting to `http://localhost:5173`).
 
 ### The API layer — `frontend/src/api/` (fetch and nothing else)
 - [client.ts](frontend/src/api/client.ts): [L3](frontend/src/api/client.ts#L3) `API_URL` (from `VITE_API_URL`, falling back to `http://localhost:3000`); [L5-14](frontend/src/api/client.ts#L5-L14) `parseJsonOrThrow(res)` — parses the JSON, and if the status isn't OK, logs it and throws an `ApiError` carrying the server's `error` message. Every API function shares it, so error handling is written once.
 - [documents.ts](frontend/src/api/documents.ts):
-  - `uploadDocument(file)` — [L30-52](frontend/src/api/documents.ts#L30-L52): builds a `FormData` ([L33-34](frontend/src/api/documents.ts#L33-L34)) and POSTs it. **It deliberately sets no `Content-Type` header** — the browser sets `multipart/form-data` *with the boundary string* itself; setting it manually breaks the upload.
-  - `fetchDocuments()` — [L14-28](frontend/src/api/documents.ts#L14-L28): `GET /documents`, and renames the server's `id` to the frontend's `documentId`.
-  - `deleteDocument()` — [L54-58](frontend/src/api/documents.ts#L54-L58) (Step 2.5).
+  - `uploadDocument(file)` — [L30-52](frontend/src/api/documents.ts#L36-L61): builds a `FormData` ([L33-34](frontend/src/api/documents.ts#L39-L40)) and POSTs it. **It deliberately sets no `Content-Type` header** — the browser sets `multipart/form-data` *with the boundary string* itself; setting it manually breaks the upload.
+  - `fetchDocuments()` — [L14-28](frontend/src/api/documents.ts#L18-L32): `GET /documents`, and renames the server's `id` to the frontend's `documentId`.
+  - `deleteDocument()` — [L54-58](frontend/src/api/documents.ts#L63-L70) (Step 2.5).
 
 ### Types — [types/document.ts](frontend/src/types/document.ts)
-`UploadedDocument` ([L1-8](frontend/src/types/document.ts#L1-L8)) and `UploadStatus = 'idle' | 'uploading' | 'error'` ([L10](frontend/src/types/document.ts#L10)).
+`UploadedDocument` ([L1-8](frontend/src/types/document.ts#L7-L17)) and `UploadStatus = 'idle' | 'uploading' | 'error'` ([L10](frontend/src/types/document.ts#L19)).
 
 ### State — [hooks/useDocuments.ts](frontend/src/hooks/useDocuments.ts)
-- [L7-9](frontend/src/hooks/useDocuments.ts#L7-L9): `documents`, `status`, `error`.
-- [L14-24](frontend/src/hooks/useDocuments.ts#L14-L24): on mount, load documents that **already exist on the server** (so a PDF uploaded via Postman or another tab still shows up).
-- `uploadFile` — [L26-51](frontend/src/hooks/useDocuments.ts#L26-L51): checks `file.type` is a PDF ([L29-34](frontend/src/hooks/useDocuments.ts#L29-L34)), sets `status: 'uploading'`, calls the API, prepends the new doc to state, or sets an error.
-- `deleteDocument` — [L53-64](frontend/src/hooks/useDocuments.ts#L53-L64).
+- [L7-9](frontend/src/hooks/useDocuments.ts#L13-L15): `documents`, `status`, `error`.
+- [L14-24](frontend/src/hooks/useDocuments.ts#L33-L43): on mount, load documents that **already exist on the server** (so a PDF uploaded via Postman or another tab still shows up).
+- `uploadFile` — [L26-51](frontend/src/hooks/useDocuments.ts#L121-L184): checks `file.type` is a PDF ([L29-34](frontend/src/hooks/useDocuments.ts#L124-L129)), sets `status: 'uploading'`, calls the API, prepends the new doc to state, or sets an error.
+- `deleteDocument` — [L53-64](frontend/src/hooks/useDocuments.ts#L186-L198).
 
 ### UI — [components/documents/UploadDropzone.tsx](frontend/src/components/documents/UploadDropzone.tsx)
 A drag-and-drop box that's also click-to-browse. [L11-13](frontend/src/components/documents/UploadDropzone.tsx#L11-L13) tracks dragging and a hidden `<input type="file" accept="application/pdf">`; [handleDrop L15-20](frontend/src/components/documents/UploadDropzone.tsx#L15-L20) grabs the dropped file; [L46-50](frontend/src/components/documents/UploadDropzone.tsx#L46-L50) resets the input value so picking the *same* file twice still fires; while `busy` it shows a spinner and "Extracting text…" ([L53-57](frontend/src/components/documents/UploadDropzone.tsx#L53-L57)). It calls `onFileSelected` and knows nothing about APIs — presentation only.
@@ -317,37 +318,37 @@ A drag-and-drop box that's also click-to-browse. [L11-13](frontend/src/component
 Step 2.1 gave us one big string. To search it we need to (a) cut it into **chunks** small enough to embed and to fit in a prompt, (b) embed each chunk, (c) store the vectors, and (d) remember which chunks belong to which PDF.
 
 ### What it does
-`POST /upload` turns a PDF into searchable chunks in the database, and returns `{ documentId, filename, fileSizeBytes, textLength, chunkCount, createdAt }`.
+`POST /upload` turns a PDF into searchable chunks in the database. **Since Phase 6 it happens in two halves:** the request parses, chunks, saves a `processing` row and queues a job, then answers `202` with `{ documentId, filename, fileSizeBytes, textLength, chunkCount, createdAt, status }`; the embedding (step 4 below) runs in the queue worker ([Phase 6](#phase-6--background-jobs-bullmq)). The steps themselves are the same as when this was built.
 
-### How it works — `ingestPdf()` at [ingestion.service.ts:17-65](src/services/ingestion.service.ts#L17-L65)
+### How it works — now spread over [ingestion.service.ts](src/services/ingestion.service.ts)
 
 | Step | Code | What happens |
 |---|---|---|
-| 1 | [documents.routes.ts:45](src/routes/documents.routes.ts#L45) | log "File received" (route checks come first) |
-| 2 | [ingestion.service.ts:22-25](src/services/ingestion.service.ts#L22-L25) | extract text with `parser.getText()` |
-| 3 | [ingestion.service.ts:27-30](src/services/ingestion.service.ts#L27-L30) | `chunkText(text)`; generate `documentId = randomUUID()` |
-| 4 | [ingestion.service.ts:32-42](src/services/ingestion.service.ts#L32-L42) | for each chunk: `getEmbedding` → `insertChunk(chunk, embedding, documentId)` |
-| 5 | [ingestion.service.ts:44-52](src/services/ingestion.service.ts#L44-L52) | `insertDocument(...)` writes the metadata row |
+| 1 | [documents.routes.ts:110](src/routes/documents.routes.ts#L110) | log "File received" (route checks come first) |
+| 2 | [ingestion.service.ts:34-37](src/services/ingestion.service.ts#L34-L37) (`parsePdf`) | extract text with `parser.getText()` |
+| 3 | [ingestion.service.ts:46-48](src/services/ingestion.service.ts#L46-L48) + [L119](src/services/ingestion.service.ts#L119) | `chunkText(text)`; generate `documentId = randomUUID()` (in `queuePdfIngestion`) |
+| 4 | [ingestion.service.ts:60-71](src/services/ingestion.service.ts#L60-L71) (`embedAndStoreChunks`, run by the worker) | for each chunk: `getEmbedding` → `insertChunk(chunk, embedding, documentId)` |
+| 5 | [ingestion.service.ts:123](src/services/ingestion.service.ts#L123) | `insertDocument(..., 'processing')` writes the metadata row — now *before* the embedding, with the real chunk count |
 
 - **`chunkText`** — [chunkText.ts:3-12](src/utils/chunkText.ts#L3-L12): split the text on whitespace into words, then group **500 words per chunk** and join them back with spaces. Deliberately simple. Honest limitation: it ignores paragraph/sentence boundaries and flattens newlines. Better chunking is a later topic ([topics/advanced/02-chunking-strategy](topics/advanced/02-chunking-strategy/NOTES.md)).
 - **Why chunk at all?** (1) An embedding of a whole book is too vague to match a specific question; a ~500-word piece has a focused meaning. (2) Only the top few chunks go into the prompt, keeping it small and cheap.
 - **`documentId`** is a UUID made per upload. It's stored on every chunk (`chunks.document_id`) so a search can be limited to one PDF.
-- **The loop is sequential** ([L34-42](src/services/ingestion.service.ts#L34-L42)): one embedding API call per chunk, one after another. Simple and easy to log, but slow for big PDFs — Phase 6 (background jobs) is the fix.
-- **`documents` table** — [schema.ts:16-23](src/db/schema.ts#L16-L23): one row per PDF (`id`, `filename`, `fileSizeBytes`, `textLength`, `chunkCount`, `createdAt`). It exists so "what documents exist?" doesn't have to be reverse-engineered from chunk rows.
-- **`insertDocument`** — [documents.repository.ts:5-17](src/repositories/documents.repository.ts#L5-L17): `.insert(...).values(...).returning()` gives back the saved row (that's where `createdAt` comes from).
-- **`listDocuments`** — [L21-23](src/repositories/documents.repository.ts#L21-L23) newest first; served by `GET /documents` at [documents.routes.ts:13-16](src/routes/documents.routes.ts#L13-L16).
+- **The loop is sequential** ([L61-70](src/services/ingestion.service.ts#L61-L70)): one embedding API call per chunk, one after another. Simple and easy to log, but slow for big PDFs — which is why Phase 6 moved it out of the request.
+- **`documents` table** — [schema.ts:42-64](src/db/schema.ts#L42-L64): one row per PDF (`id`, `filename`, `fileSizeBytes`, `textLength`, `chunkCount`, `createdAt`, plus `userId` since auth and `status`/`error` since Phase 6). It exists so "what documents exist?" doesn't have to be reverse-engineered from chunk rows.
+- **`insertDocument`** — [documents.repository.ts:20-35](src/repositories/documents.repository.ts#L20-L35): `.insert(...).values(...).returning()` gives back the saved row (that's where `createdAt` comes from).
+- **`listDocuments`** — [L65-71](src/repositories/documents.repository.ts#L65-L71) newest first; served by `GET /documents` at [documents.routes.ts:53-56](src/routes/documents.routes.ts#L53-L56).
 
 ### The logger you see in the terminal — [utils/pipelineLogger.ts](src/utils/pipelineLogger.ts)
-Every route prints a readable trace. Helpers: `pipelineStart` ([L18-22](src/utils/pipelineLogger.ts#L18-L22)) header line · `step(pipeline, n, total, label)` ([L30-33](src/utils/pipelineLogger.ts#L30-L33)) `[3/5] …` · `detail` ([L35-37](src/utils/pipelineLogger.ts#L35-L37)) indented grey line · `timing` ([L39-41](src/utils/pipelineLogger.ts#L39-L41)) `done in Nms` · `preview` ([L43-47](src/utils/pipelineLogger.ts#L43-L47)) shows the first ~80 chars of some text · `rejected` / `notFound` ([L49-55](src/utils/pipelineLogger.ts#L49-L55)) red failure lines · `pipelineEnd` ([L24-28](src/utils/pipelineLogger.ts#L24-L28)) total time. Uploads are **cyan**, chats **magenta** ([L11-14](src/utils/pipelineLogger.ts#L11-L14)) so mixed traffic is easy to read; `chalk.level = 1` ([L6](src/utils/pipelineLogger.ts#L6)) forces colour even when output is piped.
+Every route prints a readable trace. Helpers: `pipelineStart` ([L23-27](src/utils/pipelineLogger.ts#L23-L27)) header line · `step(pipeline, n, total, label)` ([L37-40](src/utils/pipelineLogger.ts#L37-L40)) `[3/5] …` · `detail` ([L42-44](src/utils/pipelineLogger.ts#L42-L44)) indented grey line · `timing` ([L46-48](src/utils/pipelineLogger.ts#L46-L48)) `done in Nms` · `preview` ([L50-54](src/utils/pipelineLogger.ts#L50-L54)) shows the first ~80 chars of some text · `rejected` / `notFound` ([L56-62](src/utils/pipelineLogger.ts#L56-L62)) red failure lines · `pipelineEnd` ([L31-35](src/utils/pipelineLogger.ts#L31-L35)) total time. Uploads are **cyan**, chats **magenta**, quizzes blue, auth yellow, queue jobs **green** ([L11-19](src/utils/pipelineLogger.ts#L11-L19)) so mixed traffic is easy to read; `chalk.level = 1` ([L6](src/utils/pipelineLogger.ts#L6)) forces colour even when output is piped.
 
 ### Takeaway
-Upload is an *offline* pipeline (nobody needs the result instantly), which is why Phase 6 will move it to a background queue. Chat is *online*: a human is waiting.
+Upload is an *offline* pipeline (nobody needs the result instantly), which is why Phase 6 moved it to a background queue. Chat is *online*: a human is waiting.
 
 ---
 
 ## Step 2.3 — `POST /chat`, single turn
 
-**Files:** [chat.routes.ts:11-37](src/routes/chat.routes.ts#L11-L37), [chat.service.ts](src/services/chat.service.ts), [llm.service.ts:10-29](src/services/llm.service.ts#L10-L29), [chunks.repository.ts:56-86](src/repositories/chunks.repository.ts#L56-L86).
+**Files:** [chat.routes.ts:11-37](src/routes/chat.routes.ts#L11-L37), [chat.service.ts](src/services/chat.service.ts), [llm.service.ts:10-29](src/services/llm.service.ts#L10-L29), [chunks.repository.ts:56-86](src/repositories/chunks.repository.ts#L58-L88).
 
 ### Why we need it
 This is RAG itself: answer a question **from the PDF**, not from the model's memory.
@@ -356,17 +357,17 @@ This is RAG itself: answer a question **from the PDF**, not from the model's mem
 `POST /chat` with `{ documentId, message, sessionId? }` returns `{ sessionId, answer, sources }`, where `sources` are the chunks that were used (with their distances) so the UI can show where the answer came from.
 
 ### How it works
-The route is thin ([chat.routes.ts:11-37](src/routes/chat.routes.ts#L11-L37)); the shared pipeline is `prepareChat()` in [chat.service.ts:74-165](src/services/chat.service.ts#L74-L165):
+The route is thin ([chat.routes.ts:11-37](src/routes/chat.routes.ts#L11-L37)); the shared pipeline is `prepareChat()` in [chat.service.ts:74-165](src/services/chat.service.ts#L75-L178):
 
-1. **Validate** — [L80-93](src/services/chat.service.ts#L80-L93): `message` must be a non-empty string; `documentId` is a real id **or omitted/`'all'`** (search everything — see [Step 3.3](#step-33--multi-document-chat)); a non-string `documentId` is a `400`. They arrive typed `unknown` because they're raw request input; the `typeof` checks narrow them. Failure → returns `{ ok: false, status: 400, error }` (the *service never touches `res`* — the route sends the response).
-2. **Embed the question** — [L100-103](src/services/chat.service.ts#L100-L103): the **same model** that embedded the chunks (a question can only be compared to chunks embedded the same way).
-3. **Search** — [L105-115](src/services/chat.service.ts#L105-L115): `searchSimilar(questionEmbedding, 3, documentId)` — top **3** nearest chunks of this document (or, since Step 3.3, of every document when the scope is `'all'`).
-4. **No chunks?** — [L117-128](src/services/chat.service.ts#L117-L128): the `documentId` doesn't exist (or, in all-documents mode, nothing has been uploaded) → `404`.
+1. **Validate** — [L80-93](src/services/chat.service.ts#L81-L94): `message` must be a non-empty string; `documentId` is a real id **or omitted/`'all'`** (search everything — see [Step 3.3](#step-33--multi-document-chat)); a non-string `documentId` is a `400`. They arrive typed `unknown` because they're raw request input; the `typeof` checks narrow them. Failure → returns `{ ok: false, status: 400, error }` (the *service never touches `res`* — the route sends the response).
+2. **Embed the question** — [L100-103](src/services/chat.service.ts#L101-L104): the **same model** that embedded the chunks (a question can only be compared to chunks embedded the same way).
+3. **Search** — [L105-115](src/services/chat.service.ts#L106-L116): `searchSimilar(questionEmbedding, 3, documentId)` — top **3** nearest chunks of this document (or, since Step 3.3, of every document when the scope is `'all'`).
+4. **No chunks?** — [L117-128](src/services/chat.service.ts#L118-L129): the `documentId` doesn't exist (or, in all-documents mode, nothing has been uploaded) → `404`.
 5. *(steps 4–5 of the pipeline — history and prompt — are covered next, in Step 2.4)*
 6. **Generate** — [chat.routes.ts:21-25](src/routes/chat.routes.ts#L21-L25): `generateAnswer(prompt)`.
 7. **Save + respond** — [L27-36](src/routes/chat.routes.ts#L27-L36).
 
-**The prompt — [buildChatPrompt, chat.service.ts:15-49](src/services/chat.service.ts#L15-L49)**
+**The prompt — [buildChatPrompt, chat.service.ts:15-49](src/services/chat.service.ts#L16-L50)**
 It tells the model to (a) use **only** the supplied context, no outside knowledge, no guessing; (b) answer naturally, not "Based on the provided context…"; (c) say so briefly if the answer isn't in the context; (d) use the conversation history to resolve follow-ups like "the first one". Then the layout is `Context:` (the chunks joined by blank lines) + optional `Conversation so far:` + `New question:`. Prompt wording lives in this **one** function, shared by `/chat` and `/chat-stream`.
 
 **Calling Gemini — [generateAnswer, llm.service.ts:10-29](src/services/llm.service.ts#L10-L29)**
@@ -385,12 +386,12 @@ It tells the model to (a) use **only** the supplied context, no outside knowledg
 
 **Files:** [components/chat/](frontend/src/components/chat) — `ChatPanel`, `ChatTurn`, `ChatSources`, `ChatInputForm`, `ChatView`, `NewChatScreen`.
 
-- [ChatInputForm.tsx:11-40](frontend/src/components/chat/ChatInputForm.tsx#L11-L40): a controlled text input + send button. [L12-17](frontend/src/components/chat/ChatInputForm.tsx#L12-L17) prevents the page reload, trims, ignores empty messages, then calls `onSubmit`. The button is disabled while `disabled` (a reply is in flight) or the box is empty ([L33](frontend/src/components/chat/ChatInputForm.tsx#L33)).
+- [ChatInputForm.tsx:11-40](frontend/src/components/chat/ChatInputForm.tsx#L26-L71): a controlled text input + send button. [L12-17](frontend/src/components/chat/ChatInputForm.tsx#L27-L46) prevents the page reload, trims, ignores empty messages, then calls `onSubmit`. The button is disabled while `disabled` (a reply is in flight) or the box is empty ([L33](frontend/src/components/chat/ChatInputForm.tsx#L64)).
 - [ChatTurn.tsx:8-22](frontend/src/components/chat/ChatTurn.tsx#L8-L22): one message bubble. The CSS class comes from `message.role` (`user`/`assistant`) and gets an error style if `isError` ([L11-15](frontend/src/components/chat/ChatTurn.tsx#L11-L15)). If the message has `sources`, it renders `ChatSources` under it.
 - [ChatSources.tsx:8-31](frontend/src/components/chat/ChatSources.tsx#L8-L31): a collapsible `<details>` listing the source chunks — each shows its `distance` and the first 220 characters. This is how you *see* what the model was given.
-- [ChatPanel.tsx:15-57](frontend/src/components/chat/ChatPanel.tsx#L15-L57): the message list + input. Auto-scrolls to the bottom with a ref ([L16](frontend/src/components/chat/ChatPanel.tsx#L16), [L23-27](frontend/src/components/chat/ChatPanel.tsx#L23-L27)), shows a "Thinking…" bubble while waiting ([L44-49](frontend/src/components/chat/ChatPanel.tsx#L44-L49)). (Its streaming-specific logic is in [Step 3.2F](#step-32f--streaming-in-the-frontend).)
-- [ChatView.tsx:28-108](frontend/src/components/chat/ChatView.tsx#L28-L108): the right-hand pane. Header shows the active document's filename ([L53-80](frontend/src/components/chat/ChatView.tsx#L53-L80)); body is one of three states: **restoring** spinner ([L83-86](frontend/src/components/chat/ChatView.tsx#L83-L86)), **`ChatPanel`** if a document is active ([L87-94](frontend/src/components/chat/ChatView.tsx#L87-L94)), otherwise **`NewChatScreen`** ([L95-105](frontend/src/components/chat/ChatView.tsx#L95-L105)).
-- [NewChatScreen.tsx:15-79](frontend/src/components/chat/NewChatScreen.tsx#L15-L79): the landing screen — the upload dropzone ([L31](frontend/src/components/chat/NewChatScreen.tsx#L31)), an error banner ([L33-38](frontend/src/components/chat/NewChatScreen.tsx#L33-L38)), and "continue with a document you've uploaded before" chips with a delete button on each ([L40-76](frontend/src/components/chat/NewChatScreen.tsx#L40-L76)); `e.stopPropagation()` at [L64](frontend/src/components/chat/NewChatScreen.tsx#L64) stops a delete click from also selecting the chip.
+- [ChatPanel.tsx:15-57](frontend/src/components/chat/ChatPanel.tsx#L19-L53): the message list + input. Auto-scrolls to the bottom with a ref ([L16](frontend/src/components/chat/ChatPanel.tsx#L19), [L23-27](frontend/src/components/chat/ChatPanel.tsx#L23-L27)), shows a "Thinking…" bubble while waiting ([L44-49](frontend/src/components/chat/ChatPanel.tsx#L50-L53)). (Its streaming-specific logic is in [Step 3.2F](#step-32f--streaming-in-the-frontend).)
+- [ChatView.tsx:28-108](frontend/src/components/chat/ChatView.tsx#L38-L154): the right-hand pane. Header shows the active document's filename ([L53-80](frontend/src/components/chat/ChatView.tsx#L137-L146)); body is one of three states: **restoring** spinner ([L83-86](frontend/src/components/chat/ChatView.tsx#L83-L86)), **`ChatPanel`** if a document is active ([L87-94](frontend/src/components/chat/ChatView.tsx#L148-L153)), otherwise **`NewChatScreen`** ([L95-105](frontend/src/components/chat/ChatView.tsx#L95-L105)).
+- [NewChatScreen.tsx:15-79](frontend/src/components/chat/NewChatScreen.tsx#L48-L255): the landing screen — the upload dropzone ([L31](frontend/src/components/chat/NewChatScreen.tsx#L31)), an error banner ([L33-38](frontend/src/components/chat/NewChatScreen.tsx#L159-L160)), and "continue with a document you've uploaded before" chips with a delete button on each ([L40-76](frontend/src/components/chat/NewChatScreen.tsx#L199-L253)); `e.stopPropagation()` at [L64](frontend/src/components/chat/NewChatScreen.tsx#L252) stops a delete click from also selecting the chip.
 - [types/chat.ts](frontend/src/types/chat.ts): `ChatSource` ([L1-8](frontend/src/types/chat.ts#L1-L8)), `ChatMessage` ([L10-15](frontend/src/types/chat.ts#L10-L15), with optional `isError`/`sources`), `SessionSummary` ([L17-25](frontend/src/types/chat.ts#L17-L25)).
 - [api/chat.ts `sendChatMessage`, L11-28](frontend/src/api/chat.ts#L11-L28): the original non-streaming call (`POST /chat`, JSON body). **The UI no longer uses it** (it uses the streaming call since Step 3.2F), but it's kept as the simple reference implementation.
 
@@ -398,7 +399,7 @@ It tells the model to (a) use **only** the supplied context, no outside knowledg
 
 ## Step 2.4 — Memory
 
-**Files:** [schema.ts:45-54](src/db/schema.ts#L45-L54), [chatMessages.repository.ts](src/repositories/chatMessages.repository.ts), [chat.service.ts:136-151](src/services/chat.service.ts#L136-L151), [config.ts:7](src/config.ts#L7), [useChat.ts:109-110](frontend/src/hooks/useChat.ts#L109-L110).
+**Files:** [schema.ts:45-54](src/db/schema.ts#L45-L64), [chatMessages.repository.ts](src/repositories/chatMessages.repository.ts), [chat.service.ts:136-151](src/services/chat.service.ts#L137-L164), [config.ts:7](src/config.ts#L8), [useChat.ts:109-110](frontend/src/hooks/useChat.ts#L109-L110).
 
 ### Why we need it
 Without memory, "what about the next part?" means nothing — each request is independent. A chatbot feels like a chatbot because it remembers what you just said.
@@ -407,14 +408,14 @@ Without memory, "what about the next part?" means nothing — each request is in
 The LLM itself remembers nothing. "Memory" = **we store every message, and replay the last few into each new prompt**.
 
 ### How it works
-- **The table** — [schema.ts:45-54](src/db/schema.ts#L45-L54): `chat_messages(id, session_id, document_id, role, content, created_at)`. `session_id` groups messages into one conversation; `role` is `'user'` or `'assistant'`.
+- **The table** — [schema.ts:45-54](src/db/schema.ts#L45-L64): `chat_messages(id, session_id, document_id, role, content, created_at)`. `session_id` groups messages into one conversation; `role` is `'user'` or `'assistant'`.
 - **Saving** — `insertMessage(sessionId, documentId, role, content)` — [chatMessages.repository.ts:17-24](src/repositories/chatMessages.repository.ts#L17-L24).
 - **Loading** — `getRecentMessages(sessionId, limit)` — [L30-42](src/repositories/chatMessages.repository.ts#L30-L42): selects the newest `limit` rows (`ORDER BY created_at DESC LIMIT n`), then **`.reverse()`** ([L41](src/repositories/chatMessages.repository.ts#L41)) so they read oldest-first, the order a conversation needs.
-- **The limit** — [`HISTORY_LIMIT = 8`, config.ts:7](src/config.ts#L7). You can't send unlimited history forever (cost + context-window limits), so it caps at the last 8. Real systems summarize older messages instead of dropping them (later topic).
-- **In the pipeline** — [chat.service.ts:136-151](src/services/chat.service.ts#L136-L151):
-  1. [L137](src/services/chat.service.ts#L137) load history **first**.
-  2. [L143](src/services/chat.service.ts#L143) *then* save the new user message.
-  3. [L147-151](src/services/chat.service.ts#L147-L151) build the prompt.
+- **The limit** — [`HISTORY_LIMIT = 8`, config.ts:7](src/config.ts#L8). You can't send unlimited history forever (cost + context-window limits), so it caps at the last 8. Real systems summarize older messages instead of dropping them (later topic).
+- **In the pipeline** — [chat.service.ts:136-151](src/services/chat.service.ts#L137-L164):
+  1. [L137](src/services/chat.service.ts#L138) load history **first**.
+  2. [L143](src/services/chat.service.ts#L144) *then* save the new user message.
+  3. [L147-151](src/services/chat.service.ts#L160-L164) build the prompt.
   The order matters: history is loaded *before* the new message is saved, so the question isn't duplicated in the prompt (it's added separately as `New question:`), yet the *next* turn's history will include it.
 - **Assistant reply saved** after generation — [chat.routes.ts:27-28](src/routes/chat.routes.ts#L27-L28).
 - **Where `sessionId` comes from** — the frontend makes one with `crypto.randomUUID()` for a new thread ([useChat.ts:109-110](frontend/src/hooks/useChat.ts#L109-L110)) and reuses it for every message in that thread; the server falls back to its own `randomUUID()` if none is sent ([chat.routes.ts:14](src/routes/chat.routes.ts#L14)).
@@ -444,7 +445,7 @@ Step 2.4's frontend kept the `sessionId` only in React state, so **refreshing th
 - **`getMessagesForSession()`** — [L52-64](src/repositories/chatMessages.repository.ts#L52-L64): the full transcript, oldest first.
 - **Routes** — [sessions.routes.ts](src/routes/sessions.routes.ts): `GET /sessions` ([L10-13](src/routes/sessions.routes.ts#L10-L13)), `GET /sessions/:sessionId/messages` ([L15-18](src/routes/sessions.routes.ts#L15-L18)), `DELETE /sessions/:sessionId` ([L20-23](src/routes/sessions.routes.ts#L20-L23)).
 - **`deleteSession`** — [repository L122-124](src/repositories/chatMessages.repository.ts#L122-L124): deletes that conversation's messages; the document stays.
-- **`DELETE /documents/:documentId`** — [documents.routes.ts:61-79](src/routes/documents.routes.ts#L61-L79): deletes the chunks ([`deleteChunksByDocumentId`](src/repositories/chunks.repository.ts#L62-L66)), then every chat message for it ([`deleteMessagesByDocumentId`, L160-164](src/repositories/chatMessages.repository.ts#L160-L164)), then the document row ([`deleteDocument`](src/repositories/documents.repository.ts#L74-L80)) — so no rows are left pointing at a dead `document_id`. *(Since Auth.3 it first checks the document is the caller's, and 404s otherwise.)*
+- **`DELETE /documents/:documentId`** — [documents.routes.ts:61-79](src/routes/documents.routes.ts#L61-L89): deletes the chunks ([`deleteChunksByDocumentId`](src/repositories/chunks.repository.ts#L64-L68)), then every chat message for it ([`deleteMessagesByDocumentId`, L160-164](src/repositories/chatMessages.repository.ts#L160-L164)), then the document row ([`deleteDocument`](src/repositories/documents.repository.ts#L111-L117)) — so no rows are left pointing at a dead `document_id`. *(Since Auth.3 it first checks the document is the caller's, and 404s otherwise.)*
 
 ### Frontend
 
@@ -455,12 +456,12 @@ Step 2.4's frontend kept the `sessionId` only in React state, so **refreshing th
 **The heart: [hooks/useChat.ts](frontend/src/hooks/useChat.ts)** (chat state + the persistence trick)
 - State — [L15-20](frontend/src/hooks/useChat.ts#L15-L20): active session id, active document, messages, input text, loading flag, and `restoring`.
 - **Persistence, done right** — only the **active session id** goes into `localStorage` under `docmind:activeSessionId` ([L7](frontend/src/hooks/useChat.ts#L7)) — *never the messages*. On load ([L25-60](frontend/src/hooks/useChat.ts#L25-L60)): read the saved id → fetch `/sessions` **and** the transcript in parallel ([L34](frontend/src/hooks/useChat.ts#L34)) → cross-check the id against `/sessions` to recover which document it belongs to ([L36-42](frontend/src/hooks/useChat.ts#L36-L42); if it's gone, drop the stale id) → restore state ([L49-54](frontend/src/hooks/useChat.ts#L49-L54)). The source of truth stays the database; the browser just remembers *which* conversation was open.
-- `startNewChat` ([L62-69](frontend/src/hooks/useChat.ts#L62-L69)), `resetToWelcome` ([L71-77](frontend/src/hooks/useChat.ts#L71-L77)), `openSession` ([L79-96](frontend/src/hooks/useChat.ts#L79-L96)) — the three ways the active conversation changes.
+- `startNewChat` ([L62-69](frontend/src/hooks/useChat.ts#L62-L70)), `resetToWelcome` ([L71-77](frontend/src/hooks/useChat.ts#L72-L78)), `openSession` ([L79-96](frontend/src/hooks/useChat.ts#L80-L97)) — the three ways the active conversation changes.
 
 **Layout**
-- [App.tsx](frontend/src/App.tsx) is a **thin orchestrator**: it calls the three hooks ([L14-28](frontend/src/App.tsx#L14-L28)), holds sidebar open/collapsed flags ([L33-34](frontend/src/App.tsx#L33-L34)), defines handlers that connect them — `handleUpload` ([L36-45](frontend/src/App.tsx#L36-L45)), `handlePickDocument` ([L47-51](frontend/src/App.tsx#L47-L51)), `handleSelectSession` ([L72-76](frontend/src/App.tsx#L72-L76)), `handleNewChat` ([L78-82](frontend/src/App.tsx#L78-L82)) — and renders `<Sidebar>` + `<ChatView>` ([L119-156](frontend/src/App.tsx#L119-L156)).
-- **Deleting with a confirm step** — `handleDeleteDocument` ([L84-104](frontend/src/App.tsx#L84-L104)) and `handleDeleteSession` ([L106-117](frontend/src/App.tsx#L106-L117)) use `window.confirm` first; if the deleted item was the open one, they call `resetToWelcome()` (so you never stare at a dead conversation); deleting a document also calls `refreshSessions()` ([L101](frontend/src/App.tsx#L101)) because its sessions vanished server-side.
-- [components/sidebar/Sidebar.tsx:18-65](frontend/src/components/sidebar/Sidebar.tsx#L18-L65): brand + collapse toggle + "New chat" button + the history list; collapsed mode hides the labels/list ([L37](frontend/src/components/sidebar/Sidebar.tsx#L37), [L53](frontend/src/components/sidebar/Sidebar.tsx#L53), [L56-63](frontend/src/components/sidebar/Sidebar.tsx#L56-L63)).
+- [App.tsx](frontend/src/App.tsx) is a **thin orchestrator**: it calls the three hooks ([L14-28](frontend/src/App.tsx#L15-L30)), holds sidebar open/collapsed flags ([L33-34](frontend/src/App.tsx#L35-L36)), defines handlers that connect them — `handleUpload` ([L36-45](frontend/src/App.tsx#L38-L47)), `handlePickDocument` ([L47-51](frontend/src/App.tsx#L67-L71)), `handleSelectSession` ([L72-76](frontend/src/App.tsx#L104-L151)), `handleNewChat` ([L78-82](frontend/src/App.tsx#L153-L162)) — and renders `<Sidebar>` + `<ChatView>` ([L119-156](frontend/src/App.tsx#L232-L269)).
+- **Deleting with a confirm step** — `handleDeleteDocument` ([L84-104](frontend/src/App.tsx#L164-L205)) and `handleDeleteSession` ([L106-117](frontend/src/App.tsx#L225-L230)) use `window.confirm` first; if the deleted item was the open one, they call `resetToWelcome()` (so you never stare at a dead conversation); deleting a document also calls `refreshSessions()` ([L101](frontend/src/App.tsx#L203)) because its sessions vanished server-side.
+- [components/sidebar/Sidebar.tsx:18-65](frontend/src/components/sidebar/Sidebar.tsx#L22-L89): brand + collapse toggle + "New chat" button + the history list; collapsed mode hides the labels/list ([L37](frontend/src/components/sidebar/Sidebar.tsx#L61), [L53](frontend/src/components/sidebar/Sidebar.tsx#L77), [L56-63](frontend/src/components/sidebar/Sidebar.tsx#L80-L87)).
 - [components/sidebar/HistoryList.tsx](frontend/src/components/sidebar/HistoryList.tsx): [`groupLabel` L11-22](frontend/src/components/sidebar/HistoryList.tsx#L11-L22) buckets a date into *Today / Yesterday / Previous 7 days / Older* by comparing calendar days; [L39-45](frontend/src/components/sidebar/HistoryList.tsx#L39-L45) groups the sessions; each item has a select button and a hover-revealed trash button ([L55-80](frontend/src/components/sidebar/HistoryList.tsx#L55-L80)); empty state at [L30-37](frontend/src/components/sidebar/HistoryList.tsx#L30-L37).
 - The old single 500+-line `App.tsx` was split into `api/`, `types/`, `hooks/`, `utils/`, `components/` — the layers in the [big-picture section](#0-the-big-picture).
 
@@ -586,7 +587,7 @@ SSE = headers + `res.write` in the `data:…\n\n` format. The two subtle parts a
 
 ## Step 3.2F — Streaming in the frontend
 
-**Files:** [api/chat.ts:30-90](frontend/src/api/chat.ts#L30-L90), [hooks/useChat.ts:98-175](frontend/src/hooks/useChat.ts#L98-L175), [ChatPanel.tsx](frontend/src/components/chat/ChatPanel.tsx).
+**Files:** [api/chat.ts:30-90](frontend/src/api/chat.ts#L30-L90), [hooks/useChat.ts:98-175](frontend/src/hooks/useChat.ts#L108-L183), [ChatPanel.tsx](frontend/src/components/chat/ChatPanel.tsx).
 
 ### `streamChatMessage()` — the `EventSource` wrapper, [api/chat.ts:40-90](frontend/src/api/chat.ts#L40-L90)
 - [L46-49](frontend/src/api/chat.ts#L46-L49): builds the URL with `URLSearchParams` (which also URL-encodes the message safely).
@@ -599,20 +600,20 @@ SSE = headers + `res.write` in the `data:…\n\n` format. The two subtle parts a
 - **Why `source.close()` matters (it's easy to miss):** `EventSource` **automatically reconnects** when a connection ends. If we didn't close on `done`/`error`, the browser would re-issue the GET and **send the same question again**. Closing stops that.
 - [L89](frontend/src/api/chat.ts#L89): returns a cleanup function that closes the connection.
 
-### `sendMessage()` — [useChat.ts:98-175](frontend/src/hooks/useChat.ts#L98-L175)
-- [L99-106](frontend/src/hooks/useChat.ts#L99-L106): ignore empty messages, no active document, or a reply already in flight.
+### `sendMessage()` — [useChat.ts:98-175](frontend/src/hooks/useChat.ts#L108-L183)
+- [L99-106](frontend/src/hooks/useChat.ts#L108-L114): ignore empty messages, no active document, or a reply already in flight.
 - [L108-110](frontend/src/hooks/useChat.ts#L108-L110): `isNewSession` and the `sessionId` (existing, or a fresh `crypto.randomUUID()`).
-- [L117-119](frontend/src/hooks/useChat.ts#L117-L119): **optimistically** show the user's message right away, clear the input, set loading.
-- [L125-133](frontend/src/hooks/useChat.ts#L125-L133) `appendToAssistantBubble`: grows the last assistant message by each piece. **It's written as a pure function of `prev`** — "the bubble being streamed into is the last message in the array" — never a variable mutated inside the callback. In dev, React StrictMode calls state updaters twice with the same input to catch impure code; a mutated variable would double-append text.
-- [L135-174](frontend/src/hooks/useChat.ts#L135-L174): wraps the callback-style stream in a `Promise` so `await sendMessage()` completes when the stream ends.
-  - `onMeta` ([L137-150](frontend/src/hooks/useChat.ts#L137-L150)): for a new thread, save the session id (state + `localStorage`); add an **empty** assistant bubble with its `sources` already attached.
-  - `onChunk` ([L151](frontend/src/hooks/useChat.ts#L151)): append text.
-  - `onDone` ([L152-157](frontend/src/hooks/useChat.ts#L152-L157)): refresh the sidebar list (`onMessageSent` = `refreshSessions`), stop loading, resolve.
-  - `onError` ([L158-172](frontend/src/hooks/useChat.ts#L158-L172)): stop loading; if the empty placeholder is still the last message, **replace** it with the error bubble instead of leaving a blank bubble above it.
+- [L117-119](frontend/src/hooks/useChat.ts#L125-L127): **optimistically** show the user's message right away, clear the input, set loading.
+- [L125-133](frontend/src/hooks/useChat.ts#L133-L141) `appendToAssistantBubble`: grows the last assistant message by each piece. **It's written as a pure function of `prev`** — "the bubble being streamed into is the last message in the array" — never a variable mutated inside the callback. In dev, React StrictMode calls state updaters twice with the same input to catch impure code; a mutated variable would double-append text.
+- [L135-174](frontend/src/hooks/useChat.ts#L143-L182): wraps the callback-style stream in a `Promise` so `await sendMessage()` completes when the stream ends.
+  - `onMeta` ([L137-150](frontend/src/hooks/useChat.ts#L145-L158)): for a new thread, save the session id (state + `localStorage`); add an **empty** assistant bubble with its `sources` already attached.
+  - `onChunk` ([L151](frontend/src/hooks/useChat.ts#L159)): append text.
+  - `onDone` ([L152-157](frontend/src/hooks/useChat.ts#L160-L165)): refresh the sidebar list (`onMessageSent` = `refreshSessions`), stop loading, resolve.
+  - `onError` ([L158-172](frontend/src/hooks/useChat.ts#L166-L180)): stop loading; if the empty placeholder is still the last message, **replace** it with the error bubble instead of leaving a blank bubble above it.
 
 ### `ChatPanel` polish — [ChatPanel.tsx](frontend/src/components/chat/ChatPanel.tsx)
-- [L21](frontend/src/components/chat/ChatPanel.tsx#L21) `streamingStarted`: true once the assistant bubble has real text. Until then (retrieval + first token) the "Thinking…" bubble stays ([L44](frontend/src/components/chat/ChatPanel.tsx#L44)).
-- [L35-41](frontend/src/components/chat/ChatPanel.tsx#L35-L41): the empty placeholder is **not rendered**, so you never see a blank bubble beside "Thinking…".
+- [L21](frontend/src/components/chat/ChatPanel.tsx#L21) `streamingStarted`: true once the assistant bubble has real text. Until then (retrieval + first token) the "Thinking…" bubble stays ([L44](frontend/src/components/chat/ChatPanel.tsx#L50)).
+- [L35-41](frontend/src/components/chat/ChatPanel.tsx#L41-L47): the empty placeholder is **not rendered**, so you never see a blank bubble beside "Thinking…".
 - [L23-27](frontend/src/components/chat/ChatPanel.tsx#L23-L27): auto-scroll follows the reply as it *grows* (depends on the last message's length, not just the count), using instant scroll while streaming and smooth otherwise.
 
 ### Result
@@ -622,7 +623,7 @@ The reply types out word by word in the chat bubble, sources appear immediately,
 
 ## Step 3.3 — Multi-document chat
 
-**Files:** [config.ts:13-14](src/config.ts#L13-L14), [chunks.repository.ts:45-86](src/repositories/chunks.repository.ts#L45-L86), [chat.service.ts](src/services/chat.service.ts), [chatMessages.repository.ts:95-100](src/repositories/chatMessages.repository.ts#L95-L100), and on the frontend [types/document.ts](frontend/src/types/document.ts), [NewChatScreen.tsx](frontend/src/components/chat/NewChatScreen.tsx), [ChatView.tsx](frontend/src/components/chat/ChatView.tsx), [ChatSources.tsx](frontend/src/components/chat/ChatSources.tsx), [App.tsx](frontend/src/App.tsx).
+**Files:** [config.ts:13-14](src/config.ts#L14-L15), [chunks.repository.ts:45-86](src/repositories/chunks.repository.ts#L47-L88), [chat.service.ts](src/services/chat.service.ts), [chatMessages.repository.ts:95-100](src/repositories/chatMessages.repository.ts#L95-L100), and on the frontend [types/document.ts](frontend/src/types/document.ts), [NewChatScreen.tsx](frontend/src/components/chat/NewChatScreen.tsx), [ChatView.tsx](frontend/src/components/chat/ChatView.tsx), [ChatSources.tsx](frontend/src/components/chat/ChatSources.tsx), [App.tsx](frontend/src/App.tsx).
 
 ### Why we need it
 Until now every chat was pinned to **one** PDF. But a natural question is often about *all* your documents ("how do chunking and embeddings relate?" spans two guides). So the default becomes "search everything", and picking one PDF is the override.
@@ -632,29 +633,29 @@ Until now every chat was pinned to **one** PDF. But a natural question is often 
 
 ### Backend
 
-- **The sentinel** — [config.ts:13-14](src/config.ts#L13-L14): `ALL_DOCUMENTS = 'all'` and a display label. Why a sentinel string instead of `NULL`? `chat_messages.document_id` is `NOT NULL`; making it nullable means altering the live Neon table. Storing `'all'` in the existing column needs no schema change at all.
-- **`searchSimilar` — [chunks.repository.ts:56-86](src/repositories/chunks.repository.ts#L56-L86)**:
-  - [`documentId?`](src/repositories/chunks.repository.ts#L56-L60) is now optional.
-  - It returns [`SimilarChunk`](src/repositories/chunks.repository.ts#L73-L78) = `{ content, distance, documentId, filename }`. To get the filename it joins `documents` (a `LEFT JOIN` when this step was built; an [`INNER JOIN`](src/repositories/chunks.repository.ts#L115) since Auth.3, because that's where the owner lives) — *why the source document's name matters:* so the answer and the UI can say **which PDF** each piece came from.
-  - [The `where`](src/repositories/chunks.repository.ts#L116-L120): as built in Step 3.3, a real `documentId` → `chunks.document_id = …`; otherwise → `documents.id IS NOT NULL`, i.e. **only chunks whose document exists in the `documents` table**, so older "orphan" chunks (test uploads from before Step 2.2) wouldn't leak into answers as an "unknown document". *Since Auth.3 both branches filter on `documents.user_id` instead, which excludes orphans in both modes automatically — see [Auth.3](#auth3--ownership-in-every-query).*
-- **`prepareChat` — [chat.service.ts:74-165](src/services/chat.service.ts#L74-L165)** (the *one* place the change lives, thanks to the earlier restructure):
-  - [L80-88](src/services/chat.service.ts#L80-L88): absent/empty `documentId` → `ALL_DOCUMENTS`; a non-string (e.g. `?documentId=a&documentId=b` arrives as an array) → `400`. `searchAll` is the boolean the rest of the function branches on.
-  - [L105-115](src/services/chat.service.ts#L105-L115): logs "across ALL documents" vs "scoped to this documentId", and passes `undefined` to `searchSimilar` for all-mode.
-  - [L117-128](src/services/chat.service.ts#L117-L128): the 404 message differs ("No documents have been uploaded yet").
-  - [L147-151](src/services/chat.service.ts#L147-L151): in all-mode each chunk is prefixed `[Source: filename]` before being joined into the context.
-  - [L153-164](src/services/chat.service.ts#L153-L164): `sources` now include `documentId` and `filename`. Because `/chat-stream`'s `meta` event just forwards `prep.sources`, **the streaming route needed no change**.
-- **The prompt — [buildChatPrompt, chat.service.ts:15-49](src/services/chat.service.ts#L15-L49)**: a new `multiDocument` flag. When true, the intro says the context comes from the user's *documents* (each labelled), and an extra instruction tells the model to **name the document it used** ("According to rag_guide.pdf, …"). With it false the prompt is exactly what it was before.
+- **The sentinel** — [config.ts:13-14](src/config.ts#L14-L15): `ALL_DOCUMENTS = 'all'` and a display label. Why a sentinel string instead of `NULL`? `chat_messages.document_id` is `NOT NULL`; making it nullable means altering the live Neon table. Storing `'all'` in the existing column needs no schema change at all.
+- **`searchSimilar` — [chunks.repository.ts:56-86](src/repositories/chunks.repository.ts#L58-L88)**:
+  - [`documentId?`](src/repositories/chunks.repository.ts#L58-L62) is now optional.
+  - It returns [`SimilarChunk`](src/repositories/chunks.repository.ts#L75-L80) = `{ content, distance, documentId, filename }`. To get the filename it joins `documents` (a `LEFT JOIN` when this step was built; an [`INNER JOIN`](src/repositories/chunks.repository.ts#L117) since Auth.3, because that's where the owner lives) — *why the source document's name matters:* so the answer and the UI can say **which PDF** each piece came from.
+  - [The `where`](src/repositories/chunks.repository.ts#L122-L126): as built in Step 3.3, a real `documentId` → `chunks.document_id = …`; otherwise → `documents.id IS NOT NULL`, i.e. **only chunks whose document exists in the `documents` table**, so older "orphan" chunks (test uploads from before Step 2.2) wouldn't leak into answers as an "unknown document". *Since Auth.3 both branches filter on `documents.user_id` instead, which excludes orphans in both modes automatically — see [Auth.3](#auth3--ownership-in-every-query).*
+- **`prepareChat` — [chat.service.ts:74-165](src/services/chat.service.ts#L75-L178)** (the *one* place the change lives, thanks to the earlier restructure):
+  - [L80-88](src/services/chat.service.ts#L81-L89): absent/empty `documentId` → `ALL_DOCUMENTS`; a non-string (e.g. `?documentId=a&documentId=b` arrives as an array) → `400`. `searchAll` is the boolean the rest of the function branches on.
+  - [L105-115](src/services/chat.service.ts#L106-L116): logs "across ALL documents" vs "scoped to this documentId", and passes `undefined` to `searchSimilar` for all-mode.
+  - [L117-128](src/services/chat.service.ts#L118-L129): the 404 message differs ("No documents have been uploaded yet").
+  - [L147-151](src/services/chat.service.ts#L160-L164): in all-mode each chunk is prefixed `[Source: filename]` before being joined into the context.
+  - [L153-164](src/services/chat.service.ts#L166-L177): `sources` now include `documentId` and `filename`. Because `/chat-stream`'s `meta` event just forwards `prep.sources`, **the streaming route needed no change**.
+- **The prompt — [buildChatPrompt, chat.service.ts:15-49](src/services/chat.service.ts#L16-L50)**: a new `multiDocument` flag. When true, the intro says the context comes from the user's *documents* (each labelled), and an extra instruction tells the model to **name the document it used** ("According to rag_guide.pdf, …"). With it false the prompt is exactly what it was before.
 - **Session labels — [chatMessages.repository.ts:95-100](src/repositories/chatMessages.repository.ts#L95-L100)**: `listSessions()` labels an all-documents session "All documents" (there's no single file to look up).
 - The routes, `insertMessage`, `getRecentMessages` and the SSE protocol are **unchanged**.
 
 ### Frontend
 
-- **Constants — [types/document.ts:15-16](frontend/src/types/document.ts#L15-L16):** `ALL_DOCUMENTS = 'all'` (must match the backend) and its label.
+- **Constants — [types/document.ts:15-16](frontend/src/types/document.ts#L24-L25):** `ALL_DOCUMENTS = 'all'` (must match the backend) and its label.
 - **`ChatSource` type — [types/chat.ts:1-8](frontend/src/types/chat.ts#L1-L8)**: gains `documentId` and `filename`.
 - **Sources show their file — [ChatSources.tsx:21-24](frontend/src/components/chat/ChatSources.tsx#L21-L24)**: a filename label next to the distance.
-- **Default choice on the landing screen — [NewChatScreen.tsx:44-53](frontend/src/components/chat/NewChatScreen.tsx#L44-L53)**: an "All documents (N)" chip, tinted as the default, shown only when there is more than one document to search. It calls `onPickAll`.
-- **The scope toggle — [ChatView.tsx:54-74](frontend/src/components/chat/ChatView.tsx#L54-L74)**: with 2+ documents the header shows **"Searching in [All documents ▾]"**, a `<select>` of *All documents* plus each PDF. `value` is the active scope's `documentId`; changing it calls `onChangeScope`.
-- **The handlers — [App.tsx:53-70](frontend/src/App.tsx#L53-L70)**: `handlePickAll` starts a new chat with `ALL_DOCUMENTS`; `handleChangeScope` starts a new chat for whichever scope was chosen. **Switching scope starts a *new* conversation on purpose**: a session's scope is fixed by the `documentId` its messages were saved with, so changing it mid-thread would make one conversation mix two scopes. The old one stays in the sidebar history.
+- **Default choice on the landing screen — [NewChatScreen.tsx:44-53](frontend/src/components/chat/NewChatScreen.tsx#L203-L236)**: an "All documents (N)" chip, tinted as the default, shown only when there is more than one document to search. It calls `onPickAll`.
+- **The scope toggle — [ChatView.tsx:54-74](frontend/src/components/chat/ChatView.tsx#L138-L141)**: with 2+ documents the header shows **"Searching in [All documents ▾]"**, a `<select>` of *All documents* plus each PDF. `value` is the active scope's `documentId`; changing it calls `onChangeScope`.
+- **The handlers — [App.tsx:53-70](frontend/src/App.tsx#L73-L96)**: `handlePickAll` starts a new chat with `ALL_DOCUMENTS`; `handleChangeScope` starts a new chat for whichever scope was chosen. **Switching scope starts a *new* conversation on purpose**: a session's scope is fixed by the `documentId` its messages were saved with, so changing it mid-thread would make one conversation mix two scopes. The old one stays in the sidebar history.
 - **No streaming/hook changes**: `useChat`/`streamChatMessage` already send `documentId` as a string, and `'all'` is just another string; a restored "All documents" session comes back from `/sessions` with the right label.
 - Small wording changes: the empty-chat hint and the input placeholder no longer say "this document".
 
@@ -728,7 +729,7 @@ Two separate jobs: **ask** for the shape (prompt, or the API's structured-output
 
 ## Step 4.2 — `POST /quiz`
 
-**Files:** [services/quiz.service.ts](src/services/quiz.service.ts), [routes/quiz.routes.ts](src/routes/quiz.routes.ts), [app.ts:9](src/app.ts#L9) + [L78](src/app.ts#L78), [utils/pipelineLogger.ts:14](src/utils/pipelineLogger.ts#L14) + [L61-63](src/utils/pipelineLogger.ts#L61-L63).
+**Files:** [services/quiz.service.ts](src/services/quiz.service.ts), [routes/quiz.routes.ts](src/routes/quiz.routes.ts), [app.ts:9](src/app.ts#L9) + [L78](src/app.ts#L78), [utils/pipelineLogger.ts:14](src/utils/pipelineLogger.ts#L14) + [L61-63](src/utils/pipelineLogger.ts#L66-L68).
 
 ### Why we need it
 Step 4.1 proved the approach in a throwaway script. A real feature needs it as an endpoint the frontend can call, with the two production habits the topic README calls for: retry once instead of trusting a single reply, and don't leave "where the correct answer sits" up to the model's own habits — Step 4.1 measured that habit wasn't uniform.
@@ -738,27 +739,27 @@ Step 4.1 proved the approach in a throwaway script. A real feature needs it as a
 
 ### How it works
 
-**`generateQuiz()` — [quiz.service.ts:96-159](src/services/quiz.service.ts#L96-L159)**
+**`generateQuiz()` — [quiz.service.ts:96-159](src/services/quiz.service.ts#L97-L169)**
 Mirrors `prepareChat()`'s shape: takes raw request input (`documentId: unknown`), never touches `req`/`res`, and returns `{ ok: false, status, error }` or `{ ok: true, ... }`.
-1. **Validate** — [L99-102](src/services/quiz.service.ts#L99-L102): missing/non-string `documentId` → `400`. [L107-110](src/services/quiz.service.ts#L107-L110): the sentinel `'all'` is explicitly rejected → `400` — *why*: `sampleChunks` reads one document's chunks in reading order, and there's no single reading order across every PDF, so "all documents" has no sensible quiz to build.
-2. **Sample** — [L117](src/services/quiz.service.ts#L117): `sampleChunks(documentId, CHUNKS_FOR_QUIZ)`, the same function and count (5, [L17](src/services/quiz.service.ts#L17)) as Step 4.1's script. Empty result → `404` ([L120-124](src/services/quiz.service.ts#L120-L124)).
-3. **Prompt** — [L126](src/services/quiz.service.ts#L126): `buildQuizPrompt()`.
-4. **Generate + validate + retry** — [L136-151](src/services/quiz.service.ts#L136-L151): a loop bounded by `MAX_ATTEMPTS = 2` ([L22](src/services/quiz.service.ts#L22)) — one real attempt plus one retry, never more. Each attempt calls `generateAnswer(prompt, generationConfig)` in **structured-output mode** ([L133](src/services/quiz.service.ts#L133): `{ responseMimeType: 'application/json', responseSchema: quizResponseSchema }` — chosen over the plain prompt because Step 4.1 showed it's at least as reliable), then `checkQuizReply(raw)`. The first valid reply shuffles and returns immediately ([L142-147](src/services/quiz.service.ts#L142-L147)); on failure the loop just tries again, logging the reason ([L149-150](src/services/quiz.service.ts#L149-L150)).
-5. **Give up cleanly** — [L153-158](src/services/quiz.service.ts#L153-L158): if both attempts fail, `failed()` logs it and the function returns `{ ok: false, status: 502, error: '...' }` — a message a UI can show, not a crash. Step 4.1's real runs were 17/17 valid, so this path is rarely hit, but the code doesn't assume that.
+1. **Validate** — [L99-102](src/services/quiz.service.ts#L100-L103): missing/non-string `documentId` → `400`. [L107-110](src/services/quiz.service.ts#L108-L111): the sentinel `'all'` is explicitly rejected → `400` — *why*: `sampleChunks` reads one document's chunks in reading order, and there's no single reading order across every PDF, so "all documents" has no sensible quiz to build.
+2. **Sample** — [L117](src/services/quiz.service.ts#L118): `sampleChunks(documentId, CHUNKS_FOR_QUIZ)`, the same function and count (5, [L17](src/services/quiz.service.ts#L18)) as Step 4.1's script. Empty result → `404` ([L120-124](src/services/quiz.service.ts#L121-L134)).
+3. **Prompt** — [L126](src/services/quiz.service.ts#L136): `buildQuizPrompt()`.
+4. **Generate + validate + retry** — [L136-151](src/services/quiz.service.ts#L146-L161): a loop bounded by `MAX_ATTEMPTS = 2` ([L22](src/services/quiz.service.ts#L23)) — one real attempt plus one retry, never more. Each attempt calls `generateAnswer(prompt, generationConfig)` in **structured-output mode** ([L133](src/services/quiz.service.ts#L143): `{ responseMimeType: 'application/json', responseSchema: quizResponseSchema }` — chosen over the plain prompt because Step 4.1 showed it's at least as reliable), then `checkQuizReply(raw)`. The first valid reply shuffles and returns immediately ([L142-147](src/services/quiz.service.ts#L152-L157)); on failure the loop just tries again, logging the reason ([L149-150](src/services/quiz.service.ts#L159-L160)).
+5. **Give up cleanly** — [L153-158](src/services/quiz.service.ts#L163-L168): if both attempts fail, `failed()` logs it and the function returns `{ ok: false, status: 502, error: '...' }` — a message a UI can show, not a crash. Step 4.1's real runs were 17/17 valid, so this path is rarely hit, but the code doesn't assume that.
 
-**`buildQuizPrompt()` and `checkQuizReply()` — [quiz.service.ts:26-34](src/services/quiz.service.ts#L26-L34) and [L41-67](src/services/quiz.service.ts#L41-L67)**
+**`buildQuizPrompt()` and `checkQuizReply()` — [quiz.service.ts:26-34](src/services/quiz.service.ts#L27-L35) and [L41-67](src/services/quiz.service.ts#L42-L68)**
 Moved here from the Step 4.1 script, unchanged, so `npm run step4` and the real endpoint share one implementation instead of two copies — the same reasoning as `buildChatPrompt()` being shared by `/chat` and `/chat-stream`. [step4-quiz-zod.ts](src/step4-quiz-zod.ts) now imports them (see the Step 4.1 section above for what they do).
 
-**Shuffling — [`shuffleQuiz`/`shuffleQuestion`, quiz.service.ts:71-87](src/services/quiz.service.ts#L71-L87)**
-A Fisher–Yates shuffle per question: [L72-76](src/services/quiz.service.ts#L72-L76) builds an `order` array (`order[newPosition] = originalIndex`) and shuffles it in place, then [L78-82](src/services/quiz.service.ts#L78-L82) rebuilds `options` in that order and remaps `correctIndex` to `order.indexOf(q.correctIndex)` — wherever the originally-correct option ended up. *Why in code, not the prompt:* Step 4.1 measured the model's own placement across 50 questions — 22% / 36% / 32% / 10% for positions 0–3 — not uniform, and not something a prompt instruction can reliably fix. Zod proves the *shape* is right; this is the part of "make it good, not just valid" that has to live in code.
+**Shuffling — [`shuffleQuiz`/`shuffleQuestion`, quiz.service.ts:71-87](src/services/quiz.service.ts#L72-L88)**
+A Fisher–Yates shuffle per question: [L72-76](src/services/quiz.service.ts#L73-L77) builds an `order` array (`order[newPosition] = originalIndex`) and shuffles it in place, then [L78-82](src/services/quiz.service.ts#L79-L83) rebuilds `options` in that order and remaps `correctIndex` to `order.indexOf(q.correctIndex)` — wherever the originally-correct option ended up. *Why in code, not the prompt:* Step 4.1 measured the model's own placement across 50 questions — 22% / 36% / 32% / 10% for positions 0–3 — not uniform, and not something a prompt instruction can reliably fix. Zod proves the *shape* is right; this is the part of "make it good, not just valid" that has to live in code.
 
 **The route — [quiz.routes.ts](src/routes/quiz.routes.ts)**
 Thin, same shape as the other routes: [L11](src/routes/quiz.routes.ts#L11) `withErrorHandling('POST /quiz', ...)` catches real exceptions (network/DB) the same way `/chat` does; [L15-16](src/routes/quiz.routes.ts#L15-L16) calls `generateQuiz` and forwards its status/error unchanged; [L18](src/routes/quiz.routes.ts#L18) sends the quiz. **Deliberately not streamed** — unlike `/chat-stream`, half a JSON object is useless, so the client waits for the complete, checked result.
 
 **Wiring** — [app.ts:9](src/app.ts#L9) imports `quizRouter`, [L78](src/app.ts#L78) mounts it, same pattern as the other three routers.
 
-**A new log theme and a new helper — [pipelineLogger.ts:14](src/utils/pipelineLogger.ts#L14), [L61-63](src/utils/pipelineLogger.ts#L61-L63)**
-`quiz` got its own color (`chalk.blueBright`), so its terminal trace is easy to tell apart from uploads (cyan) and chats (magenta). [`failed(reason)`](src/utils/pipelineLogger.ts#L61-L63) is a new red-line helper, deliberately distinct from `rejected()` (bad input) and `notFound()` (missing resource): "the request was valid, the work just never produced a usable result."
+**A new log theme and a new helper — [pipelineLogger.ts:14](src/utils/pipelineLogger.ts#L14), [L61-63](src/utils/pipelineLogger.ts#L66-L68)**
+`quiz` got its own color (`chalk.blueBright`), so its terminal trace is easy to tell apart from uploads (cyan) and chats (magenta). [`failed(reason)`](src/utils/pipelineLogger.ts#L66-L68) is a new red-line helper, deliberately distinct from `rejected()` (bad input) and `notFound()` (missing resource): "the request was valid, the work just never produced a usable result."
 
 ### What actually happened
 Tested live on a spare port against real documents and Gemini:
@@ -803,16 +804,16 @@ Deliberately its **own** hook, not folded into `useChat` — a quiz isn't a mess
 - **Resetting on a fresh quiz — [L24-28](frontend/src/components/quiz/QuizModal.tsx#L24-L28)**: a `useEffect` clears `selected` whenever the `quiz` array reference changes (i.e. a new `generate()`/`regenerate()` call finished) — otherwise old answers would visually linger against new questions.
 - **A progress counter — [L91-101](frontend/src/components/quiz/QuizModal.tsx#L91-L101)**: `"N of 5 answered"`, purely informational (there's no submit step yet), plus the regenerate button.
 
-**Wiring the button — [ChatView.tsx:86-100](frontend/src/components/chat/ChatView.tsx#L86-L100)**
-Shown only when `activeDocument && activeDocument.documentId !== ALL_DOCUMENTS` ([L89](frontend/src/components/chat/ChatView.tsx#L89)) — hidden on the New Chat screen (no `activeDocument` yet) and under "All documents" scope, because [`sampleChunks`](src/repositories/chunks.repository.ts#L23-L34) reads one document's chunks in reading order and there's no such order across every PDF. `disabled={quizLoading}` stops a second click from firing a second Gemini request while one is already running.
+**Wiring the button — [ChatView.tsx:86-100](frontend/src/components/chat/ChatView.tsx#L148-L153)**
+Shown only when `activeDocument && activeDocument.documentId !== ALL_DOCUMENTS` ([L89](frontend/src/components/chat/ChatView.tsx#L150)) — hidden on the New Chat screen (no `activeDocument` yet) and under "All documents" scope, because [`sampleChunks`](src/repositories/chunks.repository.ts#L23-L34) reads one document's chunks in reading order and there's no such order across every PDF. `disabled={quizLoading}` stops a second click from firing a second Gemini request while one is already running.
 
 **Wiring in `App.tsx`**
 - [L31](frontend/src/App.tsx#L31): `const quiz = useQuiz()`.
-- `handleGenerateQuiz()` — [L79-83](frontend/src/App.tsx#L79-L83): re-checks the same precondition the button's visibility already enforces (never trust that a handler is only reachable the way the UI intends) before calling `quiz.generate(...)`.
-- `<QuizModal ... />` — [L171-179](frontend/src/App.tsx#L171-L179): rendered once at the top level of `app-shell`, alongside `<ChatView>`, so it overlays the whole app regardless of what's currently on screen underneath.
+- `handleGenerateQuiz()` — [L79-83](frontend/src/App.tsx#L154-L163): re-checks the same precondition the button's visibility already enforces (never trust that a handler is only reachable the way the UI intends) before calling `quiz.generate(...)`.
+- `<QuizModal ... />` — [L171-179](frontend/src/App.tsx#L284-L302): rendered once at the top level of `app-shell`, alongside `<ChatView>`, so it overlays the whole app regardless of what's currently on screen underneath.
 
 **CSS — [App.css](frontend/src/App.css)**
-New rules for the header button ([L677-705](frontend/src/App.css#L677-L705)) and the modal (`.quiz-overlay` [L707-717](frontend/src/App.css#L707-L717), `.quiz-modal` [L719-728](frontend/src/App.css#L719-L728), question/option styling [L781-832](frontend/src/App.css#L781-L832)) — all built from the same design tokens (`--color-*`, `--space-*`, `--radius-*`) the rest of the app uses, so dark mode and the existing visual language (card shapes, the green accent on a selected option) carry over automatically with no extra work. The mobile media query gained an icon-only variant of the button ([L916-918](frontend/src/App.css#L916-L918)) and a full-screen modal on small viewports, matching how the sidebar already becomes a drawer below 900px.
+New rules for the header button ([L677-705](frontend/src/App.css#L975-L985)) and the modal (`.quiz-overlay` [L707-717](frontend/src/App.css#L987-L997), `.quiz-modal` [L719-728](frontend/src/App.css#L999-L1008), question/option styling [L781-832](frontend/src/App.css#L1051-L1057)) — all built from the same design tokens (`--color-*`, `--space-*`, `--radius-*`) the rest of the app uses, so dark mode and the existing visual language (card shapes, the green accent on a selected option) carry over automatically with no extra work. The mobile media query gained an icon-only variant of the button ([L916-918](frontend/src/App.css#L1114-L1116)) and a full-screen modal on small viewports, matching how the sidebar already becomes a drawer below 900px.
 
 ### What actually happened
 Tested live in a headless browser against the real running app:
@@ -829,7 +830,7 @@ Same pattern as every earlier `*F` step (2.1F, 2.3F, 3.2F): the backend endpoint
 
 ## Step 4.3 + 4.3F — checking answers
 
-**Files:** [components/quiz/QuizModal.tsx](frontend/src/components/quiz/QuizModal.tsx), [App.css:826-909](frontend/src/App.css#L826-L909). No backend files — see below for why.
+**Files:** [components/quiz/QuizModal.tsx](frontend/src/components/quiz/QuizModal.tsx), [App.css:826-909](frontend/src/App.css#L1051-L1107). No backend files — see below for why.
 
 ### Why we need it
 Step 4.2F let you *see and answer* a quiz. It never told you if you got anything right. This step closes that loop.
@@ -866,11 +867,11 @@ Swaps between "N of 5 answered" + a **Check answers** button (before grading) an
 
 The first version looked right in the code and typechecked cleanly, but a screenshot showed a wrong-but-selected option rendered with a **green background and a red ✕ icon at the same time** — confusing, and wrong.
 
-The cause: [`.quiz-option:has(input:checked)`, added back in Step 4.2F](frontend/src/App.css#L826), gives the "you picked this" highlight. Once grading locks the radio, `input:checked` is still true for whichever option was picked, so that rule kept firing — and `:has()` gives it *higher specificity* than the plain `.quiz-option--incorrect` class, so the old green styling won even though the incorrect-red rule appeared later in the file. CSS specificity, not React state, was the actual bug.
+The cause: [`.quiz-option:has(input:checked)`, added back in Step 4.2F](frontend/src/App.css#L1051), gives the "you picked this" highlight. Once grading locks the radio, `input:checked` is still true for whichever option was picked, so that rule kept firing — and `:has()` gives it *higher specificity* than the plain `.quiz-option--incorrect` class, so the old green styling won even though the incorrect-red rule appeared later in the file. CSS specificity, not React state, was the actual bug.
 
-**The fix — [App.css:826](frontend/src/App.css#L826)**: `.quiz-option:has(input:checked:not(:disabled))`. Since grading disables the radio ([QuizModal.tsx:100](frontend/src/components/quiz/QuizModal.tsx#L100)), this selector stops matching the instant `checked` becomes true, and only [`.quiz-option--correct`](frontend/src/App.css#L841)/[`.quiz-option--incorrect`](frontend/src/App.css#L848) apply from then on. One word (`:not(:disabled)`) fixed it.
+**The fix — [App.css:826](frontend/src/App.css#L1051)**: `.quiz-option:has(input:checked:not(:disabled))`. Since grading disables the radio ([QuizModal.tsx:100](frontend/src/components/quiz/QuizModal.tsx#L100)), this selector stops matching the instant `checked` becomes true, and only [`.quiz-option--correct`](frontend/src/App.css#L1066)/[`.quiz-option--incorrect`](frontend/src/App.css#L1073) apply from then on. One word (`:not(:disabled)`) fixed it.
 
-**The rest of the CSS** ([`.quiz-modal-score`](frontend/src/App.css#L883), [`.quiz-modal-footer-actions`](frontend/src/App.css#L889), [`.quiz-check-button`](frontend/src/App.css#L895)) is unremarkable layout work using the same design tokens as everything else in the app.
+**The rest of the CSS** ([`.quiz-modal-score`](frontend/src/App.css#L883), [`.quiz-modal-footer-actions`](frontend/src/App.css#L1087), [`.quiz-check-button`](frontend/src/App.css#L1093)) is unremarkable layout work using the same design tokens as everything else in the app.
 
 ### What actually happened
 Tested live in a headless browser, twice — once before the CSS fix (to confirm the bug was real, not imagined) and once after:
@@ -915,15 +916,15 @@ Login alone fixes nothing: if only the list endpoints were filtered, anyone hold
 
 ## Auth.1 — users, tokens and the `/auth` routes
 
-**Files:** [repositories/users.repository.ts](src/repositories/users.repository.ts), [services/auth.service.ts](src/services/auth.service.ts), [schemas/auth.schema.ts](src/schemas/auth.schema.ts), [routes/auth.routes.ts](src/routes/auth.routes.ts), [index.ts:7](src/index.ts#L7)
+**Files:** [repositories/users.repository.ts](src/repositories/users.repository.ts), [services/auth.service.ts](src/services/auth.service.ts), [schemas/auth.schema.ts](src/schemas/auth.schema.ts), [routes/auth.routes.ts](src/routes/auth.routes.ts), [index.ts:7](src/index.ts#L11)
 
 **The repository.** Every query selects `publicColumns` ([L17-L21](src/repositories/users.repository.ts#L17-L21)) **by name**, so the password hash can't leak through a "select everything". The one exception is [`findUserByEmail`](src/repositories/users.repository.ts#L72-L81), which login needs. [`upgradeGuest`](src/repositories/users.repository.ts#L53-L64) updates `WHERE id = $1 AND is_guest = true`, so a guest token can never overwrite an already-registered account.
 
 **What a JWT is.** Three base64 pieces, `header.payload.signature`. The payload is readable by anyone. What makes it trustworthy is the signature: a hash of header + payload + a secret only the server knows. Change one character of the payload and the signature no longer matches, so the server can tell "I issued this, untouched" without looking anything up.
 
 **The service:**
-- [`getJwtSecret`](src/services/auth.service.ts#L32-L38) throws a clear error if `JWT_SECRET` is missing; [index.ts:7](src/index.ts#L7) calls it at startup so a misconfigured deploy dies at boot, not on the first login.
-- [`signToken`](src/services/auth.service.ts#L50-L55): payload `{ sub: userId, guest }`, HS256, 7 days for accounts and 30 for guests ([config.ts:40-41](src/config.ts#L40-L41)). A guest can't log back in, so an expired guest token means lost files.
+- [`getJwtSecret`](src/services/auth.service.ts#L32-L38) throws a clear error if `JWT_SECRET` is missing; [index.ts:7](src/index.ts#L11) calls it at startup so a misconfigured deploy dies at boot, not on the first login.
+- [`signToken`](src/services/auth.service.ts#L50-L55): payload `{ sub: userId, guest }`, HS256, 7 days for accounts and 30 for guests ([config.ts:40-41](src/config.ts#L41-L42)). A guest can't log back in, so an expired guest token means lost files.
 - [`verifyToken`](src/services/auth.service.ts#L65-L73): `jwt.verify` (never `jwt.decode`, which doesn't check the signature), with `algorithms: ['HS256']` pinned, because the token's own header says which algorithm it used and without the pin the attacker gets to pick. Returns the user or `null`, never throws.
 - [`register`](src/services/auth.service.ts#L111-L146): Zod check → bcrypt hash → if the request carries a valid *guest* token, `upgradeGuest`, otherwise `createUser`. There's no "does this email exist?" query first: two simultaneous sign-ups could both pass it. The `UNIQUE` constraint is the real guard, and Postgres error `23505` becomes a 409.
 - [`login`](src/services/auth.service.ts#L148-L177): one `401 Invalid email or password` for both "no such email" and "wrong password", so nobody can probe which emails are registered.
@@ -962,13 +963,13 @@ repository   WHERE ... AND user_id = userId       ← the filter lives in the SQ
 
 **The safety net: `userId` is a *required* parameter.** Adding it to the repository functions turned 15 call sites into TypeScript errors, which was the to-do list. Forgetting the filter is a compile error, not a leak. The one thing the compiler can't catch: two string arguments in the wrong order (`step3-drizzle.ts` passed its document id where `userId` now goes and still compiled).
 
-**Chunks, through their document** — [`searchSimilar`, chunks.repository.ts:88-124](src/repositories/chunks.repository.ts#L88-L124) now uses `INNER JOIN documents` ([L115](src/repositories/chunks.repository.ts#L115)) and filters on `documents.user_id` ([L117-L119](src/repositories/chunks.repository.ts#L117-L119)). In single-document mode the ownership check and the search are one query: someone else's `documentId` returns zero chunks and `prepareChat`'s existing "No document found" 404 fires with no new code. "All documents" now means *all of mine*. [`sampleChunks`](src/repositories/chunks.repository.ts#L29-L51) (quiz) got the same join. The old "skip orphan chunks" filter is gone: a chunk with no `documents` row can never match a user.
+**Chunks, through their document** — [`searchSimilar`, chunks.repository.ts:88-124](src/repositories/chunks.repository.ts#L90-L130) now uses `INNER JOIN documents` ([L115](src/repositories/chunks.repository.ts#L117)) and filters on `documents.user_id` ([L117-L119](src/repositories/chunks.repository.ts#L123)). In single-document mode the ownership check and the search are one query: someone else's `documentId` returns zero chunks and `prepareChat`'s existing "No document found" 404 fires with no new code. "All documents" now means *all of mine*. [`sampleChunks`](src/repositories/chunks.repository.ts#L29-L53) (quiz) got the same join. The old "skip orphan chunks" filter is gone: a chunk with no `documents` row can never match a user.
 
 **Sessions, on both ids** — every query in [chatMessages.repository.ts](src/repositories/chatMessages.repository.ts) filters `session_id AND user_id`. The client picks the session id, so it proves nothing: if user B sends user A's session id, B finds none of A's messages and B's new messages are saved under B. [`getRecentMessages`](src/repositories/chatMessages.repository.ts#L43-L56) matters most and is the easiest to miss: it returns nothing to the client, it feeds the *prompt*. Unscoped, B could ask "what did I ask earlier?" in A's session and the model would answer from A's history.
 
-**Deletes check first** — [documents.routes.ts:61-79](src/routes/documents.routes.ts#L61-L79) calls [`getDocumentForUser`](src/repositories/documents.repository.ts#L46-L56) and answers 404 before any of the three deletes, because `deleteChunksByDocumentId` has no owner column to check. Someone else's document is a **404, not a 403**: a 403 would confirm the id exists.
+**Deletes check first** — [documents.routes.ts:61-79](src/routes/documents.routes.ts#L61-L89) calls [`getDocumentForUser`](src/repositories/documents.repository.ts#L81-L93) and answers 404 before any of the three deletes, because `deleteChunksByDocumentId` has no owner column to check. Someone else's document is a **404, not a 403**: a 403 would confirm the id exists.
 
-**Services** — [`prepareChat`](src/services/chat.service.ts#L109-L237) takes `userId` in its input (a plain string, not `unknown`, because requireAuth already proved it) and passes it to `searchSimilar`, `getRecentMessages` and `insertMessage`; [`generateQuiz`](src/services/quiz.service.ts#L100-L167) passes it to `sampleChunks`; `ingestPdf(file, userId)` saves it on the document row. Each pipeline logs one `user:` line (first 8 characters only).
+**Services** — [`prepareChat`](src/services/chat.service.ts#L110-L250) takes `userId` in its input (a plain string, not `unknown`, because requireAuth already proved it) and passes it to `searchSimilar`, `getRecentMessages` and `insertMessage`; [`generateQuiz`](src/services/quiz.service.ts#L101-L177) passes it to `sampleChunks`; `ingestPdf(file, userId)` saved it on the document row (since Phase 6: `queuePdfIngestion(file, userId)`, which also puts it in the job). Each pipeline logs one `user:` line (first 8 characters only).
 
 ---
 
@@ -983,7 +984,7 @@ repository   WHERE ... AND user_id = userId       ← the filter lives in the SQ
 - **Mid-session 401** ([L85-L96](frontend/src/hooks/useAuth.ts#L85-L96)): `authFetch` reports *which* token was rejected, and the handler ignores it unless it's still the current one, so a late failure can't throw away a freshly made token.
 - `api/auth.ts` uses plain `fetch`, not `authFetch`: for `/auth/me` a 401 is an answer `useAuth` is waiting for, not an accident to recover from.
 
-**The gate** — [App.tsx:239-247](frontend/src/App.tsx#L239-L247): splash while loading, an error screen with retry, otherwise `<AppShell key={state.user.id} />`. Two jobs: the data hooks fetch the moment they mount, so mounting them before a token exists would give three 401s; and `key={user.id}` makes React throw the whole app away and mount a fresh one when the user changes, so nothing of the previous user's data stays on screen.
+**The gate** — [App.tsx:239-247](frontend/src/App.tsx#L376-L384): splash while loading, an error screen with retry, otherwise `<AppShell key={state.user.id} />`. Two jobs: the data hooks fetch the moment they mount, so mounting them before a token exists would give three 401s; and `key={user.id}` makes React throw the whole app away and mount a fresh one when the user changes, so nothing of the previous user's data stays on screen.
 
 ---
 
@@ -1019,17 +1020,17 @@ The signature and handlers didn't change, so `useChat.ts` didn't change, and the
 - **`register()` sends the current guest token** ([api/auth.ts:55-67](frontend/src/api/auth.ts#L55-L67)); that's what tells the server to upgrade instead of create.
 - **`AccountArea`** (sidebar footer): a guest sees "Sign up to keep them" and "I already have an account", but **no Log out** — with no email or password there'd be no way back to their files. An account sees its initial, email and a log-out button.
 - **`AuthModal`** shows the server's own error messages, and a note when a guest with files opens it: signing up keeps them, signing in to a different account leaves them behind.
-- **`closeAuth` is a `useCallback`** ([App.tsx:60](frontend/src/App.tsx#L60)): the modal's focus effect depends on `onClose`, and a new function on every re-render (each streamed piece of an answer) would yank focus back to the email field mid-typing.
+- **`closeAuth` is a `useCallback`** ([App.tsx:60](frontend/src/App.tsx#L80)): the modal's focus effect depends on `onClose`, and a new function on every re-render (each streamed piece of an answer) would yank focus back to the email field mid-typing.
 
 ---
 
 ## Auth.7 — document caps, rate limit, and the proxy problem
 
-**Files:** [config.ts:47-63](src/config.ts#L47-L63), [documents.routes.ts:36-50](src/routes/documents.routes.ts#L36-L50), [middleware/rateLimit.ts](src/middleware/rateLimit.ts), [app.ts:35](src/app.ts#L35)
+**Files:** [config.ts:47-63](src/config.ts#L48-L64), [documents.routes.ts:36-50](src/routes/documents.routes.ts#L36-L50), [middleware/rateLimit.ts](src/middleware/rateLimit.ts), [app.ts:35](src/app.ts#L35)
 
 - **Document cap** — [`checkDocumentCap`](src/routes/documents.routes.ts#L36-L50): 5 for guests, 10 for accounts, as a middleware placed **before multer** on `/upload`, so an over-limit user is turned away before their file (up to 10 MB) is read into memory. 403, not 400: the request is fine, they're just not allowed more. Two uploads at the same instant can both pass at 4/5; fine for a cost guard.
 - **Rate limit** — [`authLimiter`, rateLimit.ts:23-36](src/middleware/rateLimit.ts#L23-L36): one counter per IP, shared across `/auth/guest`, `/register` and `/login` (20 per 15 minutes), answering 429 with a `RateLimit` header. It exists because `POST /auth/guest` is public: without it anyone could loop it and mint unlimited guests, each with their own cap. Counters live in memory and reset on restart.
-- **`trust proxy`** — [app.ts:35](src/app.ts#L35) with `TRUST_PROXY_HOPS` ([config.ts:63](src/config.ts#L63)). On Render the connection comes from a proxy, so every visitor has the same raw IP. Each proxy appends the address it received from to `X-Forwarded-For`, and `trust proxy = N` tells Express to skip N hops from the right. Render puts **Cloudflare in front of its own proxies**, which had to be measured, not guessed: with 1, identical requests landed in two counters (Render's front proxies); with 2, every request got a new counter (Cloudflare's edges), meaning no limit at all. The measuring trick: the `RateLimit-Policy` response header's `pk` is the first 12 hex characters of `sha256(key)`, so you can compare it with `sha256` of your own IP (which `https://<api>/cdn-cgi/trace` reports). With 3 the `pk` matched `sha256` of the client IP, stayed the same across requests, and a faked `X-Forwarded-For` didn't change it, so Render's chain is `<client>, <Cloudflare edge>, <Render front proxy>` and the value is **3** (env on Render, and the code default). Details in the results log of [auth-jwt-plan.md](auth-jwt-plan.md).
+- **`trust proxy`** — [app.ts:35](src/app.ts#L35) with `TRUST_PROXY_HOPS` ([config.ts:63](src/config.ts#L64)). On Render the connection comes from a proxy, so every visitor has the same raw IP. Each proxy appends the address it received from to `X-Forwarded-For`, and `trust proxy = N` tells Express to skip N hops from the right. Render puts **Cloudflare in front of its own proxies**, which had to be measured, not guessed: with 1, identical requests landed in two counters (Render's front proxies); with 2, every request got a new counter (Cloudflare's edges), meaning no limit at all. The measuring trick: the `RateLimit-Policy` response header's `pk` is the first 12 hex characters of `sha256(key)`, so you can compare it with `sha256` of your own IP (which `https://<api>/cdn-cgi/trace` reports). With 3 the `pk` matched `sha256` of the client IP, stayed the same across requests, and a faked `X-Forwarded-For` didn't change it, so Render's chain is `<client>, <Cloudflare edge>, <Render front proxy>` and the value is **3** (env on Render, and the code default). Details in the results log of [auth-jwt-plan.md](auth-jwt-plan.md).
 
 ---
 
@@ -1057,8 +1058,8 @@ Gemini answers in markdown, and the UI showed it as plain text: raw `**bold**` a
 ### How it works
 - **Markdown** — [`Markdown`, L28-L36](frontend/src/components/chat/Markdown.tsx#L28-L36) renders answers with `react-markdown` + `remark-gfm` (tables, strikethrough, task lists, bare links). It does **not** render raw HTML inside the markdown and strips dangerous link targets like `javascript:`, which matters because the login token lives in `localStorage`: a PDF that tricks the model into writing `<script>` can't run code. Links open in a new tab ([L20-L22](frontend/src/components/chat/Markdown.tsx#L20-L22)). Only answers are rendered; what the user typed stays plain text.
 - **Layout** — the conversation sits in a centred column, `--chat-width: 760px` in `index.css`. Answers have the brand mark as an avatar and, once finished streaming, a Copy button next to the sources toggle. [`ChatSources`](frontend/src/components/chat/ChatSources.tsx#L15-L51) became a button with state instead of a `<details>`, so the toggle and Copy share one row while the opened list still spans the full width.
-- **The composer** — [`ChatInputForm`](frontend/src/components/chat/ChatInputForm.tsx#L14-L74): a `<textarea>` that grows with its content (reset height, then set it to `scrollHeight`, capped at 200px), Enter sends, Shift+Enter adds a line, and Enter is ignored while an input-method composition is in progress (`isComposing`, e.g. Hindi or Japanese keyboards).
-- **Empty chat** — [`ChatPanel`](frontend/src/components/chat/ChatPanel.tsx#L27-L89) shows "Ask anything about *file*" and three starter questions that send on click; "thinking" is three pulsing dots next to the mark.
+- **The composer** — [`ChatInputForm`](frontend/src/components/chat/ChatInputForm.tsx#L44-L126): a `<textarea>` that grows with its content (reset height, then set it to `scrollHeight`, capped at 200px), Enter sends, Shift+Enter adds a line, and Enter is ignored while an input-method composition is in progress (`isComposing`, e.g. Hindi or Japanese keyboards).
+- **Empty chat** — [`ChatPanel`](frontend/src/components/chat/ChatPanel.tsx#L34-L97) shows "Ask anything about *file*" and three starter questions that send on click; "thinking" is three pulsing dots next to the mark.
 - Colours and fonts are unchanged; one new variable, `--color-on-accent`, gives the icon on the green background enough contrast in dark mode.
 
 ### What actually happened
@@ -1066,11 +1067,117 @@ Checked in a headless browser on desktop, mobile (390px) and dark mode with no c
 
 ---
 
+# Phase 6 — Background jobs (BullMQ)
+
+**Plan, decisions and the full test log:** [background-jobs-plan.md](background-jobs-plan.md) (steps BG.0–BG.6; its §9 has every number and everything that bit). Built 2026-10-06 → 10-15, live.
+
+### Why
+`POST /upload` used to do everything while the browser waited: parse, chunk, then **one Gemini embedding call per chunk**, then the `documents` row. A 30-chunk PDF held one HTTP request open for 15 s to minutes; proxies give up on long requests, a dropped connection lost the work, and a single Gemini `503` meant redoing the whole upload.
+
+The fix is the **offline/online split**: do in the request only what someone is waiting for, and hand the rest to a **queue**.
+
+```
+browser ── POST /upload ──► parse + chunk (fast)  ──► documents row, status 'processing'
+                                                  ──► job { documentId, userId, chunks } ──► Redis
+        ◄── 202 { documentId, status: 'processing' }
+
+worker (same Node process on Render) ◄── takes the job
+        ──► delete old chunks ──► embed + store each chunk ──► status 'ready'  (or 'failed')
+
+browser ── GET /documents every 2 s while something is 'processing'
+```
+
+Three words: a **queue** is a named list in Redis (`ingest-pdf`); a **job** is one unit of work + its data; a **worker** takes jobs off the queue and runs them. **BullMQ** is the library that does the hard parts on top of Redis: atomically "take the next job", a lock so two workers never run the same job, retries with backoff, and "stalled" detection (a worker died mid-job).
+
+---
+
+## BG.0 — Redis, the column, the settings
+
+- **Redis = Upstash free** (Oregon, same region as Render; `rediss://` = TLS; eviction **off**, because BullMQ breaks if Redis deletes its keys to free memory). One database for local + live, kept apart by a **prefix** (below).
+- **Schema** — [schema.ts:42-64](src/db/schema.ts#L42-L64): `status text NOT NULL DEFAULT 'ready'` (`processing` / `ready` / `failed`) and `error text`. `DEFAULT 'ready'` is the trick that made the SQL safe on the live table: every existing row became ready instantly, and the code deployed at the time never wrote the column.
+- **Settings** — [config.ts:72-152](src/config.ts#L72-L152): the queue name [`INGEST_QUEUE`](src/config.ts#L72), [`REDIS_URL` / `BULLMQ_PREFIX`](src/config.ts#L80-L81) (no defaults on purpose), [`RUN_WORKER`](src/config.ts#L87), [`INGEST_JOB_OPTIONS`](src/config.ts#L90-L102) (3 attempts, 5 s → 10 s exponential backoff, remove completed jobs, keep the last 50 failed) and [`INGEST_WORKER_OPTIONS`](src/config.ts#L107-L126) (concurrency 1 and the command-budget tuning below). `satisfies DefaultJobOptions` checks the object against BullMQ's type without widening it.
+
+## BG.1 — the learning script, and what an idle worker costs
+
+[`src/step5-bullmq.ts`](src/step5-bullmq.ts) (`npm run step5`) runs 3 jobs on a throwaway queue: one succeeds, one throws on its first attempt and is retried after the backoff, one throws every time and ends in `failed`. Two lessons from running it: **`add()` doesn't run anything** (the jobs sat in Redis until a worker existed), and **`'failed'` fires for every failed attempt**, including ones that will be retried.
+
+The second mode (`npm run step5 idle default|tuned [secs]`) answers the question that decides whether the free plan works. A worker can't be *told* a job arrived; it keeps asking Redis. Counted by wrapping `Redis.prototype.sendCommand` (which catches pipelines and BullMQ's own extra connections):
+
+| 5 idle minutes | commands | ≈ per month, never sleeping |
+|---|---|---|
+| BullMQ defaults (`drainDelay` 5 s, `stalledInterval` 30 s) | 118 | ~1,020,000 (204% of the free 500K) |
+| tuned (`drainDelay` 30 s, `stalledInterval` 5 min) | 19 | ~164,000 (33%) |
+
+## BG.2 — the queue, the worker, the idempotent job
+
+**Two halves** — [ingestion.service.ts](src/services/ingestion.service.ts): [`parsePdf()`](src/services/ingestion.service.ts#L30-L54) (fast, needs the PDF bytes, so it stays in the request) and [`embedAndStoreChunks()`](src/services/ingestion.service.ts#L60-L71) (slow, runs in the worker). The job carries **chunk texts**, never the PDF: Redis shouldn't hold a 10 MB file.
+
+**Connections** — [queue/connection.ts](src/queue/connection.ts): [`connect()`](src/queue/connection.ts#L34-L58) makes two kinds, because they want opposite things when Redis is down ([L38](src/queue/connection.ts#L38)):
+- the **queue** side (used by `/upload`): `enableOfflineQueue: false` + `maxRetriesPerRequest: 1` = **fail fast**, so an upload gets a quick 503 instead of hanging;
+- the **worker** side: `maxRetriesPerRequest: null` = **wait it out** through reconnects (BullMQ requires it for workers).
+
+Nothing connects on import: [`getQueueConnection()`](src/queue/connection.ts#L61-L65) opens on first use, and [`getQueueSettings()`](src/queue/connection.ts#L14-L18) throws if `REDIS_URL` / `BULLMQ_PREFIX` is missing. The `'error'` listener ([L46-55](src/queue/connection.ts#L46-L55)) logs each *different* error once and says "reconnected", instead of a stack trace every 2 s.
+
+**The queue** — [ingest.queue.ts](src/queue/ingest.queue.ts): [`IngestJobData`](src/queue/ingest.queue.ts#L13-L17) `{ documentId, userId, chunks }` (`userId` only ever from `req.user.id`). [`enqueueIngest()`](src/queue/ingest.queue.ts#L43-L56) adds with **`jobId = documentId`**, so the same document can't be queued twice.
+
+**The worker** — [`processIngestJob()`](src/workers/ingest.worker.ts#L23-L58):
+1. [L32](src/workers/ingest.worker.ts#L32) `getDocumentForUser(documentId, userId)`: the ownership rule from auth applies to the worker too. Gone → delete any chunks and return (a deleted document can't come back, so retrying is pointless).
+2. [L43](src/workers/ingest.worker.ts#L43) **`deleteChunksByDocumentId` first — the idempotent part.** BullMQ retries a failed job and re-runs a stalled one; if chunks 1–17 of 30 were stored before the failure, a naive re-run stores them twice. Deleting first makes one run and three runs end the same.
+3. [L46](src/workers/ingest.worker.ts#L46) `embedAndStoreChunks`.
+4. [L51-55](src/workers/ingest.worker.ts#L51-L55) `setDocumentStatus(..., 'ready')`, which **returns whether it updated a row** ([documents.repository.ts:48-60](src/repositories/documents.repository.ts#L48-L60)). `false` = the user deleted the document while we were embedding → remove the chunks just stored. Check + update in one statement: no gap for a delete to slip into.
+
+**Giving up** — [`onJobFailed()`](src/workers/ingest.worker.ts#L69-L95) asks [`job.getState()`](src/workers/ingest.worker.ts#L82) instead of comparing `attemptsMade` with `attempts`: `'failed'` = done for good, `'delayed'` = a retry is scheduled. The arithmetic misses one case: a job that keeps stalling is failed by BullMQ *before* its attempts run out, and the document would sit at `processing` forever. On the final failure it deletes the partial chunks and sets `failed` + a short, safe message ([L89-90](src/workers/ingest.worker.ts#L89-L90)). Everything is inside `try/catch`: nothing awaits an event handler, so a throw there would be an unhandled rejection.
+
+[`startIngestWorker()`](src/workers/ingest.worker.ts#L99-L116) wires it up with the tuned options and an `'error'` listener. [`src/worker.ts`](src/worker.ts) (`npm run worker`) runs the worker on its own, so moving it to a separate service later is configuration, not a rewrite.
+
+**Shutdown** — [`closeQueueOnShutdown()`](src/queue/shutdown.ts#L17-L45): Render sends `SIGTERM` on every deploy. `worker.close()` stops taking jobs and **waits for the one in progress**, then the queue and connections close; a 20 s timer ([L26](src/queue/shutdown.ts#L26)) forces the exit if it takes too long (Render allows ~30 s).
+
+**Tested** (real worker in-process against Neon + Upstash, prefix `docmind-test`): chunk 2 failing once → retried → 5 chunks, each stored once; always failing → states `delayed, delayed, failed` → `failed`, 0 chunks; deleted mid-job → 0 chunks; enqueued twice → 1 job. 9/9.
+
+## BG.3 — the API side
+
+**`POST /upload`** — [documents.routes.ts:92-122](src/routes/documents.routes.ts#L92-L122) calls [`queuePdfIngestion()`](src/services/ingestion.service.ts#L85-L152): parse → **400 if no page has text** → `insertDocument(..., 'processing')` → enqueue → **202**. If enqueueing fails, the row is deleted again and the answer is **503** ([L128-136](src/services/ingestion.service.ts#L128-L136)). The "has text?" check uses the per-page texts ([L44](src/services/ingestion.service.ts#L44)) because pdf-parse adds a `-- 1 of N --` marker to `result.text` for every page — a scanned PDF looked like it had 12 characters of text.
+
+**The 5 s enqueue timeout** — [ingest.queue.ts:43-56](src/queue/ingest.queue.ts#L43-L56): if Redis drops *after* connecting, `add()` fails at once. But if Redis has been unreachable since startup, BullMQ waits for a first `ready` that never comes (read in bullmq 6's source), and the upload would hang. `Promise.race` with a timer turns that into the 503. If Redis comes back and the job lands anyway, the worker finds the row already deleted and exits quietly.
+
+**"Is it ready?"** — [`checkDocumentReady()`](src/services/documents.service.ts#L20-L39): 404 if it isn't the caller's (ownership first, so a stranger never learns an id exists), **409** if `processing` or `failed`, otherwise ok. Called by `prepareChat` ([chat.service.ts:150](src/services/chat.service.ts#L150), one-document mode, **before** embedding the question, so no Gemini call is wasted) and `generateQuiz` ([quiz.service.ts:127](src/services/quiz.service.ts#L127)). 409 Conflict, not 404: the document exists and is yours, it just isn't usable yet.
+
+**Only ready documents are read** — `sampleChunks` ([chunks.repository.ts:42](src/repositories/chunks.repository.ts#L42)) and `searchSimilar` ([L124-125](src/repositories/chunks.repository.ts#L124-L125)) add `documents.status = 'ready'` to the join they already had. In "all documents" mode that's the whole rule: a processing PDF is simply skipped.
+
+**Delete the row first** — [documents.routes.ts:85-87](src/routes/documents.routes.ts#L85-L87): row, then chunks, then messages. Either the worker's final UPDATE finds no row and cleans up after itself, or the worker finished first and the chunk delete gets everything. The old order (chunks first, row last) left a window where a worker storing its last chunk would still see the row and leave orphans.
+
+**Startup** — [index.ts:17-26](src/index.ts#L17-L26): fail fast without the queue settings, open the queue now (so the first upload doesn't pay the Redis handshake), start the worker unless `RUN_WORKER=false`, register the shutdown.
+
+**Crash recovery, measured:** hard-killed mid-job (2 of 5 chunks stored), restarted → the job resumed after **624 s** and finished with 5 chunks, each stored once. Why ~10 min with a 5-min `stalledInterval`: a stalled check only *marks* active jobs as suspects; the *next* check moves the ones whose lock expired back to `wait`; and each check sets a `stalled-check` throttle key for one interval, so the restarted worker's first check was skipped (the dead process's key was still live). A stalled re-run doesn't use up an attempt.
+
+**Tested over HTTP:** 16/16 (202 in ~1 s, 409s while processing, other user 404, ready → chat answered, "all documents" skipped the processing one, delete mid-job → 0 chunks) + Redis down → 503 in 7 s with no leftover row and chat still working.
+
+## BG.4 — the frontend
+
+The home screen already queued a question typed during an upload ("Will ask") and sent it when the upload finished. So the one central change is in [`useDocuments`](frontend/src/hooks/useDocuments.ts): [`uploadFile()`](frontend/src/hooks/useDocuments.ts#L121-L177) resolves only when the document is **ready**, not when the `202` arrives. The progress chip, the queued question and `App.handleUpload` then work unchanged.
+
+- **Polling** — [L52-86](frontend/src/hooks/useDocuments.ts#L52-L86): the effect depends on the **boolean** `anyProcessing`, not on `documents` (each poll replaces the array, which would restart the timer every time). A `setTimeout` chain, not `setInterval`, so a slow response can't pile requests up; 2 s, slowing to 10 s after a minute.
+- **Stale answers** — [`listVersion`](frontend/src/hooks/useDocuments.ts#L24) is bumped on every local upload/delete; a poll that *started* before one is ignored. Without it, a poll in flight during an upload could wipe the new document from state.
+- **Waiting** — [`waiters`](frontend/src/hooks/useDocuments.ts#L28) + the effect at [L91-99](frontend/src/hooks/useDocuments.ts#L91-L99) settle a waiting upload when its document turns ready / failed / disappears; [`waitUntilProcessed()`](frontend/src/hooks/useDocuments.ts#L103-L114) gives up after 2 min with a banner (the document keeps processing).
+- **Only ready documents can be picked** — [App.tsx:54](frontend/src/App.tsx#L54) `readyDocuments` feeds the home chips, "All documents (N)" and the scope picker. The sidebar ([DocumentList.tsx:154-182](frontend/src/components/sidebar/DocumentList.tsx#L154-L182)) lists everything with a spinner + "Processing…" or a red "Failed" (reason in the title), not clickable, and the ⋯ menu offers only Delete ([L212](frontend/src/components/sidebar/DocumentList.tsx#L212)). The quiz picker disables non-ready documents ([QuizPickerModal.tsx:73](frontend/src/components/quiz/QuizPickerModal.tsx#L73)).
+- **Deploy order can't break uploads** — [api/documents.ts:34](frontend/src/api/documents.ts#L34) and [L67](frontend/src/api/documents.ts#L67): a missing `status` (a pre-Phase-6 backend) means `ready`.
+
+**Tested** in headless Chromium against the real stack: 11/11, 0 console errors, screenshots checked in light, dark and mobile.
+
+## BG.5 — live, and the prefix that was wrong
+
+The first live check passed 9/9, but the queue's key count gave something away: **0 keys under `docmind:`**. Render had `BULLMQ_PREFIX=docmind-dev` (copied from `.env`), so production and the laptop were using one queue. BullMQ builds every key as `<prefix>:<queue>:<type>` (`docmind-dev:ingest-pdf:wait`, `…:active`, `…:events`, `…:<jobId>`) — none of these names are in our code — so the same prefix means the same lists, and a local `npm run dev` would have competed for real users' jobs. After the fix the re-check asserted *where* the job ran (its events in `docmind:ingest-pdf:events`, none in `docmind-dev:`): 10/10.
+
+### Takeaway
+The queue itself is a few lines; the work is in what happens around it. Make the job **idempotent** because it *will* run twice. Decide "is this the last attempt?" from the **job's state**, not arithmetic. Close every window where a delete can race the worker. Fail fast where a human is waiting (`enableOfflineQueue: false`, the enqueue timeout) and wait patiently where nobody is (the worker's connection). And **measure** the things the docs only hint at: the idle command cost, and how long crash recovery really takes.
+
+---
+
 ## 5. Cross-cutting: errors, logging, and the backend restructure
 
 ### Error handling on the backend — [utils/errors.ts](src/utils/errors.ts)
 Every chat step talks to the network (Gemini, Neon) and can fail on a bad connection. Without handling, that becomes a bare `500` and the real cause is buried in a stack trace.
-- **`withErrorHandling(label, handler, { sse })`** — [L36-64](src/utils/errors.ts#L36-L64): wraps a route handler in `try/catch`. On failure it logs the real cause to the terminal and sends the client a clear message ([config.ts:25-26](src/config.ts#L25-L26)): a plain route → `503 { error }`; a stream route → an `event: error` frame. If headers were already sent it just ends the response.
+- **`withErrorHandling(label, handler, { sse })`** — [L36-64](src/utils/errors.ts#L36-L64): wraps a route handler in `try/catch`. On failure it logs the real cause to the terminal and sends the client a clear message ([config.ts:25-26](src/config.ts#L26-L27)): a plain route → `503 { error }`; a stream route → an `event: error` frame. If headers were already sent it just ends the response.
 - **`summarizeError(err)`** — [L16-34](src/utils/errors.ts#L16-L34): Drizzle's failed-query errors embed the SQL **and every bound parameter** — for a vector search that's all 3072 numbers, drowning the real reason. This prints only: the first line of the message, the chain of `cause`s (where `ECONNRESET` etc. live), and the first stack frame inside *our* code (`where: …`). Never `console.error(err)` raw in a route.
 - **Where it's applied:** `/chat`, `/chat-stream`, `/quiz` and the `/auth` routes. The upload and the read/delete routes are *not* wrapped; Express 5 forwards their async errors to the last-resort JSON handler at the bottom of [app.ts](src/app.ts). Also note: a wrong API key currently shows the "check your internet connection" message, because the wrapper doesn't distinguish failure types.
 
@@ -1082,13 +1189,14 @@ The original `index.ts` held setup, helpers, error handling, and every route. It
 
 | Old (inside `index.ts`) | Now |
 |---|---|
-| server start | [index.ts:5-7](src/index.ts#L5-L7) |
+| server start | [index.ts:5-7](src/index.ts#L9-L11) |
 | `express()`, `json`, `cors`, `GET /`, mounting | [app.ts](src/app.ts) (no `listen`, so tests can import it) |
 | `HISTORY_LIMIT`, `PORT`, CORS origin, error message | [config.ts](src/config.ts) |
 | `chunkText` | [utils/chunkText.ts](src/utils/chunkText.ts) |
 | `summarizeError`, `withErrorHandling` | [utils/errors.ts](src/utils/errors.ts) |
 | `buildChatPrompt` + chat steps 1–5 (duplicated in `/chat` and `/chat-stream`) | [chat.service.ts](src/services/chat.service.ts) (`prepareChat`, one copy) |
-| upload steps 2–5 | [ingestion.service.ts](src/services/ingestion.service.ts) (`ingestPdf`) |
+| upload steps 2–4 | [ingestion.service.ts](src/services/ingestion.service.ts) (`parsePdf`, `queuePdfIngestion`) |
+| ingest job (embed + store, status) | [workers/ingest.worker.ts](src/workers/ingest.worker.ts) |
 | `/documents`, `/upload` | [documents.routes.ts](src/routes/documents.routes.ts) |
 | `/sessions…` | [sessions.routes.ts](src/routes/sessions.routes.ts) |
 | `/chat`, `/chat-stream` | [chat.routes.ts](src/routes/chat.routes.ts) |
@@ -1101,17 +1209,17 @@ Why: the chat code was duplicated (Step 3.3 would have meant editing it twice), 
 
 Follow a single message from the keyboard to the screen (streaming version, as of the auth build):
 
-0. **Before anything:** on page load [`useAuth`](frontend/src/hooks/useAuth.ts#L52-L140) has already turned the saved token into a user (`GET /auth/me`), or made a guest (`POST /auth/guest`), and only then mounted the app ([App.tsx:239-247](frontend/src/App.tsx#L239-L247)).
-1. **You type and press Enter.** [`ChatInputForm`](frontend/src/components/chat/ChatInputForm.tsx#L14-L74) trims it and calls `onSubmit` → `sendMessage` in [useChat.ts](frontend/src/hooks/useChat.ts) (function `sendMessage`).
-2. **The user bubble appears immediately**; loading = true → the three "thinking" dots in [`ChatPanel`](frontend/src/components/chat/ChatPanel.tsx#L27-L89).
+0. **Before anything:** on page load [`useAuth`](frontend/src/hooks/useAuth.ts#L52-L140) has already turned the saved token into a user (`GET /auth/me`), or made a guest (`POST /auth/guest`), and only then mounted the app ([App.tsx:239-247](frontend/src/App.tsx#L376-L384)).
+1. **You type and press Enter.** [`ChatInputForm`](frontend/src/components/chat/ChatInputForm.tsx#L44-L126) trims it and calls `onSubmit` → `sendMessage` in [useChat.ts](frontend/src/hooks/useChat.ts) (function `sendMessage`).
+2. **The user bubble appears immediately**; loading = true → the three "thinking" dots in [`ChatPanel`](frontend/src/components/chat/ChatPanel.tsx#L34-L97).
 3. **`fetch` opens** `POST /chat-stream` with a JSON body `{ documentId, message, sessionId }` and `Authorization: Bearer <token>` through [`authFetch`](frontend/src/api/client.ts#L70-L87), inside [`streamChatMessage`](frontend/src/api/chat.ts#L75-L177). The browser first sends a CORS preflight, which `cors()` answers.
 4. **Express routes it**: [`requireAuth`](src/middleware/auth.ts#L16-L33) verifies the token and sets `req.user` ([app.ts:73](src/app.ts#L73)); the `/chat-stream` handler in [chat.routes.ts](src/routes/chat.routes.ts) runs inside `withErrorHandling` and reads `userId = req.user!.id`.
-5. **[`prepareChat()`](src/services/chat.service.ts#L109-L237)**, everything scoped to that user:
+5. **[`prepareChat()`](src/services/chat.service.ts#L110-L250)**, everything scoped to that user:
    - validates input → [embeddings.service.ts](src/services/embeddings.service.ts) calls Gemini to embed the question →
-   - [`searchSimilar`](src/repositories/chunks.repository.ts#L88-L124) runs the pgvector `<=>` query, `INNER JOIN documents ... WHERE documents.user_id = $userId` → top 3 chunks →
+   - [`searchSimilar`](src/repositories/chunks.repository.ts#L90-L130) runs the pgvector `<=>` query, `INNER JOIN documents ... WHERE documents.user_id = $userId` → top 3 chunks →
    - [`getRecentMessages`](src/repositories/chatMessages.repository.ts#L43-L56) loads the last 8 messages of this session *for this user* →
    - [`insertMessage`](src/repositories/chatMessages.repository.ts#L24-L32) saves your message with your `user_id` →
-   - [`buildChatPrompt`](src/services/chat.service.ts#L35) assembles context + history + question.
+   - [`buildChatPrompt`](src/services/chat.service.ts#L36) assembles context + history + question.
 6. **SSE opens**; `meta` (session id + sources) is written. The frontend's [`parseFrame`](frontend/src/api/chat.ts#L47-L55) reads it and `useChat` adds the empty assistant bubble with sources.
 7. **[`streamAnswer`](src/services/llm.service.ts)** calls Gemini's streaming endpoint; each parsed piece is `yield`ed, and the route writes it as `data: {"text": …}`.
 8. **Each piece reaches the frontend's read loop**, is split into frames, dispatched as `onChunk` → `appendToAssistantBubble` → React re-renders the growing answer through [`Markdown`](frontend/src/components/chat/Markdown.tsx#L28-L36), and the view scrolls.
@@ -1125,7 +1233,8 @@ Along the way, the backend terminal shows the colourful `[1/7] … [7/7]` trace 
 
 Things that work but are deliberately simple — good to know, and several are future roadmap steps.
 
-- **Uploads embed chunks one at a time**, so big PDFs are slow → Phase 6 (BullMQ background jobs).
+- **Uploads embed chunks one at a time** — now in the background worker (Phase 6), so the request is fast, but a big PDF still takes a while to turn `ready`, and the worker shares the API's process on the free tier.
+- **A job cut off by a crash resumes after up to ~10 min** (two stalled-check intervals, measured). Normal deploys aren't affected: the worker finishes its job before exiting.
 - **`chunkText` is naive** (fixed 500 words, no overlap, flattens newlines) → advanced chunking topic.
 - **Search has no vector index**, so it compares against every chunk → fine now, see INDEXING-AT-SCALE for later.
 - **A chat's scope is fixed when it starts** (one document *or* all documents), because messages are saved against one `documentId`. Switching scope in the header starts a new chat instead of changing the current one.

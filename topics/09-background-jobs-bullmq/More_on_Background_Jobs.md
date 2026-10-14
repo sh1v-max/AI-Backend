@@ -1,8 +1,8 @@
 # 09 — Background Jobs (BullMQ)
 
-**Roadmap: Phase 6** · **Status in DocMind: not built yet.** Everything below is the concept plus how it would land in this codebase. Version-specific details (BullMQ options, Upstash limits) should be checked against current docs when you build it.
+**Roadmap: Phase 6** · **Status in DocMind: built and live (2026-10-06 → 10-15).** This file was written before the build, as the concept plus how it *would* land here. The concept sections still stand; where DocMind ended up choosing differently, an **In DocMind:** note says what was actually built (bullmq 6, Upstash free). The full build log, with every test and number, is [background-jobs-plan.md](../../background-jobs-plan.md) §9; the line-linked walkthrough is [CODE_EXPLAINED.md](../../CODE_EXPLAINED.md#phase-6--background-jobs-bullmq).
 
-Code this file talks about: [documents.routes.ts](../../src/routes/documents.routes.ts) (`POST /upload`), [ingestion.service.ts](../../src/services/ingestion.service.ts) (`ingestPdf`)
+Code this file talks about: [documents.routes.ts](../../src/routes/documents.routes.ts) (`POST /upload` → 202), [ingestion.service.ts](../../src/services/ingestion.service.ts) (`parsePdf`, `embedAndStoreChunks`, `queuePdfIngestion`), [queue/](../../src/queue) (connections, the queue, shutdown), [workers/ingest.worker.ts](../../src/workers/ingest.worker.ts), [config.ts](../../src/config.ts) (job + worker options)
 
 ---
 
@@ -348,6 +348,8 @@ A + a final status flip is the right size for this project.
 
 This is the same class of problem as the orphan chunks already in the DB: partial ingestion leaves data nobody can see.
 
+**In DocMind:** option A. `processIngestJob()` calls `deleteChunksByDocumentId` before embedding, then flips the status with `setDocumentStatus`, which reports whether a row was updated (0 rows = deleted mid-job → remove the chunks just stored). Tested twice: a forced failure on chunk 2 (retried, 5 chunks, each once) and a hard kill mid-job (resumed after the restart, each once).
+
 ---
 
 # 15. The Schema Change
@@ -371,6 +373,8 @@ Notes:
 - The row is now created **up front** by the route, not at the end by `ingestPdf()`. That's a real change to `ingestPdf`: today it generates the `documentId` and inserts the document row last. After this, it receives a `documentId` and finishes by updating the row.
 
 A nice side effect: creating the row first means partial chunks always have a visible parent, so no more silent orphans.
+
+**In DocMind:** exactly this SQL, run by hand on Neon (a second run fails with `42701 column already exists`, which is harmless). The row is created up front by `queuePdfIngestion()` with the real `chunk_count`, since chunking happens in the request.
 
 ---
 
@@ -406,6 +410,8 @@ So: parse in the request, save the raw text (or the chunks without embeddings) t
 
 Decide this consciously. It's the question that matters at deployment.
 
+**In DocMind:** parse in the request, but the **chunk texts go in the job** itself (`{ documentId, userId, chunks }`, ~100–300 KB for a 50-page PDF) instead of a Postgres side-table, so nothing extra needs storing and cleaning up. A PDF with no text is refused with `400` before any job exists. Gotcha found while testing: pdf-parse v2 adds a `-- 1 of N --` marker to the joined text for every page, so "is there text?" has to be asked of the per-page texts.
+
 ---
 
 # 17. How the Browser Finds Out
@@ -436,6 +442,8 @@ await job.updateProgress(Math.round(((i + 1) / chunks.length) * 100))
 
 but for the status endpoint it's simpler to also write progress to the `documents` row, so the API doesn't need to ask Redis.
 
+**In DocMind:** no status endpoint. `GET /documents` already returns every row, now with `status` and `error`, so the frontend polls *that* every 2 s (10 s after a minute) while anything is processing. Its `uploadFile()` only resolves once the document is ready, which kept the existing "Will ask" queued-question flow working unchanged. No progress percentage (yet).
+
 ---
 
 # 18. Concurrency and Rate Limiting
@@ -452,6 +460,8 @@ new Worker('ingest-pdf', processor, {
 - `limiter` is per **job**, not per API call. One ingest job makes many embedding calls, so for Gemini's rate limits you still need pacing _inside_ the job (a small delay between chunks, or batch embedding).
 
 This is the queue's hidden superpower: **it's a throttle.** Ten uploads become ten tickets processed two at a time, instead of ten simultaneous loops.
+
+**In DocMind:** `concurrency: 1` and no `limiter`: Gemini's free tier is the bottleneck, and one document at a time is plenty here.
 
 ---
 
@@ -474,6 +484,8 @@ Hosts send `SIGTERM` on every deploy, so this matters in production.
 
 Also: a long synchronous CPU task blocks the event loop, which blocks the lock renewal, which makes a healthy job look stalled. If that ever happens, the fix is a sandboxed processor (runs the job in a child process).
 
+**In DocMind, measured:** with `stalledInterval: 300000` (tuned for Upstash, see §20), a job whose server was hard-killed resumed after **624 s**, not "within 5 minutes". A stalled check only *marks* active jobs as suspects; the *next* check moves the ones whose lock expired back to waiting; and each check sets a `stalled-check` throttle key for one interval, so the restarted worker's first check was skipped. Worst case ≈ two intervals. Graceful shutdown (`worker.close()` with a 20 s cap) means normal deploys don't hit this. A stalled re-run doesn't use up an attempt.
+
 ---
 
 # 20. Connection Gotchas
@@ -484,6 +496,12 @@ Also: a long synchronous CPU task blocks the event loop, which blocks the lock r
 - **Free-tier command budget.** An idle worker still talks to Redis (it waits for jobs with blocking calls, and checks for stalled jobs). On a plan that bills or caps by command count, an always-on idle worker eats allowance. Watch the dashboard, and don't leave a dev worker running overnight.
 - **Eviction policy.** BullMQ wants `noeviction`. If Redis silently evicts keys under memory pressure, jobs vanish.
 - **Don't share one connection carelessly** between a Queue and a Worker if you set different options; create them from the same config.
+
+**In DocMind, what actually bit:**
+- Upstash's **CLI** snippet got copied (`redis-cli --tls -u redis://...`) instead of the URL, then the URL with one s: ioredis connected unencrypted, Upstash hung up, and the error was the unhelpful "max retries per request".
+- The command budget is real: measured with `npm run step5 idle`, BullMQ's defaults cost ~34K commands a day idle (~1M/month, double Upstash's free 500K); `drainDelay: 30` + `stalledInterval: 300000` cut it to ~5.5K/day.
+- Two more connection settings beyond `maxRetriesPerRequest: null`: the **queue** side uses `enableOfflineQueue: false` so `/upload` fails fast with a 503 when Redis is down, and enqueueing has a **5 s timeout**, because if Redis is unreachable from startup, BullMQ's `add()` waits forever for a first connection.
+- Eviction was checked by asking Redis itself (`INFO memory` → `maxmemory_policy: noeviction`), not just the dashboard.
 
 ---
 
@@ -505,6 +523,8 @@ The classic bug: "my upload is stuck on Processing forever" = you forgot to star
 
 And remember `package.json` must stay strict JSON (no `//` comments).
 
+**In DocMind:** one process, because Render's free tier has no background workers. `index.ts` starts the worker inside the API unless `RUN_WORKER=false`; `npm run worker` exists for a future separate service. So the classic bug became the opposite one: with `RUN_WORKER=false` in your local `.env`, uploads really do wait in the queue.
+
 ---
 
 # 22. Where the Code Goes
@@ -524,6 +544,8 @@ The refactor on 2026-09-20 is what makes this cheap. `ingestPdf()` already never
 
 Keep the `pipelineLogger` calls. In the worker terminal you should still see `[2/5] Extracting text...` etc. Logging is a feature here.
 
+**In DocMind** (close to this, with the free-tier change from §21): `queue/connection.ts`, `queue/ingest.queue.ts`, `queue/shutdown.ts`, `workers/ingest.worker.ts`, `worker.ts`; `ingestion.service.ts` split into `parsePdf` / `embedAndStoreChunks` / `queuePdfIngestion`; `services/documents.service.ts` for the ready check; `documents.repository.ts` gained `setDocumentStatus`. No status route (§17). Logging kept: the worker logs through `pipelineLogger` with its own green `queue` theme.
+
 ---
 
 # 23. Failure Handling
@@ -542,6 +564,8 @@ worker.on('failed', async (job, err) => {
 
 **Dead letter queue (DLQ):** the general name for "where jobs go after they fail for good". In BullMQ the `failed` set plays that role: jobs sit there for inspection and can be retried manually (`job.retry()`).
 
+**In DocMind:** "is this the last attempt?" is decided by `await job.getState() === 'failed'`, not `attemptsMade >= attempts`. The arithmetic misses a job that BullMQ fails for stalling too often, and that document would stay `processing` forever. Failed jobs keep their partial chunks deleted and the document shows "Failed" with the reason; the user deletes and re-uploads (no retry button yet).
+
 ---
 
 # 24. Chat During Processing
@@ -554,6 +578,8 @@ status: processing → chat disabled in the UI
 ```
 
 "Only some" is the nasty one. Halfway through ingestion, a search returns real but incomplete results, and the answer is confidently wrong. So check `status === 'ready'` in the backend, not only in the UI. In all-documents mode, `searchSimilar` should skip documents that aren't ready (the same join that already skips orphans).
+
+**In DocMind:** both. `checkDocumentReady()` answers **409** for chat/quiz on one specific document that's processing or failed (after the ownership check, so a stranger still gets 404), and `searchSimilar` / `sampleChunks` add `documents.status = 'ready'` to their join. The frontend doesn't offer non-ready documents for chat at all.
 
 ---
 
@@ -617,6 +643,8 @@ Three things to think about before then:
 
 More in [topic 13](../13-deployment/More_on_Deployment.md).
 
+**In DocMind:** the free-tier workaround in point 2 is what shipped: one Render web service, worker inside it. And one more deployment lesson: Render's `BULLMQ_PREFIX` was first set to `docmind-dev` (copied from `.env`), so production and the laptop shared one queue. Caught because Upstash had 0 keys under `docmind:`; fixed to `docmind`. Every key is `<prefix>:<queue>:<type>`, so the prefix *is* the separation.
+
 ---
 
 # 29. Interview-Level Summary
@@ -639,11 +667,11 @@ If asked **"Why exponential backoff?"**:
 
 If asked **"What do you put in the job?"**:
 
-> A reference, like a document id, never the file. Job data lives in Redis memory, and the worker may run on a different machine with a different disk.
+> Never the file. Job data lives in Redis memory, and the worker may run on a different machine with a different disk. Usually a reference like a document id; in my project the parse step is fast, so I parse in the request and put the chunk texts in the job, which keeps the worker to the slow part only (embedding).
 
 If asked **"How does the client know it's done?"**:
 
-> The upload returns 202 with a status of processing, and the client polls a status endpoint until it's ready or failed. SSE would also work.
+> The upload returns 202 with a status of processing, and the client polls until it's ready or failed. In my project the document list already carries the status, so it polls that instead of a separate status endpoint. SSE would also work.
 
 If asked **"What if the worker crashes mid-job?"**:
 
@@ -651,18 +679,24 @@ If asked **"What if the worker crashes mid-job?"**:
 
 ---
 
-# 30. Things That Will Bite You
+# 30. Things That Will Bite You (and what actually did)
 
-- Forgetting to start the worker → stuck on "processing".
-- `maxRetriesPerRequest: null` missing → the Worker refuses to start.
-- `redis://` instead of `rediss://` for a TLS host.
-- Putting the file in job data.
-- Temp files that work locally and vanish when deployed.
-- Non-idempotent retry → duplicate chunks.
-- Marking `failed` on the first failed attempt instead of the last.
-- Completed jobs piling up in a small Redis.
-- An idle worker quietly burning the free command allowance.
-- Chatting with a half-ingested document.
+The original list, marked against the build. ✓ = handled before it bit, ⚡ = actually bit.
+
+- ✓ Forgetting to start the worker → stuck on "processing". (Worker runs inside the API; only `RUN_WORKER=false` does this now.)
+- ✓ `maxRetriesPerRequest: null` missing → the Worker refuses to start.
+- ⚡ `redis://` instead of `rediss://` for a TLS host (after first pasting the whole `redis-cli` command).
+- ✓ Putting the file in job data.
+- ✓ Temp files that work locally and vanish when deployed.
+- ✓ Non-idempotent retry → duplicate chunks (tested with a forced failure and a hard kill).
+- ✓ Marking `failed` on the first failed attempt instead of the last (and decided by job state, not arithmetic).
+- ✓ Completed jobs piling up in a small Redis (`removeOnComplete: true`).
+- ⚡ An idle worker quietly burning the free command allowance: measured at 204% of the free plan with the defaults, 33% tuned.
+- ✓ Chatting with a half-ingested document (409 + `ready` filter).
+- ⚡ *Not on the list:* the same queue prefix in two environments (Render had the laptop's).
+- ⚡ *Not on the list:* pdf-parse's page markers making a text-less PDF look like it had text.
+- ⚡ *Not on the list:* crash recovery taking ~2 stalled intervals (~10 min), not one.
+- ⚡ *Not on the list:* BullMQ's `add()` hanging forever when Redis was down from startup (fixed with a 5 s timeout).
 
 ---
 
