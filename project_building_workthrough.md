@@ -316,6 +316,8 @@ Built from [background-jobs-plan.md](background-jobs-plan.md) (steps BG.0–BG.6
 
 **How it turned out (2026-09-30 → 10-04):** pulled forward before Phase 6, so only the API (Render free web service) and the frontend (Vercel) are deployed; there's no worker yet. Render needed a `build`/`start` script, a `tsconfig.build.json`, comma-separated CORS origins, a 10 MB upload cap and `X-Accel-Buffering: no` on the stream. Going live exposed the real problem: with no notion of users, every visitor saw every upload, which is why Step 11.2 got built for real. The live check after the auth deploy found one more thing: the rate limiter's `trust proxy` hop count, which had to be measured (Render = Cloudflare + its own proxies).
 
+**Update (Phase 6, 2026-10-14):** the worker exists now, but not as Step 10.1 imagined: Render's free tier has no background-worker service, so the BullMQ worker runs **inside the API's web service** (started by `index.ts`; `npm run worker` is ready for a paid separate service). Both point at the same Upstash Redis, with `BULLMQ_PREFIX=docmind` on Render. Step 10.2's "upload → background ingest → chat" is verified live; the "quiz workflow with suspend/resume" part waits for Phase 8.
+
 **Milestone:** DocMind is live, and every phase above is provably working outside your machine.
 
 ---
