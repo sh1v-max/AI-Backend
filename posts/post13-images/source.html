@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DocMind post 13 images</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+  :root {
+    --bg: #f7f8f7;
+    --surface: #ffffff;
+    --ink: #18181b;
+    --muted: #5f5f68;
+    --border: #e2e8e3;
+    --accent: #16a34a;
+    --accent-dark: #15803d;
+    --accent-bg: #f0fdf4;
+    --red: #dc2626;
+    --red-bg: #fef2f2;
+    --amber: #b45309;
+    --amber-bg: #fffbeb;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #ccc; font-family: 'DM Sans', sans-serif; color: var(--ink); }
+  .slide {
+    width: 1200px; height: 675px; position: relative; overflow: hidden;
+    background: var(--bg);
+    background-image: radial-gradient(circle, #dfe5e0 1px, transparent 1px);
+    background-size: 24px 24px;
+    padding: 44px 56px 40px;
+    display: flex; flex-direction: column;
+    margin-bottom: 20px;
+  }
+  .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-family: 'Space Grotesk'; font-weight: 600; font-size: 20px; }
+  .mark { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; color: #fff; font-size: 17px; }
+  .brand .sub { color: var(--muted); font-weight: 500; }
+  .badge { font-family: 'Space Grotesk'; font-weight: 700; font-size: 18px; padding: 6px 14px; border-radius: 999px; background: var(--ink); color: #fff; }
+  h1 { font-family: 'Space Grotesk'; font-weight: 700; font-size: 44px; line-height: 1.1; letter-spacing: -0.5px; }
+  h1 .hl-red { color: var(--red); }
+  h1 .hl-green { color: var(--accent); }
+  .lead { font-size: 21px; color: var(--muted); margin-top: 10px; }
+  .stage { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .box {
+    background: var(--surface); border: 2px solid var(--border); border-radius: 14px;
+    padding: 12px 16px; font-weight: 500; font-size: 19px; text-align: center; white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+  }
+  .box small { display: block; font-size: 15px; color: var(--muted); font-weight: 400; margin-top: 2px; }
+  .box.red { border-color: #fca5a5; background: var(--red-bg); }
+  .box.green { border-color: #86efac; background: var(--accent-bg); }
+  .box.dark { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .box.dark small { color: #b7b7c0; }
+  .arrow { color: var(--muted); font-size: 26px; font-weight: 700; }
+  .arrow.green { color: var(--accent); }
+  .mono { font-family: 'JetBrains Mono', monospace; font-size: 16px; }
+  .note { font-size: 18px; color: var(--muted); }
+  .chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 10px; font-size: 18px; font-weight: 500; }
+  .chip.red { background: var(--red-bg); color: var(--red); border: 1px solid #fecaca; }
+  .chip.green { background: var(--accent-bg); color: var(--accent-dark); border: 1px solid #bbf7d0; }
+  .chip.amber { background: var(--amber-bg); color: var(--amber); border: 1px solid #fde68a; }
+  .foot { display: flex; justify-content: space-between; align-items: center; font-size: 16px; color: var(--muted); margin-top: 8px; }
+
+  /* ---- slide 1: the long request ---- */
+  .s1-flow { gap: 12px; }
+  .bar {
+    margin-top: 22px; height: 46px; border-radius: 12px; position: relative;
+    background: repeating-linear-gradient(-45deg, #fee2e2 0 14px, #fecaca 14px 28px);
+    border: 2px solid #fca5a5; display: flex; align-items: center; justify-content: center;
+    font-family: 'Space Grotesk'; font-weight: 700; font-size: 21px; color: var(--red);
+  }
+  .s1-chips { display: flex; gap: 14px; margin-top: 22px; flex-wrap: wrap; }
+  .embed-stack { display: flex; flex-direction: column; gap: 6px; }
+  .embed-stack .box { padding: 7px 14px; font-size: 17px; }
+
+  /* ---- slide 2: lanes ---- */
+  .lane { position: relative; background: rgba(255,255,255,0.75); border: 2px dashed var(--border); border-radius: 18px; padding: 16px 18px 16px; }
+  .lane-label { position: absolute; top: -13px; left: 18px; background: var(--bg); padding: 0 8px; font-family: 'Space Grotesk'; font-weight: 700; font-size: 16px; letter-spacing: 0.5px; text-transform: uppercase; }
+  .lane.req .lane-label { color: var(--accent-dark); }
+  .lane.bg .lane-label { color: var(--ink); }
+  .queue-row { display: flex; align-items: center; gap: 14px; margin: 12px 0 12px 160px; }
+  .queue { display: flex; align-items: center; gap: 12px; background: var(--ink); color: #fff; border-radius: 14px; padding: 10px 16px; }
+  .queue .t { font-family: 'Space Grotesk'; font-weight: 700; font-size: 19px; }
+  .job { background: #2a2a31; border: 1px solid #45454f; border-radius: 8px; padding: 6px 10px; color: #a7f3d0; }
+  .down { color: var(--muted); font-size: 24px; font-weight: 700; }
+
+  /* ---- slide 3: stats ---- */
+  .cards { display: grid; grid-template-columns: 1.15fr 1fr; gap: 22px; margin-top: 6px; }
+  .card { background: var(--surface); border: 2px solid var(--border); border-radius: 18px; padding: 22px 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+  .card h2 { font-family: 'Space Grotesk'; font-size: 24px; font-weight: 700; margin-bottom: 4px; }
+  .card .cap { font-size: 17px; color: var(--muted); margin-bottom: 16px; }
+  .bars { display: flex; flex-direction: column; gap: 12px; }
+  .barrow { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 12px; font-size: 17px; font-weight: 500; }
+  .track { height: 40px; border-radius: 10px; background: #f1f2f1; position: relative; overflow: hidden; }
+  .fill { height: 100%; border-radius: 10px; display: flex; align-items: center; padding-left: 12px; font-family: 'Space Grotesk'; font-weight: 700; font-size: 20px; color: #fff; white-space: nowrap; }
+  .fill.red { background: var(--red); }
+  .fill.green { background: var(--accent); }
+  .limitline { position: absolute; top: -4px; bottom: -4px; width: 0; border-left: 3px dashed var(--ink); }
+  .big { font-family: 'Space Grotesk'; font-weight: 700; font-size: 64px; line-height: 1; color: var(--accent-dark); }
+  .big.amber { color: var(--amber); }
+  .steps { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+  .step { display: flex; align-items: center; gap: 12px; font-size: 18px; }
+  .dot { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 15px; flex-shrink: 0; }
+  .dot.red { background: var(--red-bg); color: var(--red); border: 2px solid #fca5a5; }
+  .dot.amber { background: var(--amber-bg); color: var(--amber); border: 2px solid #fde68a; }
+  .dot.green { background: var(--accent-bg); color: var(--accent-dark); border: 2px solid #86efac; }
+</style>
+</head>
+<body>
+
+<!-- ================= 1/3 BEFORE ================= -->
+<section class="slide" id="s1">
+  <div class="top">
+    <div class="brand"><div class="mark">✦</div>DocMind <span class="sub">· background jobs</span></div>
+    <div class="badge">1 / 3 · before</div>
+  </div>
+  <h1>Uploading a PDF kept <span class="hl-red">one request open</span><br>for the whole job</h1>
+  <p class="lead">The browser waited while the server did everything, including one Gemini call per chunk.</p>
+
+  <div class="stage">
+    <div class="row s1-flow">
+      <div class="box">browser<small>POST /upload</small></div>
+      <div class="arrow">→</div>
+      <div class="box">read PDF</div>
+      <div class="arrow">→</div>
+      <div class="box">cut into chunks</div>
+      <div class="arrow">→</div>
+      <div class="embed-stack">
+        <div class="box red">embed chunk 1 <small>Gemini</small></div>
+        <div class="box red">embed chunk 2 …</div>
+        <div class="box red">embed chunk N</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="box">save</div>
+      <div class="arrow">→</div>
+      <div class="box">200<small>finally</small></div>
+    </div>
+    <div class="bar">⏳ request open the whole time: up to a minute or more for a big PDF</div>
+    <div class="s1-chips">
+      <span class="chip red">✗ connection drops → all the work is lost</span>
+      <span class="chip red">✗ Gemini fails on chunk 17 → upload again</span>
+    </div>
+  </div>
+
+  <div class="foot"><span>Node · Express · Postgres/pgvector · Gemini</span><span>next: put the slow part on a queue →</span></div>
+</section>
+
+<!-- ================= 2/3 AFTER ================= -->
+<section class="slide" id="s2">
+  <div class="top">
+    <div class="brand"><div class="mark">✦</div>DocMind <span class="sub">· background jobs</span></div>
+    <div class="badge">2 / 3 · after</div>
+  </div>
+  <h1>Answer in <span class="hl-green">~1 second</span>, do the slow part later</h1>
+  <p class="lead">The request does only what someone is waiting for. A BullMQ worker does the rest.</p>
+
+  <div class="stage">
+    <div class="lane req">
+      <div class="lane-label">in the request</div>
+      <div class="row">
+        <div class="box">POST /upload</div>
+        <div class="arrow green">→</div>
+        <div class="box">read + chunk<small>fast</small></div>
+        <div class="arrow green">→</div>
+        <div class="box">save as<small>"processing"</small></div>
+        <div class="arrow green">→</div>
+        <div class="box">add a job</div>
+        <div class="arrow green">→</div>
+        <div class="box green">202<small>in ~1 s</small></div>
+      </div>
+    </div>
+
+    <div class="queue-row">
+      <div class="down">↓</div>
+      <div class="queue">
+        <span class="t">Redis queue</span>
+        <span class="job mono">{ documentId, userId, chunks }</span>
+        <span class="note" style="color:#c7c7cf">Upstash free · BullMQ</span>
+      </div>
+      <div class="down">↓</div>
+    </div>
+
+    <div class="lane bg">
+      <div class="lane-label">in the background</div>
+      <div class="row">
+        <div class="box dark">worker<small>takes the job</small></div>
+        <div class="arrow">→</div>
+        <div class="box">delete old chunks<small>safe to run twice</small></div>
+        <div class="arrow">→</div>
+        <div class="box">embed + store<small>Gemini, per chunk</small></div>
+        <div class="arrow">→</div>
+        <div class="box green">"ready"</div>
+        <span class="chip amber" style="margin-left:6px">↻ 3 tries · 5 s → 10 s</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot"><span>the browser checks every 2 s and shows "Processing…" until it's ready</span><span>chat on it meanwhile → 409</span></div>
+</section>
+
+<!-- ================= 3/3 MEASURED ================= -->
+<section class="slide" id="s3">
+  <div class="top">
+    <div class="brand"><div class="mark">✦</div>DocMind <span class="sub">· background jobs</span></div>
+    <div class="badge">3 / 3 · what I measured</div>
+  </div>
+  <h1>The queue was easy. <span class="hl-green">Measuring it</span> taught me more.</h1>
+
+  <div class="stage">
+    <div class="cards">
+      <div class="card">
+        <h2>An idle worker isn't free</h2>
+        <p class="cap">Redis commands in 5 minutes with <b>no uploads at all</b></p>
+        <div class="bars">
+          <div class="barrow"><span>defaults</span>
+            <div class="track"><div class="fill red" style="width:100%;justify-content:space-between;padding-right:14px">118<span style="font-size:17px;font-weight:600">≈ 2× the free plan</span></div><div class="limitline" style="left:49%"></div></div>
+          </div>
+          <div class="barrow"><span>tuned</span>
+            <div class="track"><div class="fill green" style="width:16%">19</div><div class="limitline" style="left:49%"></div></div>
+          </div>
+        </div>
+        <p class="note" style="margin-top:12px">┆ dashed line = Upstash free limit, 500K a month</p>
+        <p style="margin-top:14px;font-size:19px"><b class="hl-green" style="color:var(--accent-dark)">Real usage after going live: 3.5K</b> commands for the whole month, tests included</p>
+      </div>
+
+      <div class="card">
+        <h2>Killed the server mid-job</h2>
+        <p class="cap">on purpose, to see if the job comes back</p>
+        <div class="steps">
+          <div class="step"><span class="dot red">1</span>killed with 2 of 5 chunks stored</div>
+          <div class="step"><span class="dot amber">2</span>restarted, waited…</div>
+          <div class="step"><span class="dot green">3</span>job resumed by itself</div>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:12px;margin-top:14px">
+          <span class="big amber">624 s</span><span class="note">≈ 10 min, not the 5 I expected</span>
+        </div>
+        <p style="margin-top:10px;font-size:18px"><span class="chip green">✓ every chunk stored exactly once</span></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot"><span>BullMQ · Upstash Redis · Render free tier</span><span>next: agents + tool calling</span></div>
+</section>
+
+</body>
+</html>
