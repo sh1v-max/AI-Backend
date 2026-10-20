@@ -25,6 +25,8 @@ Same shape as [background-jobs-plan.md](background-jobs-plan.md): the problem, t
 
 ## 0. Start here (new session)
 
+**For Shiv, before this file:** read [topics/10-agents-tool-calling/README.md](topics/10-agents-tool-calling/README.md), then its [More_on](topics/10-agents-tool-calling/More_on_Agents_Tool_Calling.md) Part 1 (§1–§23, concepts) and Part 2 (§24–§32, the building blocks this plan uses: real turns, thought signatures, function calls in a stream, `yield*`, cosine routing, router evals, injection through tool results, the quiz button, free-tier math). This plan assumes them.
+
 **For Claude:** read [CLAUDE.md](CLAUDE.md) (always), then this file. Build **one step at a time** (AG.0 → AG.7), let Shiv review each, run its tests, fill in §9, then move on. Shiv commits and pushes himself; never run `git commit`/`git push`. Code markers for this phase: `AG.N —`.
 
 **Good news first: Phase 7 needs no new service, no schema change and no new env var.** Everything runs on the Gemini key, Neon and the code that's already there. That's different from auth (SQL + `JWT_SECRET`) and Phase 6 (Upstash + SQL + two env vars).
@@ -504,4 +506,6 @@ Quota: the AG.1 eval is ~40 classifier calls + 1 batch embed + ~40 embeds; the A
 - **`systemInstruction`** is a top-level request field, text only.
 - **The function-calling guide page now documents the newer Interactions API** (`/v1beta/interactions`, `steps`, `function_call`/`function_result`, `tool_choice`), not `generateContent`. DocMind stays on `generateContent` (what every existing call uses); don't copy field names from that guide. ([function calling guide](https://ai.google.dev/gemini-api/docs/function-calling))
 - **Free-tier rate limits are no longer printed in the docs;** they're shown per project in AI Studio. ([rate limits](https://ai.google.dev/gemini-api/docs/rate-limits)) → Shiv fills in: flash-lite RPM ___ / RPD ___, embedding RPM ___ / RPD ___.
+- **Embeddings (checked 2026-10-20):** `taskType` values for `gemini-embedding-001` are `SEMANTIC_SIMILARITY`, `CLASSIFICATION`, `CLUSTERING`, `RETRIEVAL_DOCUMENT`, `RETRIEVAL_QUERY`, `CODE_RETRIEVAL_QUERY`, `QUESTION_ANSWERING`, `FACT_VERIFICATION`; DocMind sends none and the router must match that (More_on §28). Default output is 3072 dims (normalised). The embeddings guide only shows a `batchEmbedContents` example for `gemini-embedding-2`, so **AG.1 checks that `gemini-embedding-001:batchEmbedContents` works**; fallback = one `getEmbedding` call per phrase (~24 calls once per process). ([embeddings guide](https://ai.google.dev/gemini-api/docs/embeddings))
+- **Thought signatures:** the old thought-signatures page now redirects to the [thinking guide](https://ai.google.dev/gemini-api/docs/thinking#signatures), which is written for the Interactions API; it notes that in `generateContent` signatures can be attached to any part. Hence rule 7: return every part of a model turn unchanged.
 - Still to observe in AG.0 (not in the reference): whether `gemini-flash-lite-latest` returns `thoughtSignature`s and call `id`s, and how a `functionCall` is split across stream chunks.
