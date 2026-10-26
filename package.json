@@ -11,6 +11,8 @@
     "step3": "ts-node src/step3-drizzle.ts",
     "step4": "ts-node src/step4-quiz-zod.ts",
     "step5": "ts-node src/step5-bullmq.ts",
+    "step6": "ts-node src/step6-tool-calling.ts",
+    "step7": "ts-node src/step7-router.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {

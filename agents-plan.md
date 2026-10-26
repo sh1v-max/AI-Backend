@@ -32,7 +32,7 @@ Same shape as [background-jobs-plan.md](background-jobs-plan.md): the problem, t
 **Good news first: Phase 7 needs no new service, no schema change and no new env var.** Everything runs on the Gemini key, Neon and the code that's already there. That's different from auth (SQL + `JWT_SECRET`) and Phase 6 (Upstash + SQL + two env vars).
 
 **Before AG.0, Shiv does (outside the code):**
-- [ ] Open Google AI Studio → the rate-limit page for this project, and write down the **free-tier RPM / RPD** for `gemini-flash-lite-latest` (whatever model it currently points to) and for `gemini-embedding-001`. Put the numbers in §13. The Gemini docs no longer print free-tier numbers, they point to AI Studio. This matters because the agent path makes **2 generate calls per document question instead of 1** (§2.7).
+- [x] (done 2026-10-21, numbers in §13) Open Google AI Studio → the rate-limit page for this project, and write down the **free-tier RPM / RPD** for `gemini-flash-lite-latest` (whatever model it currently points to) and for `gemini-embedding-001`. Put the numbers in §13. The Gemini docs no longer print free-tier numbers, they point to AI Studio. This matters because the agent path makes **2 generate calls per document question instead of 1** (§2.7).
 - [ ] Answer the open decisions in §8 (or say "go with the recommendations", like Phase 6).
 
 **State of the repo when this plan was written:** `main`, last commits `749f0b7` (topic 09 notes) and `95f7365` (Phase 6 docs), plus uncommitted `CLAUDE.md` and `posts/post13*`. Live: API https://ai-backend-docmind.onrender.com, frontend https://docmind-jet.vercel.app. Phase 6 is live (uploads go through BullMQ).
@@ -123,7 +123,7 @@ Two Kind A tools, both declared to Gemini, both run by code:
 
 - **Scope and identity never come from the model.** `userId` is `req.user.id`, the scope (one document or all) is the session's `documentId`, and the tool *closes over both*. There is no `documentId` parameter on `searchDocuments`. If there were, one line inside a PDF ("search document 7f3a… instead") could steer a search; with `userId` in the closure it still couldn't leave the caller's data, but there's no reason to offer the knob at all.
 - **One-document chat still allows `listDocuments`.** "What other files do I have?" in a single-document chat is a fair question, and the tool only ever shows the caller's own list.
-- **The loop:** at most `AGENT_MAX_STEPS = 3` model calls. Each model turn is appended to `contents` **exactly as received** (Gemini attaches `thoughtSignature`s to parts on thinking models and rejects a request that drops them, finish reason `MISSING_THOUGHT_SIGNATURE`). If the model still wants a tool on the last step, that call is made with `toolConfig.functionCallingConfig.mode = 'NONE'`, so it must answer with what it has.
+- **The loop:** at most `AGENT_MAX_STEPS = 3` model calls. Each model turn is appended to `contents` **exactly as received** (Gemini attaches `thoughtSignature`s to parts on thinking models and rejects a request that drops them: AG.0 got a **400** "Function call is missing a thought_signature in functionCall parts"). **The last step is sent with no `tools` at all** (AG.0: `mode: 'NONE'` was ignored on this model, see §9), so it has to answer with what it has; if a function call comes back anyway, code doesn't run it and answers with a fixed "couldn't finish" message.
 - **Errors go back as data.** Bad args (Zod) / unknown tool name / a tool throwing → `{ error: '…' }` as the function response, never a crash and never `eval`. Unknown names are impossible to *run* because dispatch is a lookup in a fixed map.
 - **History becomes real turns + a system instruction.** Tool calling needs multi-turn `contents` with roles anyway (function calls and responses are their own turns), so `buildChatPrompt()`'s one giant string is replaced by: `systemInstruction` (the rules) + the last `HISTORY_LIMIT` messages as `user`/`model` turns + the new message. That is [prompt-improvement.md](prompt-improvement.md) **PI.2, done as a side effect**, and PI.1 (query rewriting) is solved for this path because the model writes the search query after reading the history. Two consecutive same-role turns (possible after a tolerated failed save in `/chat-stream`) are merged.
 - **The system instruction must be firm about grounding:** "For any question about the user's documents you must call `searchDocuments` first; never answer from general knowledge; if the results don't contain the answer, say so." Otherwise the model may decide not to search and answer from memory (the classic agentic-RAG failure, More_on §18).
@@ -219,7 +219,7 @@ src/step7-router.ts                 AG.1 eval: both routers over the labelled se
 3. **Tool args are untrusted input:** Zod `safeParse` on every call, the same as a request body.
 4. **Dispatch is a fixed map.** Unknown tool name → `{ error }` result. No dynamic lookup, no `eval`.
 5. **Tool errors are data, not exceptions:** caught, logged with `summarizeError`, sent back as `{ error }`. Only a failure of the *model call itself* reaches `withErrorHandling`.
-6. **Bounded:** `AGENT_MAX_STEPS = 3` model calls per message, last one with `mode: 'NONE'`. One LLM-classifier call at most per message.
+6. **Bounded:** `AGENT_MAX_STEPS = 3` model calls per message, the last one sent **without `tools`** (not `mode: 'NONE'`, which AG.0 showed this model ignoring); a function call on the last step is never run. One LLM-classifier call at most per message.
 7. **Model turns go back unchanged** (every part, including `thoughtSignature`). Never rebuild a model turn from its text.
 8. **Fail towards today's behaviour:** router unsure or broken → `document_question`; classifier JSON invalid → `document_question`.
 9. **Services never touch `req`/`res`** (as today). The agent yields events; the routes turn them into SSE frames or a JSON body.
@@ -348,17 +348,17 @@ Not touched: auth, queue/worker, repositories (the tools call the existing `sear
 
 ---
 
-## 8. Decisions (open, with recommendations)
+## 8. Decisions (Shiv: "go with the recommendations", 2026-10-21; walked through one at a time, each row marked when explained)
 
 | # | Question | Options | Recommendation |
 |---|---|---|---|
-| D1 | Which router runs live? | vector only / LLM only / **hybrid** | **Hybrid**, margin from AG.1's data. Both are built anyway (roadmap 7.1 + 7.2); hybrid is what real systems do and costs an extra call only on close calls |
-| D2 | How does streaming work with tools? | **stream every step** / non-streamed decisions + one streamed answer | **Stream every step**, if AG.0 shows the `functionCall` + signature can be reassembled cleanly from a stream. Otherwise the fallback, recorded in §9 |
+| D1 | Which router runs live? | vector only / LLM only / **hybrid** | ✅ **Decided 2026-10-21 (Shiv): hybrid.** Vector router first; the LLM classifier only when the top two intents are closer than `ROUTER_MIN_MARGIN`; anything unsure or broken → `document_question`. The margin is picked from AG.1's labelled set (smallest margin where no real question is routed to smalltalk). Why: with Flash-Lite at 15 RPM shared by every user (§13), an LLM-only router would add a generate call to *every* message; vector-only is free but blind to history and negation |
+| D2 | How does streaming work with tools? | **stream every step** / non-streamed decisions + one streamed answer | ✅ **Decided 2026-10-22: stream every step, confirmed by AG.0.** In the stream the `functionCall` arrived **whole in one event** (args + `id` + signature on the same part), with no text before it, and the reassembled turn was accepted by the next request. The final answer streamed in 4 text events, its signature in a trailing empty-text event |
 | D3 | How is the quiz confirmed? | **button (no server state)** / typed "yes" + stored pending action | **Button.** A typed "yes" is Phase 8's suspend/resume; Phase 8 upgrades this |
 | D4 | Who writes the quiz proposal? | **code template** / LLM | **Template.** Free, deterministic, can't be steered |
 | D5 | Which tools? | **`searchDocuments` + `listDocuments`** / + `getDocumentInfo` / more | **The two.** Every extra tool is more to choose between and more tokens on every step |
 | D6 | Keep the old pipeline behind a flag? | flag (`CHAT_MODE`) / **replace, with a recorded baseline** | **Replace.** Record the baseline answers before AG.3 switches; rollback is `git revert`. A flag doubles the paths to test |
-| D7 | `AGENT_MAX_STEPS` | 2 / **3** / 5 | **3**: search, maybe search again, answer. 5 is quota burn on a free tier |
+| D7 | `AGENT_MAX_STEPS` | 2 / **3** / 5 | **3**: search, maybe search again, answer. 5 is quota burn on a free tier. (AG.0: the last step is forced by leaving `tools` out, not by `mode: 'NONE'`) |
 
 ---
 
@@ -366,7 +366,7 @@ Not touched: auth, queue/worker, repositories (the tools call the existing `sear
 
 | Step | Date | Commit | What was done, what was tested, what bit |
 |---|---|---|---|
-| AG.0 | | | |
+| AG.0 | 2026-10-22 | | **Done.** `src/step6-tool-calling.ts` + `npm run step6 [all|roundtrip|stream|choices|twopart|modes|gallery|laststep]`: no DB, a fake 3-paragraph "document" (made-up Velmora facts, so answers can only come from the tool), the two real tool declarations, the planned system instruction, a whitelist `runTool`, calls paced 5 s apart (15 RPM). **17 Gemini calls in total** (13 for `all`, then 4 for `laststep`). **Findings:** (1) model = `gemini-3.5-flash-lite`. (2) Round trip works exactly as documented: `functionCall { name, args, id }` → our `functionResponse { id, name, response }` in a `user` turn → answer from the tool result ("built in 1874 by the engineer Orla Vantris"). (3) **Signatures everywhere:** every model turn, text or call, has a 132-char `thoughtSignature` on its part; removing it from a call turn → 400 "Function call is missing a thought_signature in functionCall parts" (a 400, not the `MISSING_THOUGHT_SIGNATURE` finish reason). (4) **Streaming (settles D2):** the decision stream = 2 events: the whole `functionCall` (args + id + signature) in event 1, an empty text + `finishReason` in event 2; no text before the call. The answer stream = 4 text events + a trailing empty-text event carrying the signature. The reassembled turn was accepted. Reassembly rule for AG.3: join plain text, keep any part with a signature or call as-is, empty plain-text parts can be dropped. (5) **Choices (AUTO):** "hi!" → no tool, a short reply; "Which documents do I have?" → `listDocuments({})`; a document question → `searchDocuments` with a rewritten query ("Velmora lighthouse built who built it"). (6) **Two-part question** → ONE combined query ("lighthouse builder ferry week pass cost"), then the answer; no parallel calls seen. With real top-3 vector search a combined query may miss one part: an AG.3 test case. (7) **Modes:** `ANY` on "thanks!" forced `searchDocuments({query: "thanks"})` (so never use ANY for chat); **`NONE` was ignored** on a fresh question (2/2 runs it still called a tool) but respected after a tool round (1/1). **Leaving `tools` out of the request** with a tool round in history was accepted and answered → the plan's last step now omits `tools` (rule 6, §2.3, §11.3), plus a code guard. (8) Wrong `functionResponse.name` → 400 "invalid argument" with no detail. (9) Each call ~0.8–1.2 s; the 2 declarations ~136 input tokens per request. **Worth knowing for D1:** with tools declared the model already skips the tool for "hi", so the router's smalltalk shortcut saves the declarations and guarantees no search, not a generate call; the router's real value is the quiz path (0 generate calls) and a deterministic, logged decision. `tsc --noEmit` clean. |
 | AG.1 | | | |
 | AG.2 | | | |
 | AG.3 | | | |
@@ -404,7 +404,7 @@ export type TurnEvent = { type: 'text'; text: string }
 
 // Yields text as it streams; RETURNS the model's whole turn (parts kept as received).
 export async function* streamTurn(req: {
-  systemInstruction: string; contents: Content[]; tools?: unknown[]; mode?: 'AUTO' | 'NONE'
+  systemInstruction: string; contents: Content[]; tools?: unknown[]   // tools omitted = the model can only answer (AG.0)
 }): AsyncGenerator<TurnEvent, Content> {
   // same fetch + reader + \r\n normalisation + blank-line split as streamAnswer()
   // for each SSE event: for each part in candidates[0].content.parts:
@@ -451,7 +451,7 @@ export async function* runAgent(input): AsyncGenerator<AgentEvent, AgentResult> 
   let answer = ''
   for (let stepNo = 1; stepNo <= AGENT_MAX_STEPS; stepNo++) {
     const turn = yield* streamTurn({ systemInstruction, contents, tools: tools.declarations,
-                                     mode: stepNo === AGENT_MAX_STEPS ? 'NONE' : 'AUTO' })
+                                     tools: stepNo === AGENT_MAX_STEPS ? undefined : tools.declarations })
     // (yield* forwards the text events and hands back the returned turn)
     contents.push(turn)                                                    // unchanged
     answer += textOf(turn)
@@ -466,7 +466,8 @@ export async function* runAgent(input): AsyncGenerator<AgentEvent, AgentResult> 
     }
     contents.push({ role: 'user', parts: responses })
   }
-  // unreachable: the last step runs with mode NONE
+  // reached only if the last step (sent without tools) STILL returned a function call: don't run it
+  return { answer: answer || "Sorry, I couldn't finish looking that up. Try asking again.", sources: ctx.sources, steps: AGENT_MAX_STEPS }
 }
 ```
 
@@ -492,7 +493,7 @@ export async function routeMessage(message, embedding, history): Promise<{ inten
 
 Same as Phase 6 (background-jobs-plan.md §12): a local test server on a spare port (3099) with `RUN_WORKER=true` and `BULLMQ_PREFIX=docmind-test` (uploads still go through the queue), real Neon + Gemini, throwaway guests via `POST /auth/guest`, a generated PDF with made-up facts so answers are checkable, every id recorded and deleted afterwards (documents, chunks, messages, users, `docmind-test:*` keys). Headless Chromium for the UI (Playwright with `executablePath` to the installed Chromium, see BG.4). Before trusting a test server, check what's listening on the port.
 
-Quota: the AG.1 eval is ~40 classifier calls + 1 batch embed + ~40 embeds; the AG.3 set ~10 questions × 2–3 calls, run twice (baseline + agent). Spread runs out if AI Studio's per-minute limit is low.
+Quota: the AG.1 eval is ~40 classifier calls + 1 batch embed + ~40 embeds; the AG.3 set ~10 questions × 2–3 calls, run twice (baseline + agent). **Flash-Lite is 15 requests/minute on this key** (§13), so every script that calls the model pauses ~5 s between calls (≤ 12/min, leaving room for anything else running). The 40-message classifier eval then takes ~3.5 min instead of seconds; that's fine.
 
 ---
 
@@ -505,7 +506,20 @@ Quota: the AG.1 eval is ~40 classifier calls + 1 batch embed + ~40 embeds; the A
 - **Finish reasons to handle:** `MALFORMED_FUNCTION_CALL`, `UNEXPECTED_TOOL_CALL` (call with no tools enabled), `TOO_MANY_TOOL_CALLS`, **`MISSING_THOUGHT_SIGNATURE`** (a request dropped a signature: why rule 7 exists).
 - **`systemInstruction`** is a top-level request field, text only.
 - **The function-calling guide page now documents the newer Interactions API** (`/v1beta/interactions`, `steps`, `function_call`/`function_result`, `tool_choice`), not `generateContent`. DocMind stays on `generateContent` (what every existing call uses); don't copy field names from that guide. ([function calling guide](https://ai.google.dev/gemini-api/docs/function-calling))
-- **Free-tier rate limits are no longer printed in the docs;** they're shown per project in AI Studio. ([rate limits](https://ai.google.dev/gemini-api/docs/rate-limits)) → Shiv fills in: flash-lite RPM ___ / RPD ___, embedding RPM ___ / RPD ___.
+- **Free-tier rate limits are no longer printed in the docs;** they're shown per project in AI Studio. ([rate limits](https://ai.google.dev/gemini-api/docs/rate-limits)) Read by Shiv on **2026-10-21** (project `DocMind`, free tier, peaks over the last 28 days):
+
+  | Model (AI Studio name) | RPM limit | TPM limit | RPD limit | Peak used (28 days) |
+  |---|---|---|---|---|
+  | **Gemini 3.5 Flash Lite** (what `gemini-flash-lite-latest` points to, by usage: it's the only Flash-Lite row with real traffic; AG.0 confirms with the response's `modelVersion`) | **15** | 250K | **500** | 5 RPM · 11.96K TPM · 31 RPD |
+  | **Gemini Embedding 1** (`gemini-embedding-001`) | 100 | **30K** | 1K | 40 RPM · **25.85K TPM** · 104 RPD |
+  | Gemini 3.1 Flash Lite / 3.8 Flash | 15 / 5 | 250K | 500 / 20 | 1 request each (not used by DocMind) |
+
+  **What it means for Phase 7:**
+  - **The key is shared by every live user.** 15 generate calls/minute is the ceiling for the whole site. Today a document question costs 1 → ~15 questions/min; with the agent it costs 2 (up to 4 worst case) → **~7 questions/min, ~250/day** (500 RPD). Fine for a portfolio app, and it's why `AGENT_MAX_STEPS` stays 3 and the router's LLM fallback is only for close calls.
+  - Chat's embeddings are tiny (one short message, ~20 tokens) and the router's phrase batch is a one-off per process, so Phase 7 barely touches the embedding limits.
+  - The API's model info also says `thinking: true` for `gemini-flash-lite-latest` (checked 2026-10-21), so thought signatures (More_on §25) are expected; AG.0 confirms.
+
+  **Found, not Phase 7: uploads are close to the embedding TPM limit.** The "nearing a rate limit" banner is the embedding row: a peak of 25.85K of 30K tokens/minute (spikes ~Sep 28 and ~Oct 7, so test uploads). The worker embeds one ~500-word chunk (~700 tokens) per call, back to back, so a PDF of roughly 40+ chunks embedded within one minute would cross 30K and get `429`s. The job's retries (5 s → 10 s) fall inside the same minute, so a big PDF could end up `failed`. Possible fix later (not now): BullMQ's worker `limiter` option, or a short pause between chunks. Logged here so it isn't forgotten.
 - **Embeddings (checked 2026-10-20):** `taskType` values for `gemini-embedding-001` are `SEMANTIC_SIMILARITY`, `CLASSIFICATION`, `CLUSTERING`, `RETRIEVAL_DOCUMENT`, `RETRIEVAL_QUERY`, `CODE_RETRIEVAL_QUERY`, `QUESTION_ANSWERING`, `FACT_VERIFICATION`; DocMind sends none and the router must match that (More_on §28). Default output is 3072 dims (normalised). The embeddings guide only shows a `batchEmbedContents` example for `gemini-embedding-2`, so **AG.1 checks that `gemini-embedding-001:batchEmbedContents` works**; fallback = one `getEmbedding` call per phrase (~24 calls once per process). ([embeddings guide](https://ai.google.dev/gemini-api/docs/embeddings))
 - **Thought signatures:** the old thought-signatures page now redirects to the [thinking guide](https://ai.google.dev/gemini-api/docs/thinking#signatures), which is written for the Interactions API; it notes that in `generateContent` signatures can be attached to any part. Hence rule 7: return every part of a model turn unchanged.
-- Still to observe in AG.0 (not in the reference): whether `gemini-flash-lite-latest` returns `thoughtSignature`s and call `id`s, and how a `functionCall` is split across stream chunks.
+- **Observed in AG.0 (2026-10-22, `npm run step6`):** `gemini-flash-lite-latest` = **`gemini-3.5-flash-lite`** (`modelVersion` in every reply). Every model turn carries a **132-char `thoughtSignature`**, on text answers too, even with `thoughtsTokenCount` 0. Function calls carry an **`id`** (`call_193764`). Dropping the signature → **400** with a clear message; a `functionResponse` under the wrong name → **400** "Request contains an invalid argument" (no hint, so always echo the call's `name` and `id`). **`mode: 'NONE'` is not reliable on this model** (ignored 2/2 on a fresh question, respected 1/1 after a tool round); a request with **no `tools`** but a tool round in its history is accepted and answered. The two tool declarations cost **~136 input tokens** per request (298 vs 162 prompt tokens for the same contents with/without tools). Full log: §9 AG.0.

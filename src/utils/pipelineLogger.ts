@@ -16,6 +16,10 @@ const THEMES = {
   // BG.2 — the background ingest worker. Its jobs run in between requests,
   // so they get their own colour to stand out from request traffic.
   queue: chalk.green,
+  // AG.0 — Phase 7's router + agent (tool calls, routing decisions). A
+  // brighter shade of chat's magenta: it's part of a chat request, but its
+  // lines should still stand out from the chat pipeline's own steps.
+  agent: chalk.magentaBright,
 }
 
 type Pipeline = keyof typeof THEMES

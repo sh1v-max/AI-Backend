@@ -155,3 +155,15 @@ export const DOCUMENT_FAILED_MESSAGE = 'This document failed to process. Delete 
 // cause goes to the terminal instead (see utils/errors.ts).
 export const CONNECTION_ERROR_MESSAGE =
   'Could not reach Gemini or the database — check your internet connection and try again.'
+
+// AG.1 — the intent router (agents-plan.md §2.2, decision D1 = hybrid).
+// If the best intent beats the second-best by at least this much cosine
+// similarity, the vector router decides alone (0 extra API calls); closer
+// than that, the LLM classifier decides (1 extra call). PROVISIONAL until
+// `npm run step7` measures it on the labelled set — then the number and the
+// reason go here and in agents-plan.md §9 (AG.1).
+export const ROUTER_MIN_MARGIN = 0.05
+// How many recent messages the LLM classifier sees (2 = the last question and
+// its answer), so "why?" or "and the second one?" can be read in context. It
+// only has to LABEL the message, not answer it, so it doesn't need all 8.
+export const ROUTER_HISTORY_MESSAGES = 2
