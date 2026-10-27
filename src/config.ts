@@ -159,10 +159,13 @@ export const CONNECTION_ERROR_MESSAGE =
 // AG.1 — the intent router (agents-plan.md §2.2, decision D1 = hybrid).
 // If the best intent beats the second-best by at least this much cosine
 // similarity, the vector router decides alone (0 extra API calls); closer
-// than that, the LLM classifier decides (1 extra call). PROVISIONAL until
-// `npm run step7` measures it on the labelled set — then the number and the
-// reason go here and in agents-plan.md §9 (AG.1).
-export const ROUTER_MIN_MARGIN = 0.05
+// than that, the LLM classifier decides (1 extra call). A vector "quiz" always
+// goes to the LLM too (vectorMayDecide in router.service.ts).
+// Picked from `npm run step7` (2026-10-26): the smallest margin where no real
+// question was sent away from the documents. The closest miss was "what's the
+// refund policy?" → smalltalk at 0.020. Picked from only 41 messages: the
+// route is logged on every chat request, so real traffic can move it.
+export const ROUTER_MIN_MARGIN = 0.03
 // How many recent messages the LLM classifier sees (2 = the last question and
 // its answer), so "why?" or "and the second one?" can be read in context. It
 // only has to LABEL the message, not answer it, so it doesn't need all 8.

@@ -47,6 +47,13 @@ export function detail(text: string) {
   console.log(chalk.gray(`      ${text}`))
 }
 
+// AG.2 — a detail line in the agent theme: routing decisions now, tool calls
+// later (AG.3), so "what did the router/agent decide?" stands out from the
+// gray plumbing lines around it.
+export function agentDetail(text: string) {
+  console.log(THEMES.agent(`      ${text}`))
+}
+
 export function timing(ms: number, extra?: string) {
   console.log(chalk.gray('      ') + chalk.yellow(`done in ${ms}ms`) + (extra ? chalk.gray(` — ${extra}`) : ''))
 }

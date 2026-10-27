@@ -205,6 +205,22 @@ export type RouteDecision = {
   errors: string[]
 }
 
+// AG.1 — when may the vector router decide ALONE? Measured with
+// `npm run step7` (agents-plan.md §9 AG.1): vectors match shared WORDS, not
+// intent, and every mistake they made above a 0.03 margin was a quiz offer
+// ("compare the two pdfs" ≈ "quiz me about the pdf", "what is a quiz?" ≈
+// "give me a quiz", even at a 0.141 margin). So the rule is:
+//   - clearly ahead (margin ≥ ROUTER_MIN_MARGIN) AND not a quiz → vectors decide
+//   - a quiz offer from vectors ALWAYS gets the LLM's second opinion: it's the
+//     route that replaces an answer with something else, and real quiz
+//     requests are rare, so checking them is cheap
+// On the 41-message set this gave 0 wrong, with the LLM asked for 18/41 (the
+// plain margin rule needed 0.15 and the LLM on 35/41). Shared with the eval,
+// so the eval always measures exactly the rule that runs live.
+export function vectorMayDecide(route: VectorRoute, minMargin: number = ROUTER_MIN_MARGIN): boolean {
+  return route.margin >= minMargin && route.intent !== 'quiz_request'
+}
+
 // Every path that isn't sure ends at document_question, never at smalltalk:
 // a real question answered as smalltalk gets no search behind it (wrong AND
 // confident), while smalltalk sent down the document path is just today's
@@ -219,7 +235,7 @@ export async function routeMessage(
   let vector: VectorRoute | null = null
   try {
     vector = await routeByVector(messageVector)
-    if (vector.margin >= minMargin) {
+    if (vectorMayDecide(vector, minMargin)) {
       return { intent: vector.intent, by: 'vector', margin: vector.margin, scores: vector.scores, errors }
     }
   } catch (err) {

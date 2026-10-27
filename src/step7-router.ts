@@ -6,6 +6,7 @@ import {
   INTENT_EXAMPLES,
   getExampleVectors,
   routeByVector,
+  vectorMayDecide,
   classifyIntent,
   cosineSimilarity,
   type VectorRoute,
@@ -291,7 +292,9 @@ async function main() {
   confusion('LLM classifier', llmAsRouted)
 
   // 6. The hybrid at every margin, computed from the two runs above
-  pipelineStart('agent', '6. HYBRID SWEEP: vector if its margin ≥ m, otherwise the LLM (no extra calls)')
+  // The live rule (vectorMayDecide): vectors decide alone when their margin
+  // is ≥ m AND they didn't say quiz; everything else goes to the LLM.
+  pipelineStart('agent', '6. HYBRID SWEEP with the live rule: vector if margin ≥ m and not a quiz, otherwise the LLM')
   const tuning = (item: EvalItem) => !item.heldOut
   const heldOut = (item: EvalItem) => !!item.heldOut
   const tuningCount = EVAL.filter(tuning).length
@@ -303,10 +306,10 @@ async function main() {
   const rows: SweepRow[] = []
   for (let step = 0; step <= 20; step++) {
     const m = step / 100
-    const hybrid = EVAL.map((_, k) => (vectorRoutes[k].margin >= m ? vectorRoutes[k].intent : llmAsRouted[k]))
+    const hybrid = EVAL.map((_, k) => (vectorMayDecide(vectorRoutes[k], m) ? vectorRoutes[k].intent : llmAsRouted[k]))
     const row = {
       m,
-      vectorDecides: vectorRoutes.filter((r) => r.margin >= m).length,
+      vectorDecides: vectorRoutes.filter((r) => vectorMayDecide(r, m)).length,
       tune: tally(hybrid, tuning),
       held: tally(hybrid, heldOut),
     }

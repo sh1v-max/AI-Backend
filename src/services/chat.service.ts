@@ -6,6 +6,8 @@ import {
 } from '../repositories/chatMessages.repository'
 import { HISTORY_LIMIT, ALL_DOCUMENTS } from '../config'
 import { checkDocumentReady } from './documents.service'
+import { routeMessage } from './router.service'
+import type { Intent } from '../schemas/intent.schema'
 import {
   pipelineEnd,
   step,
@@ -14,6 +16,7 @@ import {
   preview,
   rejected,
   notFound,
+  agentDetail,
 } from '../utils/pipelineLogger'
 
 // ignore all the logging in this file, like step, detail, timing, preview, rejected, notFound, pipelineEnd — those are just for the console output to help us see how long each step takes and what the intermediate results are. they don't affect the actual chat logic or the returned data.
@@ -73,6 +76,38 @@ export function buildChatPrompt(
   New question: ${message}`
 }
 
+// AG.2 — the prompt for messages the router labelled smalltalk ("hi",
+// "thanks!", "what can you do?"). No document context at all: nothing was
+// searched. What DocMind can do is spelled out so "what can you do?" gets a
+// true answer instead of an invented feature list. The history goes in so a
+// "thanks!" after an answer gets a natural reply.
+export function buildSmalltalkPrompt(
+  history: { role: string; content: string }[],
+  message: string,
+): string {
+  const historyBlock =
+    history.length > 0
+      ? `\n\nConversation so far:\n${history.map((m) => `${m.role}: ${m.content}`).join('\n')}`
+      : ''
+
+  return `You are DocMind, a friendly assistant inside an app where people upload PDF documents and chat with them.
+
+  The user's new message is small talk: a greeting, thanks, a goodbye, or a question about you. Reply briefly and naturally, in one or two sentences. Don't invent anything about their documents.
+
+  What DocMind can do, if it's relevant to mention: answer questions about the user's uploaded PDFs (one document or all of them at once) and show the passages it used, and make a 5-question multiple-choice quiz from a document.${historyBlock}
+
+  New message: ${message}`
+}
+
+// AG.2 — what the router decided, sent to the client too (`route` in /chat's
+// JSON and in /chat-stream's meta event) so it's visible in devtools. The
+// scores stay in the server log; the client doesn't need 3072-dim reasons.
+export type ChatRoute = {
+  intent: Intent
+  by: 'vector' | 'llm' | 'fallback'
+  margin: number | null
+}
+
 // chatPreparation is the return type of prepareChat, which is the function that handles the first 5 steps of the chat pipeline (validate → embed → search → load history → save user message → build prompt). it can either be a success (ok: true) with the documentId, sessionId, sources, and prompt, or a failure (ok: false) with a status code and error message. this type is used to ensure that the caller of prepareChat knows what to expect and can handle both success and failure cases appropriately.
 export type ChatPreparation =
   | { ok: false; status: number; error: string }
@@ -87,11 +122,14 @@ export type ChatPreparation =
         filename: string | null
       }[]
       prompt: string
+      route: ChatRoute
     }
 
-// Steps 1-5 of the chat pipeline (validate → embed → search → load history →
-// save user message → build prompt), identical for /chat and /chat-stream.
-// Only step 6-7 (generate + save the reply) differ between the two routes,
+// Steps 1-6 of the chat pipeline (validate → embed → load history → ROUTE →
+// search → save user message → build prompt), identical for /chat and
+// /chat-stream. AG.2 added the routing step: smalltalk skips the search and
+// gets its own small prompt. Only steps 7-8 (generate + save the reply)
+// differ between the two routes,
 // so those stay in the routes. Returns `ok: false` for the 400/404 cases so
 // the route can send the response — this function never touches `res`.
 //
@@ -134,7 +172,7 @@ export async function prepareChat(
     return { ok: false, status: 400, error: 'message (string) is required' }
   }
 
-  step('chat', 1, 7, 'Request received')
+  step('chat', 1, 8, 'Request received')
   detail(`user:       ${userId.slice(0, 8)}`)
   detail(`sessionId:  ${sessionId}`)
   detail(
@@ -154,7 +192,7 @@ export async function prepareChat(
     }
   }
 
-  step('chat', 2, 7, 'Embedding the question...')
+  step('chat', 2, 8, 'Embedding the question...')
   const embedStart = Date.now()
 
   // getEmbedding returns an array of numbers representing the vector embedding of the input message. this embedding is used to search for similar chunks in the database based on cosine similarity. the timing function logs how long it took to generate the embedding and how many dimensions the resulting vector has.
@@ -164,10 +202,54 @@ export async function prepareChat(
     `vector has ${questionEmbedding.length} dimensions`,
   )
 
+  // AG.2 — history is loaded BEFORE routing now (it used to come after the
+  // search): the router's LLM classifier needs the last question + answer to
+  // read a follow-up like "why?". Still read before this turn's user message
+  // is saved, so it never includes the message being answered.
+  step('chat', 3, 8, `Loading conversation history (last ${HISTORY_LIMIT} messages)...`)
+  const history = await getRecentMessages(sessionId, userId, HISTORY_LIMIT)
+  detail(`${history.length} prior message(s) in this session`)
+
+  // AG.2 — decide what KIND of message this is before doing anything
+  // expensive. The router reuses the embedding from step 2, so the vector
+  // half costs nothing; only a close call (or a vector "quiz") costs one
+  // Flash-Lite call. It never throws: anything broken → document_question,
+  // today's path, with the reason in decision.errors.
+  step('chat', 4, 8, 'Routing the message (vector first, LLM on close calls)...')
+  const routeStart = Date.now()
+  const decision = await routeMessage(message, questionEmbedding, history)
+  const [first, second] = decision.scores
+  agentDetail(
+    `intent: ${decision.intent} · decided by ${decision.by}` +
+      (decision.margin !== null ? ` · margin ${decision.margin.toFixed(3)}` : '') +
+      (first ? ` · best "${first.bestExample}" ${first.score.toFixed(3)}` : '') +
+      (second ? ` · 2nd ${second.intent} ${second.score.toFixed(3)}` : ''),
+  )
+  timing(Date.now() - routeStart, decision.by === 'vector' ? '0 API calls' : '1 classifier call')
+  // a routing problem must never break the chat, but it mustn't be silent
+  decision.errors.forEach((e) => console.error(`[router] ${e}`))
+  const route: ChatRoute = { intent: decision.intent, by: decision.by, margin: decision.margin }
+
+  // Smalltalk: no search, no chunks, no 404 for a user with no documents
+  // ("hi" from a brand-new guest used to hit "No documents are ready yet").
+  if (decision.intent === 'smalltalk') {
+    step('chat', 5, 8, 'Skipping the search (smalltalk needs no documents)')
+    await insertMessage(sessionId, userId, documentId, 'user', message)
+    const prompt = buildSmalltalkPrompt(history, message)
+    step('chat', 6, 8, `Built smalltalk prompt — ${prompt.length} characters`)
+    return { ok: true, documentId, sessionId, sources: [], prompt, route }
+  }
+
+  // quiz_request gets its own path in AG.5 (a quiz offer + a button). Until
+  // then it's answered like a document question, i.e. exactly as before.
+  if (decision.intent === 'quiz_request') {
+    detail('quiz_request: answered as a document question until AG.5')
+  }
+
   step(
     'chat',
-    3,
-    7,
+    5,
+    8,
     searchAll
       ? "Searching stored chunks (across ALL of this user's documents, top 3 by cosine distance)..."
       : 'Searching stored chunks (scoped to this documentId, top 3 by cosine distance)...',
@@ -207,17 +289,6 @@ export async function prepareChat(
     preview(`#${i + 1} distance=${c.distance.toFixed(4)}${from}`, c.content)
   })
 
-  step(
-    'chat',
-    4,
-    7,
-    `Loading conversation history (last ${HISTORY_LIMIT} messages)...`,
-  )
-
-  // Get the most recent messages from this session
-  const history = await getRecentMessages(sessionId, userId, HISTORY_LIMIT)
-  detail(`${history.length} prior message(s) in this session`)
-
   // Saved *before* generating, so history for the *next* turn already
   // includes this one — but built into *this* turn's prompt from the
   // `history` pulled a moment ago, not including the message being answered.
@@ -233,7 +304,7 @@ export async function prepareChat(
     )
     .join('\n\n')
   const prompt = buildChatPrompt(context, history, message, searchAll)
-  step('chat', 5, 7, `Built prompt — ${prompt.length} characters`)
+  step('chat', 6, 8, `Built prompt — ${prompt.length} characters`)
 
   return {
     ok: true,
@@ -246,5 +317,6 @@ export async function prepareChat(
       filename: c.filename,
     })),
     prompt,
+    route,
   }
 }
