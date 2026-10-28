@@ -160,7 +160,9 @@ export const CONNECTION_ERROR_MESSAGE =
 // If the best intent beats the second-best by at least this much cosine
 // similarity, the vector router decides alone (0 extra API calls); closer
 // than that, the LLM classifier decides (1 extra call). A vector "quiz" always
-// goes to the LLM too (vectorMayDecide in router.service.ts).
+// goes to the LLM too, and since 2026-10-28 a vector "document question" is
+// accepted at any margin, so in practice this margin only guards SMALLTALK,
+// the one route that skips the search (vectorMayDecide in router.service.ts).
 // Picked from `npm run step7` (2026-10-26): the smallest margin where no real
 // question was sent away from the documents. The closest miss was "what's the
 // refund policy?" → smalltalk at 0.020. Picked from only 41 messages: the

@@ -217,8 +217,24 @@ export type RouteDecision = {
 // On the 41-message set this gave 0 wrong, with the LLM asked for 18/41 (the
 // plain margin rule needed 0.15 and the LLM on 35/41). Shared with the eval,
 // so the eval always measures exactly the rule that runs live.
+//
+// AG.2 follow-up (2026-10-28) — a vector document_question is accepted at ANY
+// margin. Many real questions ("who wrote it?", "why?", "thanks, now what does
+// page 3 say?") are vector-doc by a hair (0.002–0.022), and each of those used
+// to cost an LLM call (out of 500/day, shared with the agent loop; median 9 s
+// in the 52-message eval) for a question that was about the document anyway.
+// On the eval: LLM calls 24/52 → 17/52, still 0 wrong. "Document" is the safe
+// answer anyway:
+// smalltalk sent down the document path just gets a document-flavoured reply,
+// while a question sent to smalltalk gets NO search (the costly mistake).
+// So the margin now only guards the one route that skips the search:
+//   - vector says quiz_request      → always ask the LLM
+//   - vector says document_question → decide, whatever the margin
+//   - vector says smalltalk         → decide only when clearly ahead
 export function vectorMayDecide(route: VectorRoute, minMargin: number = ROUTER_MIN_MARGIN): boolean {
-  return route.margin >= minMargin && route.intent !== 'quiz_request'
+  if (route.intent === 'quiz_request') return false
+  if (route.intent === 'document_question') return true
+  return route.margin >= minMargin
 }
 
 // Every path that isn't sure ends at document_question, never at smalltalk:

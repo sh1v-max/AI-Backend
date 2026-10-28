@@ -19,8 +19,8 @@ import { ROUTER_MIN_MARGIN } from './config'
 //
 // Run:
 //   npm run step7           everything: vector router + LLM classifier on all
-//                           41 messages, then the hybrid at every margin
-//                           (~3 embedding calls + 41 Flash-Lite calls, ~4.5 min)
+//                           52 messages, then the hybrid at every margin
+//                           (~3 embedding calls + 52 Flash-Lite calls, ~6 min)
 //   npm run step7 vector    only the vector router (3 embedding calls, seconds):
 //                           for trying out different example phrases cheaply
 //
@@ -107,6 +107,24 @@ const EVAL: EvalItem[] = [
   { group: 'trap', message: 'thanks, now what does page 3 say?', expect: 'document_question' },
   { group: 'trap', message: "no need for a test, what's the main argument?", expect: 'document_question', heldOut: true },
   { group: 'trap', message: 'hello! what does chapter 4 cover?', expect: 'document_question', heldOut: true },
+  // AG.2 follow-up — SPECIFIC questions, like the ones real users type (the
+  // first two are from the live AG.2 test). They share almost no words with
+  // the generic example phrases, so their margins are tiny: this is the group
+  // the "vector document_question at any margin" rule is for.
+  { group: 'specific', message: 'When was the lighthouse built, and by whom?', expect: 'document_question' },
+  { group: 'specific', message: 'How much does a week pass on the ferry cost?', expect: 'document_question' },
+  { group: 'specific', message: 'what fuel did the lamp burn before 1921?', expect: 'document_question' },
+  { group: 'specific', message: 'do kids ride the ferry for free?', expect: 'document_question' },
+  { group: 'specific', message: 'when did the Lantern Festival start?', expect: 'document_question', heldOut: true },
+  { group: 'specific', message: 'who approves the probation period?', expect: 'document_question', heldOut: true },
+  // quiz requests that SOUND like document questions: under the new rule a
+  // vector "doc" on these is accepted, so this is where it could miss a quiz
+  { group: 'quiz', message: 'can you test what I know about this?', expect: 'quiz_request' },
+  { group: 'quiz', message: 'ask me 3 questions about the ferry section to check I understood it', expect: 'quiz_request' },
+  { group: 'quiz', message: 'I have an exam on this tomorrow, help me practise', expect: ['quiz_request', 'document_question'], heldOut: true },
+  // smalltalk that sounds a bit like a request
+  { group: 'smalltalk', message: 'that was really helpful, thank you', expect: 'smalltalk' },
+  { group: 'smalltalk', message: 'nice to meet you', expect: 'smalltalk', heldOut: true },
 ]
 
 // ── Judging ─────────────────────────────────────────────────────────────────
@@ -195,7 +213,7 @@ async function main() {
       chalk.yellow(`  in ${Date.now() - started} ms`),
   )
 
-  // 2. The 41 eval messages, also in one batch call
+  // 2. The eval messages, also in one batch call
   pipelineStart('agent', `2. EMBEDDING THE ${EVAL.length} EVAL MESSAGES (one batch call)`)
   started = Date.now()
   const vectors = await getEmbeddings(EVAL.map((item) => item.message))
@@ -292,9 +310,10 @@ async function main() {
   confusion('LLM classifier', llmAsRouted)
 
   // 6. The hybrid at every margin, computed from the two runs above
-  // The live rule (vectorMayDecide): vectors decide alone when their margin
-  // is ≥ m AND they didn't say quiz; everything else goes to the LLM.
-  pipelineStart('agent', '6. HYBRID SWEEP with the live rule: vector if margin ≥ m and not a quiz, otherwise the LLM')
+  // The live rule (vectorMayDecide): a vector quiz always goes to the LLM, a
+  // vector document_question is always accepted, a vector smalltalk only when
+  // its margin is ≥ m. So m only moves the smalltalk decisions now.
+  pipelineStart('agent', '6. HYBRID SWEEP with the live rule: vector doc always, vector smalltalk if margin ≥ m, vector quiz → LLM')
   const tuning = (item: EvalItem) => !item.heldOut
   const heldOut = (item: EvalItem) => !!item.heldOut
   const tuningCount = EVAL.filter(tuning).length
