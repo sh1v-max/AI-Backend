@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DocMind post 14 images</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+  /* Same look as post13-images/source.html, so the series reads as one. */
+  :root {
+    --bg: #f7f8f7;
+    --surface: #ffffff;
+    --ink: #18181b;
+    --muted: #5f5f68;
+    --border: #e2e8e3;
+    --accent: #16a34a;
+    --accent-dark: #15803d;
+    --accent-bg: #f0fdf4;
+    --red: #dc2626;
+    --red-bg: #fef2f2;
+    --amber: #b45309;
+    --amber-bg: #fffbeb;
+    --slate: #475569;
+    --slate-bg: #f1f5f9;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #ccc; font-family: 'DM Sans', sans-serif; color: var(--ink); }
+  body.single { background: var(--bg); }
+  body.single .slide { margin-bottom: 0; }
+  .slide {
+    width: 1200px; height: 675px; position: relative; overflow: hidden;
+    background: var(--bg);
+    background-image: radial-gradient(circle, #dfe5e0 1px, transparent 1px);
+    background-size: 24px 24px;
+    padding: 44px 56px 40px;
+    display: flex; flex-direction: column;
+    margin-bottom: 20px;
+  }
+  .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-family: 'Space Grotesk'; font-weight: 600; font-size: 20px; }
+  .mark { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; color: #fff; font-size: 17px; }
+  .brand .sub { color: var(--muted); font-weight: 500; }
+  .badge { font-family: 'Space Grotesk'; font-weight: 700; font-size: 18px; padding: 6px 14px; border-radius: 999px; background: var(--ink); color: #fff; }
+  h1 { font-family: 'Space Grotesk'; font-weight: 700; font-size: 42px; line-height: 1.1; letter-spacing: -0.5px; }
+  h1 .hl-red { color: var(--red); }
+  h1 .hl-green { color: var(--accent); }
+  .lead { font-size: 21px; color: var(--muted); margin-top: 10px; }
+  .stage { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .box {
+    background: var(--surface); border: 2px solid var(--border); border-radius: 14px;
+    padding: 11px 15px; font-weight: 500; font-size: 18px; text-align: center; white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+  }
+  .box small { display: block; font-size: 14px; color: var(--muted); font-weight: 400; margin-top: 2px; }
+  .box.red { border-color: #fca5a5; background: var(--red-bg); }
+  .box.green { border-color: #86efac; background: var(--accent-bg); }
+  .box.dark { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .box.dark small { color: #b7b7c0; }
+  .box.skipped { opacity: 0.45; border-style: dashed; text-decoration: line-through; box-shadow: none; }
+  .arrow { color: var(--muted); font-size: 24px; font-weight: 700; }
+  .arrow.green { color: var(--accent); }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .note { font-size: 17px; color: var(--muted); }
+  .chip { display: inline-flex; align-items: center; gap: 8px; padding: 7px 13px; border-radius: 10px; font-size: 17px; font-weight: 500; white-space: nowrap; }
+  .chip.red { background: var(--red-bg); color: var(--red); border: 1px solid #fecaca; }
+  .chip.green { background: var(--accent-bg); color: var(--accent-dark); border: 1px solid #bbf7d0; }
+  .chip.amber { background: var(--amber-bg); color: var(--amber); border: 1px solid #fde68a; }
+  .chip.slate { background: var(--slate-bg); color: var(--slate); border: 1px solid #cbd5e1; }
+  .foot { display: flex; justify-content: space-between; align-items: center; font-size: 16px; color: var(--muted); margin-top: 8px; }
+
+  /* lanes (slide 1) */
+  .lane { position: relative; background: rgba(255,255,255,0.75); border: 2px dashed var(--border); border-radius: 18px; padding: 18px 18px 16px; }
+  .lane + .lane { margin-top: 24px; }
+  #s1 .stage { justify-content: flex-start; margin-top: 30px; }
+  .lane-label { position: absolute; top: -13px; left: 18px; background: var(--bg); padding: 0 8px; font-family: 'Space Grotesk'; font-weight: 700; font-size: 16px; letter-spacing: 0.5px; text-transform: uppercase; }
+  .lane.before .lane-label { color: var(--red); }
+  .lane.after .lane-label { color: var(--accent-dark); }
+  .msg { background: var(--ink); color: #fff; border-radius: 14px 14px 4px 14px; padding: 10px 16px; font-size: 19px; font-weight: 500; white-space: nowrap; }
+  .lane-chips { display: flex; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+  .sub-row { margin-top: 12px; }
+
+  /* slide 2: the close call */
+  .s2 { display: grid; grid-template-columns: 1.05fr 1fr; gap: 22px; }
+  .card { background: var(--surface); border: 2px solid var(--border); border-radius: 18px; padding: 20px 22px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+  .card h2 { font-family: 'Space Grotesk'; font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  .card .cap { font-size: 16px; color: var(--muted); margin-bottom: 14px; }
+  .q { background: var(--ink); color: #fff; border-radius: 14px 14px 4px 14px; padding: 10px 14px; font-size: 18px; font-weight: 500; margin-bottom: 16px; display: inline-block; }
+  .scores { display: flex; flex-direction: column; gap: 10px; position: relative; }
+  .srow { display: grid; grid-template-columns: 110px 1fr 58px; align-items: center; gap: 10px; font-size: 16px; }
+  .srow .lbl { font-family: 'JetBrains Mono'; font-size: 14px; color: var(--muted); }
+  .track { height: 30px; border-radius: 8px; background: #f1f2f1; position: relative; overflow: hidden; }
+  .fill { height: 100%; border-radius: 8px; display: flex; align-items: center; padding-left: 10px; font-size: 13px; color: #fff; white-space: nowrap; font-weight: 500; }
+  .fill.slate { background: #64748b; }
+  .fill.green { background: var(--accent); }
+  .fill.amber { background: #d6a54a; }
+  .srow .num { font-family: 'JetBrains Mono'; font-weight: 700; font-size: 16px; text-align: right; }
+  .margin-box { margin-top: 14px; display: flex; align-items: center; gap: 10px; }
+  .flow { display: flex; flex-direction: column; gap: 8px; }
+  .fstep { display: flex; align-items: center; gap: 12px; font-size: 17px; }
+  .fstep .dot { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 14px; color: #fff; flex-shrink: 0; }
+  .dot.amber { background: #d97706; } .dot.ink { background: var(--ink); } .dot.green { background: var(--accent); }
+  .json { background: #1f2024; color: #e4e4e7; border-radius: 10px; padding: 9px 13px; font-size: 15px; }
+  .json .k { color: #93c5fd; } .json .v { color: #86efac; }
+  .answer { background: var(--accent-bg); border: 1px solid #bbf7d0; border-radius: 12px; padding: 10px 14px; font-size: 17px; }
+  .answer small { display: block; color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .rule { margin-top: 16px; gap: 14px !important; background: var(--surface); border: 2px solid var(--border); border-radius: 14px; padding: 12px 18px; display: flex; gap: 22px; align-items: center; font-size: 16px; }
+  .rule b { font-family: 'Space Grotesk'; font-size: 17px; white-space: nowrap; }
+  .rule span { white-space: nowrap; font-size: 15px; }
+  .rule .sep { color: #c4c9c5; }
+
+  /* slide 3: numbers */
+  .cards { display: grid; grid-template-columns: 1.1fr 1fr; gap: 22px; }
+  .acc { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; }
+  .arow { display: grid; grid-template-columns: 140px 1fr; align-items: center; gap: 12px; font-size: 17px; font-weight: 500; }
+  .arow .track { height: 38px; }
+  .arow .fill { font-size: 17px; font-weight: 700; padding-left: 12px; }
+  .miss { display: flex; flex-direction: column; gap: 6px; }
+  .miss div { font-size: 15px; color: var(--muted); }
+  .miss .mono { font-size: 14px; color: var(--ink); }
+  .big { font-family: 'Space Grotesk'; font-weight: 700; font-size: 50px; line-height: 1; }
+  .big.amber { color: var(--amber); }
+  .big.green { color: var(--accent-dark); }
+  .final { margin-top: 18px; background: var(--ink); color: #fff; border-radius: 16px; padding: 16px 22px; display: flex; align-items: center; justify-content: space-between; }
+  .final .t { font-family: 'Space Grotesk'; font-weight: 700; font-size: 20px; }
+  .final .stats { display: flex; gap: 28px; align-items: baseline; }
+  .final .stats span { font-size: 16px; color: #c7c7cf; }
+  .final .stats b { font-family: 'Space Grotesk'; font-size: 30px; color: #86efac; margin-right: 6px; }
+</style>
+</head>
+<body>
+
+<!-- ================= 1/3 BEFORE / AFTER ================= -->
+<section class="slide" id="s1">
+  <div class="top">
+    <div class="brand"><div class="mark">✦</div>DocMind <span class="sub">· agents, part 1</span></div>
+    <div class="badge">1 / 3 · the problem</div>
+  </div>
+  <h1>My chat <span class="hl-red">searched the PDFs</span> when you said hi</h1>
+  <p class="lead">Now a router checks what kind of message it is first.</p>
+
+  <div class="stage">
+    <div class="lane before">
+      <div class="lane-label">before: every message, same pipeline</div>
+      <div class="row">
+        <div class="msg">"hi"</div>
+        <div class="arrow">→</div>
+        <div class="box">embed</div>
+        <div class="arrow">→</div>
+        <div class="box red">vector search<small>all your PDFs</small></div>
+        <div class="arrow">→</div>
+        <div class="box red">top 3 chunks<small>into the prompt</small></div>
+        <div class="arrow">→</div>
+        <div class="box">answer</div>
+        <span class="chip red" style="margin-left:8px">no PDFs yet? → 404</span>
+      </div>
+    </div>
+
+    <div class="lane after">
+      <div class="lane-label">after: decide first</div>
+      <div class="row">
+        <div class="msg">"hi"</div>
+        <div class="arrow green">→</div>
+        <div class="box">embed</div>
+        <div class="arrow green">→</div>
+        <div class="box dark">router<small>smalltalk</small></div>
+        <div class="arrow green">→</div>
+        <div class="box skipped">vector search</div>
+        <div class="arrow green">→</div>
+        <div class="box green">short reply</div>
+      </div>
+      <div class="row sub-row">
+        <div class="msg">"what does it say about X?"</div>
+        <div class="arrow green">→</div>
+        <div class="box dark">router<small>document_question</small></div>
+        <div class="arrow green">→</div>
+        <div class="box">search + answer<small>same as before</small></div>
+      </div>
+      <div class="lane-chips">
+        <span class="chip green">✓ small talk: no search</span>
+        <span class="chip green">✓ "hi" with 0 PDFs gets a reply, not a 404</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot"><span class="mono" style="font-size:15px">intents: smalltalk · document_question · quiz_request</span><span>live in both chat routes</span></div>
+</section>
+
+<!-- ================= 2/3 THE CLOSE CALL ================= -->
+<section class="slide" id="s2">
+  <div class="top">
+    <div class="brand"><div class="mark">✦</div>DocMind <span class="sub">· agents, part 1</span></div>
+    <div class="badge">2 / 3 · the close call</div>
+  </div>
+  <h1>To embeddings, a real question <span class="hl-red">looked like small talk</span></h1>
+
+  <div class="stage">
+    <div class="s2">
+      <div class="card">
+        <h2>Step 1: cheap vector check</h2>
+        <p class="cap">compared with 28 example phrases · 0 extra API calls</p>
+        <div class="q">"When was the lighthouse built, and by whom?"</div>
+        <div class="scores">
+          <div class="srow"><span class="lbl">smalltalk</span><div class="track"><div class="fill slate" style="width:86%">best: "what's your name?"</div></div><span class="num">≈0.52</span></div>
+          <div class="srow"><span class="lbl">document</span><div class="track"><div class="fill green" style="width:84%"></div></div><span class="num">≈0.51</span></div>
+          <div class="srow"><span class="lbl">quiz</span><div class="track"><div class="fill amber" style="width:66%"></div></div><span class="num"></span></div>
+        </div>
+        <div class="margin-box">
+          <span class="chip amber">margin under 0.03 → too close to trust</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Step 2: only then, ask the LLM</h2>
+        <p class="cap">Gemini Flash-Lite, JSON mode, reply checked with Zod</p>
+        <div class="flow">
+          <div class="fstep"><span class="dot amber">?</span><span>"which intent is this?"</span></div>
+          <div class="fstep"><span class="dot ink">✓</span><div class="json mono"><span class="k">{ "intent"</span>: <span class="v">"document_question"</span> <span class="k">}</span></div></div>
+          <div class="fstep"><span class="dot green">→</span><span>vector search runs as usual</span></div>
+          <div class="answer">"built in 1874 by the engineer Orla Vantris"<small>from a made-up test PDF, with its source passage</small></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="rule">
+      <b>the rule</b>
+      <span>vectors alone: <span class="mono" style="font-size:14px">document_question</span>, or <span class="mono" style="font-size:14px">smalltalk</span> if margin ≥ 0.03</span>
+      <span class="sep">|</span>
+      <span>quiz → always the LLM</span>
+      <span class="sep">|</span>
+      <span>unsure → <span class="mono" style="font-size:14px">document_question</span></span>
+    </div>
+  </div>
+
+  <div class="foot"><span>specific questions are far from every generic example phrase, so they score about the same on all of them</span><span>scores ≈, from live tests</span></div>
+</section>
+
+<!-- ================= 3/3 NUMBERS ================= -->
+<section class="slide" id="s3">
+  <div class="top">
+    <div class="brand"><div class="mark">✦</div>DocMind <span class="sub">· agents, part 1</span></div>
+    <div class="badge">3 / 3 · what I measured</div>
+  </div>
+  <h1>The LLM was always right. <span class="hl-green">I made it the backup.</span></h1>
+
+  <div class="stage">
+    <div class="cards">
+      <div class="card">
+        <h2>Who sorted messages right?</h2>
+        <p class="cap">41 labelled test messages</p>
+        <div class="acc">
+          <div class="arow"><span>vectors alone</span><div class="track"><div class="fill slate" style="width:87.8%">36 / 41</div></div></div>
+          <div class="arow"><span>LLM alone</span><div class="track"><div class="fill green" style="width:100%">41 / 41</div></div></div>
+        </div>
+        <div class="miss">
+          <div>vectors match words, not intent:</div>
+          <div><span class="mono">"how many chapters are there?"</span> → quiz <span style="font-size:14px">(near "…quiz on chapter 2")</span></div>
+          <div><span class="mono">"give an example"</span> → quiz <span style="font-size:14px">(near "give me a quiz")</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>But the LLM is slow</h2>
+        <p class="cap">and it's one more call on the free tier</p>
+        <div style="display:flex;align-items:baseline;gap:12px">
+          <span class="big amber">6–22 s</span><span class="note">on ~half its calls, one run</span>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:12px;margin-top:16px">
+          <span class="big green">0</span><span class="note">extra API calls for the vector check<br>(the message is already embedded for search)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="final">
+      <span class="t">Final rule, 52 test messages</span>
+      <div class="stats">
+        <span><b>0</b>bad mistakes</span>
+        <span><b>17 / 52</b>needed the LLM</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot"><span>Gemini embeddings · Flash-Lite · Zod</span><span>next: the agent loop (the model calls a search tool itself)</span></div>
+</section>
+
+<script>
+  // ?s=1|2|3 shows one slide alone, for rendering it to a PNG.
+  const n = new URLSearchParams(location.search).get('s')
+  if (n) {
+    document.body.classList.add('single')
+    document.querySelectorAll('.slide').forEach((el) => { if (el.id !== 's' + n) el.remove() })
+  }
+</script>
+</body>
+</html>
