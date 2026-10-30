@@ -8,6 +8,8 @@ import { HISTORY_LIMIT, ALL_DOCUMENTS } from '../config'
 import { checkDocumentReady } from './documents.service'
 import { routeMessage } from './router.service'
 import type { Intent } from '../schemas/intent.schema'
+import type { AgentInput } from './agent.service'
+import { listDocuments } from '../repositories/documents.repository'
 import {
   pipelineEnd,
   step,
@@ -94,6 +96,8 @@ export function buildSmalltalkPrompt(
 
   The user's new message is small talk: a greeting, thanks, a goodbye, or a question about you. Reply briefly and naturally, in one or two sentences. Don't invent anything about their documents.
 
+  If the message is actually a general-knowledge or factual question (geography, history, science, trivia…), don't answer it: say briefly that you only answer from the user's documents, and invite them to ask about one.
+
   What DocMind can do, if it's relevant to mention: answer questions about the user's uploaded PDFs (one document or all of them at once) and show the passages it used, and make a 5-question multiple-choice quiz from a document.${historyBlock}
 
   New message: ${message}`
@@ -109,10 +113,26 @@ export type ChatRoute = {
 }
 
 // chatPreparation is the return type of prepareChat, which is the function that handles the first 5 steps of the chat pipeline (validate → embed → search → load history → save user message → build prompt). it can either be a success (ok: true) with the documentId, sessionId, sources, and prompt, or a failure (ok: false) with a status code and error message. this type is used to ensure that the caller of prepareChat knows what to expect and can handle both success and failure cases appropriately.
+type ChatFailure = { ok: false; status: number; error: string }
+
+// AG.3 — a document question on the agent path: no prompt yet (the agent
+// builds turns + a system instruction itself), just what the loop needs.
+export type AgentPreparation = {
+  ok: true
+  kind: 'agent'
+  documentId: string
+  sessionId: string
+  route: ChatRoute
+  agentInput: AgentInput
+}
+
 export type ChatPreparation =
-  | { ok: false; status: number; error: string }
+  | ChatFailure
   | {
       ok: true
+      // AG.3 — 'prompt' = the classic path: a finished prompt string to
+      // generate from (smalltalk, and everything on /chat-stream until AG.4)
+      kind: 'prompt'
       documentId: string
       sessionId: string
       sources: {
@@ -145,11 +165,25 @@ export type ChatPreparation =
 // req.user.id). It's a plain string, not `unknown` like the other inputs,
 // because it isn't client input: requireAuth already proved it. It scopes the
 // search, the history and the saved message to this one user.
+//
+// AG.3 — `mode`: 'prompt' (default) is the path above for every message.
+// 'agent' (POST /chat) keeps steps 1-4 and smalltalk the same, but a document
+// question skips the fixed search and comes back as kind: 'agent' for
+// runAgent(). These two signatures are TypeScript OVERLOADS: callers that
+// don't pass mode: 'agent' (/chat-stream) get a type that can only be
+// 'prompt', so they read prep.prompt without any extra check.
+type ChatInput = { documentId: unknown; message: unknown; sessionId: string; userId: string }
+export async function prepareChat(input: ChatInput & { mode?: 'prompt' }, t0: number): Promise<ChatPreparation>
 export async function prepareChat(
-  input: { documentId: unknown; message: unknown; sessionId: string; userId: string },
+  input: ChatInput & { mode: 'agent' },
   t0: number,
-): Promise<ChatPreparation> {
+): Promise<ChatPreparation | AgentPreparation>
+export async function prepareChat(
+  input: ChatInput & { mode?: 'prompt' | 'agent' },
+  t0: number,
+): Promise<ChatPreparation | AgentPreparation> {
   const { message, sessionId, userId } = input
+  const agentMode = input.mode === 'agent'
 
   // validating documentId
   // Absent/empty = "all documents". Anything present that isn't a string
@@ -184,12 +218,15 @@ export async function prepareChat(
   // the question is embedded (no Gemini call for a request that can't
   // succeed). "All documents" needs no check: searchSimilar only searches
   // ready documents, so a processing one is just left out.
+  // AG.3 — the agent's system instruction names the document
+  let filename: string | null = null
   if (!searchAll) {
     const readiness = await checkDocumentReady(documentId, userId)
     if (!readiness.ok) {
       pipelineEnd('chat', Date.now() - t0)
       return readiness
     }
+    filename = readiness.filename
   }
 
   step('chat', 2, 8, 'Embedding the question...')
@@ -237,13 +274,51 @@ export async function prepareChat(
     await insertMessage(sessionId, userId, documentId, 'user', message)
     const prompt = buildSmalltalkPrompt(history, message)
     step('chat', 6, 8, `Built smalltalk prompt — ${prompt.length} characters`)
-    return { ok: true, documentId, sessionId, sources: [], prompt, route }
+    return { ok: true, kind: 'prompt', documentId, sessionId, sources: [], prompt, route }
   }
 
   // quiz_request gets its own path in AG.5 (a quiz offer + a button). Until
   // then it's answered like a document question, i.e. exactly as before.
   if (decision.intent === 'quiz_request') {
     detail('quiz_request: answered as a document question until AG.5')
+  }
+
+  // AG.3 — the agent path: no fixed search here. The agent decides what to
+  // search (and how often), so steps 5-6 only save the message and hand over.
+  if (agentMode) {
+    // "All documents" with nothing ready: today's 404, before any Gemini call
+    // (the agent would only spend calls finding nothing). One document was
+    // already checked above by checkDocumentReady.
+    if (searchAll) {
+      const docs = await listDocuments(userId)
+      if (!docs.some((d) => d.status === 'ready')) {
+        notFound('No ready documents for this user')
+        pipelineEnd('chat', Date.now() - t0)
+        return {
+          ok: false,
+          status: 404,
+          error: 'No documents are ready yet. Upload a PDF, or wait for one to finish processing.',
+        }
+      }
+    }
+    step('chat', 5, 8, 'Skipping the fixed top-3 search: the agent decides what to search')
+    await insertMessage(sessionId, userId, documentId, 'user', message)
+    step('chat', 6, 8, `Handing over to the agent (${history.length} history message(s) become real turns)`)
+    return {
+      ok: true,
+      kind: 'agent',
+      documentId,
+      sessionId,
+      route,
+      agentInput: {
+        message,
+        history,
+        userId,
+        documentId: searchAll ? undefined : documentId,
+        filename,
+        messageEmbedding: questionEmbedding,
+      },
+    }
   }
 
   step(
@@ -308,6 +383,7 @@ export async function prepareChat(
 
   return {
     ok: true,
+    kind: 'prompt',
     documentId,
     sessionId,
     sources: relevantChunks.map((c) => ({

@@ -20,7 +20,7 @@ import { notFound, rejected } from '../utils/pipelineLogger'
 export async function checkDocumentReady(
   documentId: string,
   userId: string,
-): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+): Promise<{ ok: true; filename: string } | { ok: false; status: number; error: string }> {
   const document = await getDocumentForUser(documentId, userId)
 
   if (!document) {
@@ -35,5 +35,8 @@ export async function checkDocumentReady(
     rejected(`"${document.filename}" failed to process`)
     return { ok: false, status: 409, error: DOCUMENT_FAILED_MESSAGE }
   }
-  return { ok: true }
+  // AG.3 — the filename comes along: the agent's system instruction names the
+  // document ("this conversation is about velmora_guide.pdf"). Same row, so no
+  // extra query.
+  return { ok: true, filename: document.filename }
 }

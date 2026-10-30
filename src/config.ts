@@ -172,3 +172,15 @@ export const ROUTER_MIN_MARGIN = 0.03
 // its answer), so "why?" or "and the second one?" can be read in context. It
 // only has to LABEL the message, not answer it, so it doesn't need all 8.
 export const ROUTER_HISTORY_MESSAGES = 2
+
+// AG.3 — the agent loop (agents-plan §2.3).
+// At most this many MODEL calls per chat message. Each call can ask for
+// tools; the last one is sent without tools, so it has to answer. 3 = one
+// search, a second search if the first missed or the question had two parts,
+// then the answer. It's also the cost cap: 3 Flash-Lite calls out of 500/day.
+export const AGENT_MAX_STEPS = 3
+// how many chunks one searchDocuments call returns (same as the old pipeline)
+export const SEARCH_TOP_K = 3
+// what the user gets if even the last step comes back with a tool call
+// instead of text (code never runs a call on the last step)
+export const AGENT_GAVE_UP_MESSAGE = "Sorry, I couldn't finish looking that up. Try asking again, maybe in other words."

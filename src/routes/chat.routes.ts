@@ -2,6 +2,9 @@ import { Router } from 'express'
 import { randomUUID } from 'crypto'
 import { generateAnswer, streamAnswer } from '../services/llm.service'
 import { prepareChat } from '../services/chat.service'
+import { runAgent, type AgentToolCall } from '../services/agent.service'
+import { AGENT_MAX_STEPS } from '../config'
+import type { SimilarChunk } from '../repositories/chunks.repository'
 import { insertMessage } from '../repositories/chatMessages.repository'
 import { withErrorHandling, summarizeError } from '../utils/errors'
 import {
@@ -36,15 +39,35 @@ chatRouter.post(
     pipelineStart('chat', 'POST /chat')
 
     // preparing the chat involves validating the input, embedding the message, searching for relevant chunks, loading conversation history, saving the user message, and building the prompt for the LLM. the prepareChat function handles all these steps and returns a ChatPreparation object that indicates whether the preparation was successful or if there was an error.
-    const prep = await prepareChat({ documentId, message, sessionId, userId }, t0)
+    // AG.3 — mode 'agent': document questions come back as kind 'agent' and
+    // are answered by the tool loop; smalltalk still comes back as a prompt.
+    const prep = await prepareChat({ documentId, message, sessionId, userId, mode: 'agent' }, t0)
     if (!prep.ok) return res.status(prep.status).json({ error: prep.error })
 
-    step('chat', 7, 8, 'Calling the LLM to generate an answer...')
+    let answer: string
+    // same shape either way: { content, distance, documentId, filename }[]
+    let sources: SimilarChunk[]
+    let agent: { steps: number; toolCalls: AgentToolCall[] } | undefined
     const genStart = Date.now()
 
-    // getting the answer from the LLM using the generated prompt. the generateAnswer function sends the prompt to the LLM and returns the generated answer as a string.
-    const answer = await generateAnswer(prep.prompt)
-    timing(Date.now() - genStart)
+    if (prep.kind === 'agent') {
+      step('chat', 7, 8, `Running the agent (up to ${AGENT_MAX_STEPS} model calls, tools: searchDocuments, listDocuments)...`)
+      const result = await runAgent(prep.agentInput)
+      answer = result.answer
+      sources = result.sources
+      agent = { steps: result.steps, toolCalls: result.toolCalls }
+      timing(
+        Date.now() - genStart,
+        `${result.steps} model call(s), ${result.toolCalls.length} tool call(s), ` +
+          `${result.embedCalls} extra embedding call(s), ${result.totalTokens} tokens${result.gaveUp ? ', GAVE UP' : ''}`,
+      )
+    } else {
+      step('chat', 7, 8, 'Calling the LLM to generate an answer...')
+      // getting the answer from the LLM using the generated prompt. the generateAnswer function sends the prompt to the LLM and returns the generated answer as a string.
+      answer = await generateAnswer(prep.prompt)
+      sources = prep.sources
+      timing(Date.now() - genStart)
+    }
     preview('answer', answer, 150)
 
     step('chat', 8, 8, 'Saving assistant reply to history')
@@ -58,9 +81,12 @@ chatRouter.post(
     res.json({
       sessionId,
       answer,
-      sources: prep.sources,
+      sources,
       // AG.2 — what the router decided (additive: old clients ignore it)
       route: prep.route,
+      // AG.3 — what the agent did, for devtools/tests (additive too; absent
+      // for smalltalk, which doesn't run the agent)
+      ...(agent && { agent }),
     })
   }),
 )
