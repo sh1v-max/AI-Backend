@@ -30,7 +30,10 @@ export type ToolResult = Record<string, unknown>
 
 export type Tool = {
   declaration: FunctionDeclaration
-  // shown to the user while it runs (AG.4's `status` event) and in the log
-  statusText: string
+  // AG.4 — what the user sees while it runs (the `status` SSE event). A
+  // function of the model's args, so a search can show WHAT it searches for
+  // (the rewritten query). Must not throw on bad args: it runs before the
+  // tool's own Zod check.
+  statusText: (args: unknown) => string
   run: (args: unknown, ctx: ToolContext) => Promise<ToolResult>
 }

@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { randomUUID } from 'crypto'
 import { generateAnswer, streamAnswer } from '../services/llm.service'
 import { prepareChat } from '../services/chat.service'
-import { runAgent, type AgentToolCall } from '../services/agent.service'
+import { runAgent, streamAgent, type AgentResult, type AgentToolCall } from '../services/agent.service'
 import { AGENT_MAX_STEPS } from '../config'
 import type { SimilarChunk } from '../repositories/chunks.repository'
 import { insertMessage } from '../repositories/chatMessages.repository'
@@ -22,6 +22,14 @@ import {
 // chatRouter.post('/chat-stream'): handles a POST request to /chat-stream for streaming responses
 
 export const chatRouter = Router()
+
+// The agent's summary line in the log, the same for both routes
+function agentSummary(r: AgentResult): string {
+  return (
+    `${r.steps} model call(s), ${r.toolCalls.length} tool call(s), ` +
+    `${r.embedCalls} extra embedding call(s), ${r.totalTokens} tokens${r.gaveUp ? ', GAVE UP' : ''}`
+  )
+}
 
 //* here, 'POST /chat' is the label used in the withErrorHandling function to identify this specific route in the logs. it helps to trace errors back to this route if any issues occur during the request handling.
 //* it's not the actual route path, just a label
@@ -56,11 +64,7 @@ chatRouter.post(
       answer = result.answer
       sources = result.sources
       agent = { steps: result.steps, toolCalls: result.toolCalls }
-      timing(
-        Date.now() - genStart,
-        `${result.steps} model call(s), ${result.toolCalls.length} tool call(s), ` +
-          `${result.embedCalls} extra embedding call(s), ${result.totalTokens} tokens${result.gaveUp ? ', GAVE UP' : ''}`,
-      )
+      timing(Date.now() - genStart, agentSummary(result))
     } else {
       step('chat', 7, 8, 'Calling the LLM to generate an answer...')
       // getting the answer from the LLM using the generated prompt. the generateAnswer function sends the prompt to the LLM and returns the generated answer as a string.
@@ -117,6 +121,7 @@ chatRouter.post(
 // res.json(...)
 
 // Step 3.2 — same pipeline as /chat, but the reply arrives piece by piece.
+// AG.4 — and since then the same AGENT as /chat too, with every step streamed.
 //
 // This used to be GET + query params, because the browser's EventSource (the
 // first client) can only send GET. Since Auth.5 the frontend reads the stream
@@ -145,7 +150,11 @@ chatRouter.post(
       pipelineStart('chat', 'POST /chat-stream')
 
       // preparing chat
-      const prep = await prepareChat({ documentId, message, sessionId, userId }, t0)
+      // AG.4 — mode 'agent', same as /chat: a document question comes back as
+      // kind 'agent' (no fixed search, the agent decides), smalltalk still as
+      // a finished prompt. All the 400/404/409 checks run before this returns,
+      // so they're still plain JSON errors, before the stream opens.
+      const prep = await prepareChat({ documentId, message, sessionId, userId, mode: 'agent' }, t0)
       if (!prep.ok) return res.status(prep.status).json({ error: prep.error })
 
       // writeHead() is called before any data is sent to the client, setting the HTTP status code and headers for the response. in this case, it sets the status code to 200 (OK) and specifies that the content type is "text/event-stream" for server-sent events (SSE). it also includes headers to prevent caching and keep the connection alive, as well as a header to disable buffering by reverse proxies.
@@ -160,43 +169,76 @@ chatRouter.post(
         'X-Accel-Buffering': 'no',
       })
 
+      // One SSE frame. `event` null = the default (unnamed) event, which is
+      // what text pieces use. The blank line (\n\n) ends the frame.
+      const send = (event: string | null, data: unknown) =>
+        res.write(`${event ? `event: ${event}\n` : ''}data: ${JSON.stringify(data)}\n\n`)
+
       // sending the first sse event with the sessionId and sources used for generating the answer. this allows the client to know the sessionId and sources before the actual answer starts streaming in
-      res.write(
-        `event: meta\ndata: ${JSON.stringify({
-          sessionId,
-          sources: prep.sources,
-          // AG.2 — what the router decided. Additive: the frontend's onMeta
-          // reads sessionId + sources and ignores the rest
-          route: prep.route,
-          // \n\n says this event is done
-        })}\n\n`,
-      )
+      send('meta', {
+        sessionId,
+        // AG.4 — always [] on the agent path: nothing has been searched yet.
+        // The real list follows in `sources` events, once the agent searched.
+        // (Kept in meta, empty, so an old frontend still finds the field.)
+        sources: prep.kind === 'agent' ? [] : prep.sources,
+        // AG.2 — what the router decided. Additive: the frontend's onMeta
+        // reads sessionId + sources and ignores the rest
+        route: prep.route,
+      })
 
-      step('chat', 7, 8, 'Streaming the answer from the LLM...')
       const genStart = Date.now()
-
-      // quick note: the streamAnswer() function is an async generator that yields pieces of the answer as they are generated by the LLM. this allows the server to send each piece to the client as soon as it is available, instead of waiting for the entire answer to be generated before sending it.
-      // streaming the answer from the LLM
       let fullAnswer = ''
+      let agentResult: AgentResult | null = null
 
       try {
-        // for await (const piece of streamAnswer(prep.prompt)) iterates over each piece of the answer generated by the LLM. for each piece, it appends it to fullAnswer and sends it to the client as an SSE event with the data field containing the piece of text. this allows the client to display the answer in real-time as it is being generated
-        for await (const piece of streamAnswer(prep.prompt)) {
-          fullAnswer += piece
-          res.write(`data: ${JSON.stringify({ text: piece })}\n\n`)
+        if (prep.kind === 'agent') {
+          // AG.4 — the agent, streamed. streamAgent yields three kinds of
+          // events; each becomes one SSE frame:
+          //   text    → default `data: { text }` (exactly like before, so the
+          //             frontend's answer bubble doesn't know the difference)
+          //   status  → `event: status`  { text }     ("Searching for …")
+          //   sources → `event: sources` { sources }  (cumulative list)
+          // Old frontends have no case for status/sources and ignore them.
+          step('chat', 7, 8, `Running the agent, streaming every step (up to ${AGENT_MAX_STEPS} model calls)...`)
+          const run = streamAgent(prep.agentInput)
+          // .next() by hand: `for await` would throw the generator's RETURN
+          // value (the AgentResult) away
+          let next = await run.next()
+          while (!next.done) {
+            const event = next.value
+            if (event.type === 'text') send(null, { text: event.text })
+            else if (event.type === 'status') send('status', { text: event.text })
+            else send('sources', { sources: event.sources })
+            next = await run.next()
+          }
+          agentResult = next.value
+          // the agent's answer = every piece it streamed (+ the give-up line
+          // if it had to), so it's exactly what the user saw
+          fullAnswer = agentResult.answer
+        } else {
+          step('chat', 7, 8, 'Streaming the answer from the LLM...')
+          // quick note: the streamAnswer() function is an async generator that yields pieces of the answer as they are generated by the LLM. this allows the server to send each piece to the client as soon as it is available, instead of waiting for the entire answer to be generated before sending it.
+          // for await (const piece of streamAnswer(prep.prompt)) iterates over each piece of the answer generated by the LLM. for each piece, it appends it to fullAnswer and sends it to the client as an SSE event with the data field containing the piece of text. this allows the client to display the answer in real-time as it is being generated
+          for await (const piece of streamAnswer(prep.prompt)) {
+            fullAnswer += piece
+            send(null, { text: piece })
+          }
         }
       } catch (err) {
-        res.write(
-          `event: error\ndata: ${JSON.stringify({ error: 'Streaming failed' })}\n\n`,
-        )
+        send('error', { error: 'Streaming failed' })
         res.end()
         console.error(
-          `[POST /chat-stream] streamAnswer failed: ${summarizeError(err)}`,
+          `[POST /chat-stream] ${prep.kind === 'agent' ? 'streamAgent' : 'streamAnswer'} failed: ${summarizeError(err)}`,
         )
         return
       }
 
-      timing(Date.now() - genStart, `${fullAnswer.length} characters total`)
+      timing(
+        Date.now() - genStart,
+        agentResult
+          ? `${agentSummary(agentResult)}, ${fullAnswer.length} characters`
+          : `${fullAnswer.length} characters total`,
+      )
       preview('answer', fullAnswer, 150)
 
       step('chat', 8, 8, 'Saving assistant reply to history')
@@ -210,7 +252,7 @@ chatRouter.post(
         )
       }
 
-      res.write(`event: done\ndata: {}\n\n`)
+      send('done', {})
       res.end()
 
       pipelineEnd('chat', Date.now() - t0)
@@ -229,21 +271,23 @@ chatRouter.post(
 //         ↓
 // Chat handler
 //         ↓
-// prepareChat()
-//    ├── validate input
+// prepareChat({ mode: 'agent' })
+//    ├── validate input (+ 404/409 for one document)
 //    ├── embed the question
-//    ├── search the top 3 relevant chunks
 //    ├── load the last 8 messages (history)
+//    ├── ROUTE it (AG.2): smalltalk or a document question?
 //    ├── save user's question to history
-//    └── build the prompt
+//    └── smalltalk → a finished prompt · document question → the agent's input
 //         ↓   (if !prep.ok → 400/404/409 JSON, stop)
 // res.writeHead(200, text/event-stream)   ← stream opens BEFORE the LLM is called
 //         ↓
-// res.write(event: meta { sessionId, sources })
+// send(meta { sessionId, sources: [] for the agent, route })
 //         ↓
-// for await (piece of streamAnswer(prompt))   ← generating and sending happen together
-//    ├── fullAnswer += piece
-//    └── res.write(data: { text: piece })     ← browser shows text as it arrives
+// smalltalk: for await (piece of streamAnswer(prompt)) → data: { text }
+// document question (AG.4): streamAgent(), up to 3 streamed model calls
+//    ├── the model asks for a tool → event: status { text: "Searching for …" }
+//    ├── code runs it              → event: sources { sources }  (after a search)
+//    └── the model answers         → data: { text } per piece    ← types out live
 //         ↓   (if streaming fails → event: error, res.end(), stop)
 // insertMessage(..., "assistant", fullAnswer)
 //    (if this save fails → only logged, the stream still finishes normally)

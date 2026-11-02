@@ -131,7 +131,10 @@ export type ChatPreparation =
   | {
       ok: true
       // AG.3 — 'prompt' = the classic path: a finished prompt string to
-      // generate from (smalltalk, and everything on /chat-stream until AG.4)
+      // generate from. Since AG.4 both routes use mode 'agent', so in the app
+      // this is only ever smalltalk; a document question comes back as a
+      // prompt only when mode is 'prompt' (the old fixed top-3 pipeline,
+      // still here as the baseline the agent was measured against)
       kind: 'prompt'
       documentId: string
       sessionId: string
@@ -167,11 +170,13 @@ export type ChatPreparation =
 // search, the history and the saved message to this one user.
 //
 // AG.3 — `mode`: 'prompt' (default) is the path above for every message.
-// 'agent' (POST /chat) keeps steps 1-4 and smalltalk the same, but a document
-// question skips the fixed search and comes back as kind: 'agent' for
-// runAgent(). These two signatures are TypeScript OVERLOADS: callers that
-// don't pass mode: 'agent' (/chat-stream) get a type that can only be
-// 'prompt', so they read prep.prompt without any extra check.
+// 'agent' keeps steps 1-4 and smalltalk the same, but a document question
+// skips the fixed search and comes back as kind: 'agent' for the agent loop.
+// Both routes pass 'agent' (POST /chat since AG.3, /chat-stream since AG.4);
+// 'prompt' is kept as the old fixed-search pipeline to compare against.
+// These two signatures are TypeScript OVERLOADS: a caller that doesn't pass
+// mode: 'agent' gets a type that can only be 'prompt', so it reads
+// prep.prompt without any extra check.
 type ChatInput = { documentId: unknown; message: unknown; sessionId: string; userId: string }
 export async function prepareChat(input: ChatInput & { mode?: 'prompt' }, t0: number): Promise<ChatPreparation>
 export async function prepareChat(

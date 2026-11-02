@@ -37,6 +37,10 @@ export function ChatPanel({
   // Streaming has "started" once the assistant bubble has real text in it —
   // until then (retrieval + first token), keep showing the Thinking… bubble.
   const streamingStarted = loading && last?.role === 'assistant' && last.content.length > 0
+  // AG.4 — what the agent is doing ("Searching for …"), shown next to the
+  // dots. Before the first status (routing, the first model call) there's
+  // none and only the dots show; smalltalk never gets one.
+  const status = loading && last?.role === 'assistant' ? last.status : undefined
 
   // Follow the reply as it grows, not just when a new message is added.
   const lastContentLength = last?.content.length ?? 0
@@ -67,6 +71,15 @@ export function ChatPanel({
                 <span />
                 <span />
               </div>
+              {/* the wrapper is role="status", so a screen reader reads each
+                  new line out as it replaces the last one */}
+              {status && (
+                // key = the text: a new status is a new element, so its
+                // fade-in animation plays again
+                <span key={status} className="thinking-status">
+                  {status}
+                </span>
+              )}
             </div>
           )}
 

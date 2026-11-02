@@ -36,7 +36,16 @@ export const searchDocumentsTool: Tool = {
       required: ['query'],
     },
   },
-  statusText: 'Searching the documents…',
+  // AG.4 — shows the query the MODEL wrote, so the user sees the follow-up
+  // rewrite happen ("and who founded it?" → Searching for "who founded the
+  // Lantern Festival"…). Bad args fall back to a generic line; the run below
+  // then turns them into { error } as before.
+  statusText(args) {
+    const parsed = Args.safeParse(args)
+    if (!parsed.success) return 'Searching the documents…'
+    const q = parsed.data.query
+    return `Searching for "${q.length > 60 ? `${q.slice(0, 59)}…` : q}"…`
+  },
 
   async run(args, ctx) {
     const parsed = Args.safeParse(args)

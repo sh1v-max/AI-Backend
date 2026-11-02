@@ -21,14 +21,15 @@ const TOOLS: Record<string, Tool> = {
 // whose search always says "try another query" to force the step limit.
 export type ToolSet = {
   declarations: FunctionDeclaration[]
-  statusText: (name: string) => string
+  // AG.4 — the `status` line for a call (an unknown tool gets a generic one)
+  statusText: (name: string, args: unknown) => string
   run: (name: string, args: unknown) => Promise<ToolResult>
 }
 
 export function makeToolSet(ctx: ToolContext): ToolSet {
   return {
     declarations: Object.values(TOOLS).map((t) => t.declaration),
-    statusText: (name) => TOOLS[name]?.statusText ?? 'Working…',
+    statusText: (name, args) => TOOLS[name]?.statusText(args ?? {}) ?? 'Working…',
     async run(name, args) {
       const tool = TOOLS[name]
       if (!tool) return { error: `Unknown tool "${name}". Available: ${Object.keys(TOOLS).join(', ')}` }

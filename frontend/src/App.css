@@ -1181,6 +1181,27 @@
   }
 }
 
+/* AG.4 — what the agent is doing, next to the dots ("Searching for …").
+   20px line + 4px top padding = the first line sits on the middle of the
+   28px avatar, like the dots; a long query wraps instead of overflowing. */
+.thinking-status {
+  min-width: 0;
+  padding-top: 4px;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+  /* keyed on the text in ChatPanel, so each new status fades in */
+  animation: status-in 0.2s ease-out;
+}
+
+@keyframes status-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+}
+
 /* ---- rendered markdown in answers ---- */
 
 .markdown {

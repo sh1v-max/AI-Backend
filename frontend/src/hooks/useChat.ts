@@ -136,7 +136,18 @@ export function useChat(onMessageSent: () => void) {
         if (!last || last.role !== 'assistant') {
           return [...prev, { role: 'assistant', content: piece }]
         }
-        return [...prev.slice(0, -1), { ...last, content: last.content + piece }]
+        // AG.4 — the answer has started, so "Searching for …" is over
+        return [...prev.slice(0, -1), { ...last, content: last.content + piece, status: undefined }]
+      })
+    }
+
+    // AG.4 — status and sources change the streaming bubble (created on
+    // meta) in place. Same rule as above: built from `prev`, never mutated.
+    function updateAssistantBubble(change: Partial<ChatMessage>) {
+      setMessages((prev) => {
+        const last = prev[prev.length - 1]
+        if (!last || last.role !== 'assistant') return prev
+        return [...prev.slice(0, -1), { ...last, ...change }]
       })
     }
 
@@ -151,14 +162,20 @@ export function useChat(onMessageSent: () => void) {
             localStorage.setItem(ACTIVE_SESSION_KEY, meta.sessionId)
           }
 
-          // Sources arrive up front, before any text — add the (still empty)
-          // assistant bubble now with its sources already attached. Chunks
-          // then just grow the last message in place.
+          // Add the (still empty) assistant bubble now. Chunks then just grow
+          // the last message in place. AG.4 — for an agent answer meta's
+          // sources are [] and the real ones come through onSources; for
+          // smalltalk they stay [].
           setMessages((prev) => [...prev, { role: 'assistant', content: '', sources: meta.sources }])
         },
+        onStatus: (text) => updateAssistantBubble({ status: text }),
+        onSources: (sources) => updateAssistantBubble({ sources }),
         onChunk: (text) => appendToAssistantBubble(text),
         onDone: () => {
           log.info('useChat', 'reply fully streamed in')
+          // in case the stream ended without any text (it shouldn't: the
+          // server always sends words), don't leave a status behind
+          updateAssistantBubble({ status: undefined })
           onMessageSent()
           setChatLoading(false)
           resolve()

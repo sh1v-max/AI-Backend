@@ -16,7 +16,7 @@ export const listDocumentsTool: Tool = {
       "List the user's uploaded documents: filename, status (ready, processing or failed), number of chunks and upload date. Use it when the user asks which documents or files they have, or how many.",
     // no `parameters`: this tool takes no arguments
   },
-  statusText: 'Checking your documents…',
+  statusText: () => 'Checking your documents…',
 
   async run(_args, ctx) {
     const rows = await listDocuments(ctx.userId)

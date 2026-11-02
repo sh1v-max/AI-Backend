@@ -1,4 +1,4 @@
-import { generateTurn, textOfTurn, type Content, type Part } from './llm.service'
+import { streamTurn, textOfTurn, type Content, type Part } from './llm.service'
 import { getEmbedding } from './embeddings.service'
 import { makeToolSet, type ToolSet } from '../tools'
 import type { ToolContext } from '../tools/types'
@@ -17,9 +17,9 @@ import { agentDetail, timing } from '../utils/pipelineLogger'
 //
 // At most AGENT_MAX_STEPS model calls; the last one is sent WITHOUT tools so
 // it can only answer. This replaces the old "embed the raw message → top 3
-// chunks → one big prompt" path for document questions on POST /chat.
-// /chat-stream keeps the old path until AG.4 (so the live frontend is
-// untouched by this step).
+// chunks → one big prompt" path for document questions, on POST /chat (AG.3)
+// and, since AG.4, on /chat-stream too (streamAgent below, every step
+// streamed, with `status`/`sources` events for the UI).
 
 export type AgentInput = {
   message: string
@@ -119,7 +119,32 @@ function describeResult(result: Record<string, unknown>): string {
   return short(result)
 }
 
+// AG.4 — what the loop tells its caller WHILE it runs. /chat-stream turns
+// each one into an SSE frame; /chat ignores them (runAgent below).
+export type AgentEvent =
+  // a piece of the answer, the moment Gemini sends it
+  | { type: 'text'; text: string }
+  // a tool is about to run: "Searching for …", "Checking your documents…"
+  | { type: 'status'; text: string }
+  // a search just ran: every chunk found so far this turn (cumulative)
+  | { type: 'sources'; sources: SimilarChunk[] }
+
+// POST /chat (JSON) doesn't stream, so it runs the same generator and just
+// throws the events away: ONE loop for both routes, so they can't drift
+// apart. `.next()` by hand instead of `for await`, because `for await` never
+// gives you a generator's RETURN value, and that's where the result is.
 export async function runAgent(input: AgentInput): Promise<AgentResult> {
+  const run = streamAgent(input)
+  let next = await run.next()
+  while (!next.done) next = await run.next()
+  return next.value
+}
+
+// AG.4 — the loop itself, as an async generator: yields AgentEvents while it
+// works, RETURNS the AgentResult at the end. Same steps as AG.3's runAgent;
+// the model calls are streamed (streamTurn) instead of waited for
+// (generateTurn), so the final answer types out live.
+export async function* streamAgent(input: AgentInput): AsyncGenerator<AgentEvent, AgentResult> {
   const searchAll = input.documentId === undefined
   const systemInstruction = buildSystemInstruction({ searchAll, filename: input.filename })
   const contents = historyToContents(input.history, input.message)
@@ -140,6 +165,19 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
   const tools = input.tools ?? makeToolSet(ctx)
   const toolCalls: AgentToolCall[] = []
   let totalTokens = 0
+  // AG.4 — every piece of text already sent to the user, over ALL steps. The
+  // model can write a sentence before a tool call ("Let me check."), and
+  // that's on the user's screen by then, so the saved answer must include it
+  // too: what's saved = what was shown.
+  let streamed = ''
+
+  // The step-limit answer has to be SENT now too (the user's screen only
+  // shows what was yielded), then it's the saved answer.
+  function* giveUp() {
+    const text = streamed.trim() ? `\n\n${AGENT_GAVE_UP_MESSAGE}` : AGENT_GAVE_UP_MESSAGE
+    yield { type: 'text' as const, text }
+    streamed += text
+  }
 
   agentDetail(
     `agent: ${contents.length} turn(s) in (${contents.length - 1} from history), ` +
@@ -149,18 +187,22 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
   for (let stepNo = 1; stepNo <= AGENT_MAX_STEPS; stepNo++) {
     const lastStep = stepNo === AGENT_MAX_STEPS
     const started = Date.now()
-    const { turn, usage, finishReason } = await generateTurn({
+    // `yield*` = "run this other generator inside mine": every text event
+    // streamTurn yields is passed straight up to OUR caller (→ the browser),
+    // and when it finishes, its RETURN value (the whole turn) lands here.
+    const { turn, usage, finishReason } = yield* streamTurn({
       systemInstruction,
       contents,
       // the last step gets no tools: it has to answer with what it has
       tools: lastStep ? undefined : tools.declarations,
     })
     totalTokens += usage?.totalTokens ?? 0
-    // pushed EXACTLY as received: its thoughtSignatures must go back unchanged
+    // pushed EXACTLY as rebuilt: its thoughtSignatures must go back unchanged
     contents.push(turn)
 
     const calls = turn.parts.filter((p) => p.functionCall).map((p) => p.functionCall!)
     const text = textOfTurn(turn).trim()
+    streamed += textOfTurn(turn)
     agentDetail(
       `step ${stepNo}/${AGENT_MAX_STEPS}${lastStep ? ' (no tools: must answer)' : ''}: ` +
         (calls.length
@@ -170,9 +212,11 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
     timing(Date.now() - started, usage ? `${usage.totalTokens} tokens` : undefined)
 
     if (calls.length === 0) {
+      // already streamed; only an EMPTY final turn still needs words
       const gaveUp = text.length === 0
+      if (gaveUp) yield* giveUp()
       return {
-        answer: gaveUp ? AGENT_GAVE_UP_MESSAGE : text,
+        answer: streamed.trim(),
         sources: ctx.sources,
         steps: stepNo,
         toolCalls,
@@ -192,18 +236,23 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
     const responses: Part[] = []
     for (const call of calls) {
       toolCalls.push({ step: stepNo, name: call.name, args: call.args ?? {} })
+      // AG.4 — tell the user what's happening BEFORE the (slow-ish) tool runs
+      yield { type: 'status', text: tools.statusText(call.name, call.args ?? {}) }
       const toolStart = Date.now()
       const result = await tools.run(call.name, call.args ?? {})
       agentDetail(`  ↳ ${call.name}: ${describeResult(result)}`)
       timing(Date.now() - toolStart)
       responses.push({ functionResponse: { id: call.id, name: call.name, response: result } })
+      // a copy: ctx.sources keeps growing, and the caller may hold on to it
+      if (call.name === 'searchDocuments') yield { type: 'sources', sources: [...ctx.sources] }
     }
     contents.push({ role: 'user', parts: responses })
   }
 
   agentDetail(`step limit reached without an answer → "${AGENT_GAVE_UP_MESSAGE}"`)
+  yield* giveUp()
   return {
-    answer: AGENT_GAVE_UP_MESSAGE,
+    answer: streamed.trim(),
     sources: ctx.sources,
     steps: AGENT_MAX_STEPS,
     toolCalls,

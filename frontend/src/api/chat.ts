@@ -1,11 +1,14 @@
 import { authFetch, parseJsonOrThrow } from './client'
 import { log } from '../utils/logger'
-import type { ChatSource } from '../types/chat'
+import type { ChatRoute, ChatSource } from '../types/chat'
 
 interface ChatResponse {
   sessionId: string
   answer: string
   sources: ChatSource[]
+  // AG.2 / AG.3 — additive fields; nothing in the UI reads them yet
+  route?: ChatRoute
+  agent?: { steps: number; toolCalls: { step: number; name: string; args: Record<string, unknown> }[] }
 }
 
 export async function sendChatMessage(
@@ -28,7 +31,13 @@ export async function sendChatMessage(
 }
 
 interface StreamHandlers {
-  onMeta: (meta: { sessionId: string; sources: ChatSource[] }) => void
+  // AG.4 — `sources` is [] here when the agent answers (nothing searched yet);
+  // the real list arrives later through onSources
+  onMeta: (meta: { sessionId: string; sources: ChatSource[]; route?: ChatRoute }) => void
+  // AG.4 — the agent is running a tool: "Searching for …"
+  onStatus: (text: string) => void
+  // AG.4 — a search ran: every source found so far (replaces, doesn't add)
+  onSources: (sources: ChatSource[]) => void
   onChunk: (text: string) => void
   onDone: () => void
   onError: (message: string) => void
@@ -68,7 +77,8 @@ function parseFrame(frame: string): { event: string; data: string } | null {
 // so the request is now a POST with a JSON body, same as sendChatMessage
 // above: the question stays out of the URL (URLs land in server logs and
 // browser history) and there's no URL length limit. The response is the same
-// SSE stream with the same four frame types.
+// SSE stream with the same four frame types (AG.4 added two more: `status`
+// and `sources`, sent while the agent works).
 //
 // The signature and the handlers are unchanged, so useChat.ts doesn't know
 // anything changed.
@@ -108,6 +118,17 @@ export function streamChatMessage(
         break
       case 'message': // no `event:` line — one piece of the answer
         handlers.onChunk(data.text)
+        break
+      // AG.4 — the two agent events. A frontend from before AG.4 has no case
+      // for them and (no `default`) just skips them: that's what made the new
+      // events safe to add to a live API.
+      case 'status':
+        log.info('api:chat', `stream status: ${data.text}`)
+        handlers.onStatus(data.text)
+        break
+      case 'sources':
+        log.info('api:chat', `stream sources: ${data.sources.length} so far`)
+        handlers.onSources(data.sources)
         break
       case 'done':
         log.info('api:chat', 'stream finished')
