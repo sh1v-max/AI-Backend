@@ -16,7 +16,7 @@ import { log } from './utils/logger'
 import { fetchSamplePdf, SAMPLE_FILENAME } from './api/sample'
 import { ALL_DOCUMENTS, ALL_DOCUMENTS_LABEL, GUEST_MAX_DOCUMENTS, USER_MAX_DOCUMENTS } from './types/document'
 import type { UploadedDocument } from './types/document'
-import type { SessionSummary } from './types/chat'
+import type { ChatAction, SessionSummary } from './types/chat'
 import './App.css'
 
 interface AppShellProps {
@@ -224,6 +224,19 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
     quiz.generate(doc.documentId, doc.filename)
   }
 
+  // AG.5 — the button under a quiz offer in the chat. The chat only PROPOSED
+  // the quiz; this click is the "yes", and it goes through the same two paths
+  // as the sidebar: one document → generate it now, several → the picker.
+  function handleChatAction(action: ChatAction) {
+    if (action.type === 'quiz') {
+      log.info('App', `[action] "Create quiz" clicked in chat — "${action.filename}" (${action.documentId})`)
+      quiz.generate(action.documentId, action.filename)
+    } else {
+      log.info('App', '[action] "Choose a document" clicked in chat — opening the picker')
+      setQuizPickerOpen(true)
+    }
+  }
+
   function handleSelectSession(session: (typeof sessions)[number]) {
     log.info('App', `[action] selected session from history — "${session.title}"`)
     openSession(session)
@@ -328,6 +341,7 @@ function AppShell({ user, onLogin, onRegister, onLogout }: AppShellProps) {
         onPickAll={handlePickAll}
         onClearDocument={handleClearDocument}
         onChangeScope={handleChangeScope}
+        onChatAction={handleChatAction}
       />
 
       <QuizPickerModal

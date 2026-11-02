@@ -2082,3 +2082,34 @@
     border-radius: 0;
   }
 }
+
+/* ---- AG.5: the button under a quiz offer ---- */
+
+.answer-offer {
+  margin-top: var(--space-3);
+}
+
+.offer-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+.offer-button:hover {
+  background: var(--color-accent-hover);
+}
+
+.offer-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-accent-bg);
+}

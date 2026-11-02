@@ -3,7 +3,7 @@ import { SidebarSimple, Spinner, UploadSimple } from '@phosphor-icons/react'
 import { IconButton } from '../common/IconButton'
 import { ChatPanel } from './ChatPanel'
 import { NewChatScreen } from './NewChatScreen'
-import type { ChatMessage } from '../../types/chat'
+import type { ChatAction, ChatMessage } from '../../types/chat'
 import type { UploadedDocument, UploadStatus } from '../../types/document'
 
 interface ChatViewProps {
@@ -29,6 +29,7 @@ interface ChatViewProps {
   onPickAll: () => void
   onClearDocument: () => void
   onChangeScope: (documentId: string) => void
+  onChatAction: (action: ChatAction) => void
 }
 
 // A drag carries "Files" in its types only when it's a file from the OS —
@@ -60,6 +61,7 @@ export function ChatView({
   onPickAll,
   onClearDocument,
   onChangeScope,
+  onChatAction,
 }: ChatViewProps) {
   // UI.1 — the home screen and the conversation are told apart by whether a
   // conversation exists yet, NOT by whether a document is picked: picking or
@@ -167,6 +169,7 @@ export function ChatView({
           activeDocument={activeDocument}
           documents={documents}
           onChangeScope={onChangeScope}
+          onAction={onChatAction}
         />
       ) : (
         <NewChatScreen

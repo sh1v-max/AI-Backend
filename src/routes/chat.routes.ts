@@ -5,6 +5,7 @@ import { prepareChat } from '../services/chat.service'
 import { runAgent, streamAgent, type AgentResult, type AgentToolCall } from '../services/agent.service'
 import { AGENT_MAX_STEPS } from '../config'
 import type { SimilarChunk } from '../repositories/chunks.repository'
+import type { ChatAction } from '../services/quizOffer.service'
 import { insertMessage } from '../repositories/chatMessages.repository'
 import { withErrorHandling, summarizeError } from '../utils/errors'
 import {
@@ -56,9 +57,18 @@ chatRouter.post(
     // same shape either way: { content, distance, documentId, filename }[]
     let sources: SimilarChunk[]
     let agent: { steps: number; toolCalls: AgentToolCall[] } | undefined
+    // AG.5 — the "Create quiz" button, when the reply is a quiz offer
+    let action: ChatAction | null = null
     const genStart = Date.now()
 
-    if (prep.kind === 'agent') {
+    if (prep.kind === 'offer') {
+      // AG.5 — already written by code in prepareChat: nothing to generate
+      step('chat', 7, 8, 'Quiz offer: no model call, the reply is a template')
+      answer = prep.text
+      sources = []
+      action = prep.action
+      timing(Date.now() - genStart, '0 model calls')
+    } else if (prep.kind === 'agent') {
       step('chat', 7, 8, `Running the agent (up to ${AGENT_MAX_STEPS} model calls, tools: searchDocuments, listDocuments)...`)
       const result = await runAgent(prep.agentInput)
       answer = result.answer
@@ -91,6 +101,8 @@ chatRouter.post(
       // AG.3 — what the agent did, for devtools/tests (additive too; absent
       // for smalltalk, which doesn't run the agent)
       ...(agent && { agent }),
+      // AG.5 — what the button under this answer does (absent = no button)
+      ...(action && { action }),
     })
   }),
 )
@@ -180,7 +192,8 @@ chatRouter.post(
         // AG.4 — always [] on the agent path: nothing has been searched yet.
         // The real list follows in `sources` events, once the agent searched.
         // (Kept in meta, empty, so an old frontend still finds the field.)
-        sources: prep.kind === 'agent' ? [] : prep.sources,
+        // AG.5 — and [] for a quiz offer, which searches nothing
+        sources: prep.kind === 'prompt' ? prep.sources : [],
         // AG.2 — what the router decided. Additive: the frontend's onMeta
         // reads sessionId + sources and ignores the rest
         route: prep.route,
@@ -191,7 +204,17 @@ chatRouter.post(
       let agentResult: AgentResult | null = null
 
       try {
-        if (prep.kind === 'agent') {
+        if (prep.kind === 'offer') {
+          // AG.5 — the quiz offer: the whole template goes out as one text
+          // piece (the frontend's bubble doesn't care how many pieces), then
+          // the button as an `action` event. An old frontend has no case for
+          // `action` and just shows the text. Inside the try anyway, so a
+          // write to a closed connection ends up in the same place as the rest.
+          step('chat', 7, 8, 'Quiz offer: sending the template + the action (no model call)')
+          fullAnswer = prep.text
+          send(null, { text: prep.text })
+          if (prep.action) send('action', prep.action)
+        } else if (prep.kind === 'agent') {
           // AG.4 — the agent, streamed. streamAgent yields three kinds of
           // events; each becomes one SSE frame:
           //   text    → default `data: { text }` (exactly like before, so the
@@ -228,7 +251,7 @@ chatRouter.post(
         send('error', { error: 'Streaming failed' })
         res.end()
         console.error(
-          `[POST /chat-stream] ${prep.kind === 'agent' ? 'streamAgent' : 'streamAnswer'} failed: ${summarizeError(err)}`,
+          `[POST /chat-stream] ${prep.kind === 'agent' ? 'streamAgent' : prep.kind === 'offer' ? 'quiz offer' : 'streamAnswer'} failed: ${summarizeError(err)}`,
         )
         return
       }
@@ -278,6 +301,7 @@ chatRouter.post(
 //    ├── ROUTE it (AG.2): smalltalk or a document question?
 //    ├── save user's question to history
 //    └── smalltalk → a finished prompt · document question → the agent's input
+//        · quiz request (AG.5) → an offer written by code, no LLM
 //         ↓   (if !prep.ok → 400/404/409 JSON, stop)
 // res.writeHead(200, text/event-stream)   ← stream opens BEFORE the LLM is called
 //         ↓
@@ -288,6 +312,8 @@ chatRouter.post(
 //    ├── the model asks for a tool → event: status { text: "Searching for …" }
 //    ├── code runs it              → event: sources { sources }  (after a search)
 //    └── the model answers         → data: { text } per piece    ← types out live
+// quiz request (AG.5): data: { text } (the whole offer) → event: action { type, … }
+//    (the button; the quiz itself only happens on click, via POST /quiz)
 //         ↓   (if streaming fails → event: error, res.end(), stop)
 // insertMessage(..., "assistant", fullAnswer)
 //    (if this save fails → only logged, the stream still finishes normally)

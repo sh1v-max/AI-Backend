@@ -1,6 +1,6 @@
 import { authFetch, parseJsonOrThrow } from './client'
 import { log } from '../utils/logger'
-import type { ChatRoute, ChatSource } from '../types/chat'
+import type { ChatAction, ChatRoute, ChatSource } from '../types/chat'
 
 interface ChatResponse {
   sessionId: string
@@ -9,6 +9,8 @@ interface ChatResponse {
   // AG.2 / AG.3 — additive fields; nothing in the UI reads them yet
   route?: ChatRoute
   agent?: { steps: number; toolCalls: { step: number; name: string; args: Record<string, unknown> }[] }
+  // AG.5 — present when the answer is a quiz offer with a button
+  action?: ChatAction
 }
 
 export async function sendChatMessage(
@@ -38,6 +40,8 @@ interface StreamHandlers {
   onStatus: (text: string) => void
   // AG.4 — a search ran: every source found so far (replaces, doesn't add)
   onSources: (sources: ChatSource[]) => void
+  // AG.5 — the answer is a quiz offer: show this button under it
+  onAction: (action: ChatAction) => void
   onChunk: (text: string) => void
   onDone: () => void
   onError: (message: string) => void
@@ -78,7 +82,8 @@ function parseFrame(frame: string): { event: string; data: string } | null {
 // above: the question stays out of the URL (URLs land in server logs and
 // browser history) and there's no URL length limit. The response is the same
 // SSE stream with the same four frame types (AG.4 added two more: `status`
-// and `sources`, sent while the agent works).
+// and `sources`, sent while the agent works; AG.5 one more: `action`, the
+// button under a quiz offer).
 //
 // The signature and the handlers are unchanged, so useChat.ts doesn't know
 // anything changed.
@@ -129,6 +134,12 @@ export function streamChatMessage(
       case 'sources':
         log.info('api:chat', `stream sources: ${data.sources.length} so far`)
         handlers.onSources(data.sources)
+        break
+      // AG.5 — same story: a pre-AG.5 frontend skips it and shows the offer
+      // as plain text
+      case 'action':
+        log.info('api:chat', `stream action: ${data.type}`, data)
+        handlers.onAction(data)
         break
       case 'done':
         log.info('api:chat', 'stream finished')

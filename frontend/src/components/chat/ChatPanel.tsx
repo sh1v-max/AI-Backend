@@ -3,7 +3,7 @@ import { ChatTurn } from './ChatTurn'
 import { ChatInputForm } from './ChatInputForm'
 import { ScopeSelect } from './ScopeSelect'
 import { BrandMark } from '../common/BrandMark'
-import type { ChatMessage } from '../../types/chat'
+import type { ChatAction, ChatMessage } from '../../types/chat'
 import type { UploadedDocument } from '../../types/document'
 
 interface ChatPanelProps {
@@ -16,6 +16,8 @@ interface ChatPanelProps {
   activeDocument: { documentId: string; filename: string } | null
   documents: UploadedDocument[]
   onChangeScope: (documentId: string) => void
+  // AG.5 — a quiz offer's button was clicked
+  onAction: (action: ChatAction) => void
 }
 
 // UI.1 — only shown once a conversation exists. The empty state with the
@@ -30,6 +32,7 @@ export function ChatPanel({
   activeDocument,
   documents,
   onChangeScope,
+  onAction,
 }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -59,7 +62,12 @@ export function ChatPanel({
             // The empty placeholder (sources arrived, no text yet) stays hidden
             // so it doesn't render as a blank bubble next to Thinking….
             m.role === 'assistant' && !m.content && !m.isError ? null : (
-              <ChatTurn key={i} message={m} complete={!(loading && i === messages.length - 1)} />
+              <ChatTurn
+                key={i}
+                message={m}
+                complete={!(loading && i === messages.length - 1)}
+                onAction={onAction}
+              />
             ),
           )}
 

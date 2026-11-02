@@ -10,6 +10,7 @@ import { routeMessage } from './router.service'
 import type { Intent } from '../schemas/intent.schema'
 import type { AgentInput } from './agent.service'
 import { listDocuments } from '../repositories/documents.repository'
+import { buildQuizOffer, type ChatAction } from './quizOffer.service'
 import {
   pipelineEnd,
   step,
@@ -98,7 +99,9 @@ export function buildSmalltalkPrompt(
 
   If the message is actually a general-knowledge or factual question (geography, history, science, trivia…), don't answer it: say briefly that you only answer from the user's documents, and invite them to ask about one.
 
-  What DocMind can do, if it's relevant to mention: answer questions about the user's uploaded PDFs (one document or all of them at once) and show the passages it used, and make a 5-question multiple-choice quiz from a document.${historyBlock}
+  What DocMind can do, if it's relevant to mention: answer questions about the user's uploaded PDFs (one document or all of them at once) and show the passages it used, and make a 5-question multiple-choice quiz from a document.
+
+  If the user is saying yes to a quiz offer in the conversation, you can't start the quiz yourself: tell them to click the "Create quiz" button under that offer, or to ask "quiz me" again.${historyBlock}
 
   New message: ${message}`
 }
@@ -126,8 +129,21 @@ export type AgentPreparation = {
   agentInput: AgentInput
 }
 
+// AG.5 — a quiz request: the reply is already written (a template, no LLM),
+// the route only has to send it, plus the button's action if there is one
+export type QuizOfferPreparation = {
+  ok: true
+  kind: 'offer'
+  documentId: string
+  sessionId: string
+  route: ChatRoute
+  text: string
+  action: ChatAction | null
+}
+
 export type ChatPreparation =
   | ChatFailure
+  | QuizOfferPreparation
   | {
       ok: true
       // AG.3 — 'prompt' = the classic path: a finished prompt string to
@@ -175,8 +191,9 @@ export type ChatPreparation =
 // Both routes pass 'agent' (POST /chat since AG.3, /chat-stream since AG.4);
 // 'prompt' is kept as the old fixed-search pipeline to compare against.
 // These two signatures are TypeScript OVERLOADS: a caller that doesn't pass
-// mode: 'agent' gets a type that can only be 'prompt', so it reads
-// prep.prompt without any extra check.
+// mode: 'agent' gets a type that can never be 'agent', so it never has to
+// handle the agent's input. (AG.5 — either mode can come back as kind
+// 'offer': the quiz offer is decided by the router, not by the mode.)
 type ChatInput = { documentId: unknown; message: unknown; sessionId: string; userId: string }
 export async function prepareChat(input: ChatInput & { mode?: 'prompt' }, t0: number): Promise<ChatPreparation>
 export async function prepareChat(
@@ -282,10 +299,20 @@ export async function prepareChat(
     return { ok: true, kind: 'prompt', documentId, sessionId, sources: [], prompt, route }
   }
 
-  // quiz_request gets its own path in AG.5 (a quiz offer + a button). Until
-  // then it's answered like a document question, i.e. exactly as before.
+  // AG.5 — a quiz request gets an OFFER, written by code: no search, no LLM
+  // call, no quiz yet. The quiz itself only happens when the user clicks the
+  // "Create quiz" button (the action), through POST /quiz. Before the agent's
+  // "nothing ready" 404 below on purpose: "quiz me" with no ready documents
+  // gets a sentence explaining why, not an error.
   if (decision.intent === 'quiz_request') {
-    detail('quiz_request: answered as a document question until AG.5')
+    step('chat', 5, 8, 'Skipping the search: a quiz request gets an offer, written by code (0 model calls)')
+    const offer = await buildQuizOffer(
+      userId,
+      searchAll ? undefined : { documentId, filename: filename ?? 'this document' },
+    )
+    await insertMessage(sessionId, userId, documentId, 'user', message)
+    step('chat', 6, 8, `Quiz offer ready — ${offer.action ? `button: ${offer.action.type}` : 'no button'}`)
+    return { ok: true, kind: 'offer', documentId, sessionId, route, text: offer.text, action: offer.action }
   }
 
   // AG.3 — the agent path: no fixed search here. The agent decides what to

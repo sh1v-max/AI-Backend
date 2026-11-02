@@ -170,6 +170,8 @@ export function useChat(onMessageSent: () => void) {
         },
         onStatus: (text) => updateAssistantBubble({ status: text }),
         onSources: (sources) => updateAssistantBubble({ sources }),
+        // AG.5 — a quiz offer: the button shows once the reply is complete
+        onAction: (action) => updateAssistantBubble({ action }),
         onChunk: (text) => appendToAssistantBubble(text),
         onDone: () => {
           log.info('useChat', 'reply fully streamed in')
