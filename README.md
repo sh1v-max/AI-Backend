@@ -2,7 +2,7 @@
 
 **Upload a PDF, chat with it, and get quizzed on it.**
 
-DocMind is a small AI backend built from scratch to understand how AI products actually work under the hood: embeddings, vector search, RAG, conversation memory, streaming, and structured output. No LangChain, no LLM SDK, no framework doing the interesting parts. Just Express, Postgres, and plain HTTP calls to Gemini, so every piece is visible.
+DocMind is a small AI backend built from scratch to understand how AI products actually work under the hood: embeddings, vector search, RAG, conversation memory, streaming, structured output, background jobs, and an agent that decides what to look up. No LangChain, no LLM SDK, no framework doing the interesting parts. Just Express, Postgres, and plain HTTP calls to Gemini, so every piece is visible.
 
 It comes with a React frontend that exercises every endpoint the way a real client would.
 
@@ -18,11 +18,13 @@ It comes with a React frontend that exercises every endpoint the way a real clie
 - **Your own private space, no sign-up needed.** Every visitor silently gets a guest account and only ever sees their own documents and chats. Sign up later to keep them and use them on any device.
 - **Attach a PDF and ask in one go.** The home screen is the chat box: attach (or drop) a PDF, type your question, send. If the PDF is still being processed, the question waits for it and goes out on its own. Behind the scenes the PDF is parsed and split into chunks right away, then a background worker turns the chunks into embeddings and stores them in Postgres with pgvector, while the sidebar shows it as "Processing…".
 - **No PDF handy?** "Try our sample" uploads a short guide to DocMind itself, with starter questions it can actually answer.
-- **Chat with it.** Ask questions, get answers grounded only in your document, formatted (lists, bold, tables), with the source passages shown under every reply.
+- **Chat with it.** Ask questions, get answers grounded only in your document, formatted (lists, bold, tables), with the source passages shown under every reply. Ask something the documents don't cover ("what's the capital of France?") and it says so instead of answering from general knowledge.
+- **It decides what to look up.** An agent reads the conversation and writes its own search: *"and who founded it?"* becomes a search for *"who founded the Lantern Festival"*, and a two-part question becomes two searches. While it works you see what it's doing (*Searching for "…"…*).
 - **It remembers the conversation.** Follow-ups like *"what about the second one?"* work, and a page refresh brings you back to the same chat.
 - **Answers stream in live**, word by word, instead of arriving all at once.
-- **Search one PDF or all of them.** A picker inside the chat box; default is every uploaded document, and answers name which PDF they came from.
-- **Quiz yourself.** Pick a document, get 5 multiple-choice questions, validated before they ever reach the UI, then check your answers.
+- **Search one PDF or all of them.** A picker inside the chat box; default is every uploaded document, and answers name which PDF they came from. *"Which documents do I have?"* gets a real list.
+- **Small talk stays small.** "hi" or "thanks!" gets a quick reply with no search behind it.
+- **Quiz yourself.** Pick a document, or just ask *"quiz me"* in the chat and click **Create quiz**. You get 5 multiple-choice questions, validated before they ever reach the UI, then check your answers.
 - **Sidebar.** Your documents (with a counter against your limit and a menu per file) and your conversations, grouped by day, each deletable.
 
 ---
@@ -54,14 +56,24 @@ On the free tier the worker runs inside the API's own process (Render's free pla
 
 ```
 question ──► embed it (same model)
-         ──► pgvector search: the 3 closest chunks  (one PDF, or all of them)
          ──► load the last 8 messages of this conversation
-         ──► prompt = those chunks + the history + the question
-         ──► Gemini ──► answer, streamed back over SSE
+         ──► ROUTE: what kind of message is this?
+               compare the embedding with example phrases per intent (free, no API call);
+               only a close call (or anything that looks like a quiz) asks Gemini to classify it
+         ├─ smalltalk ──► a short prompt, no search ──► Gemini ──► reply
+         ├─ quiz request ──► a reply written by code + a "Create quiz" button (no model call;
+         │                   the quiz is only made when the button is clicked, via POST /quiz)
+         └─ document question ──► the AGENT (up to 3 model calls):
+               Gemini gets the conversation + two tools it may ask for:
+                 searchDocuments(query)  pgvector search, the 3 closest chunks (query written by the model)
+                 listDocuments()         the user's files
+               code runs what it asks for, sends the results back, Gemini answers
+               (the last call has no tools, so it has to answer)
+         ──► everything streamed back over SSE as it happens
          ──► both messages saved, so the next turn has memory
 ```
 
-This is RAG in one line: instead of the model guessing from memory, it's handed the relevant text right before being asked.
+This is RAG with the model choosing the query: instead of guessing from memory, it's handed the relevant text right before answering, and it decides what "relevant" means after reading the conversation. Which documents it may search, and whose, is fixed by code before the loop starts, never by the model.
 
 ### 3. Quiz
 
@@ -122,7 +134,7 @@ Every route except `/` and the three public `/auth` routes needs `Authorization:
 | `POST` | `/upload` | Upload a PDF (`multipart/form-data`, field `file`). Parses and chunks it, queues the embedding, answers **`202`** with `status: "processing"`. `400` for a PDF with no text, `503` if the queue is down. Guests can keep 5 documents, accounts 10. |
 | `GET` | `/documents` | List uploaded documents, each with `status` (`processing` / `ready` / `failed`) and `error` |
 | `DELETE` | `/documents/:documentId` | Delete a document, its chunks, and every chat about it |
-| `POST` | `/chat` | `{ message, documentId?, sessionId? }` → `{ sessionId, answer, sources }` |
+| `POST` | `/chat` | `{ message, documentId?, sessionId? }` → `{ sessionId, answer, sources, route }`, plus `agent` (`{ steps, toolCalls }`) when the agent answered and `action` when the reply is a quiz offer |
 | `POST` | `/chat-stream` | Same as `/chat` (same JSON body), but the reply streams in as Server-Sent Events |
 | `GET` | `/sessions` | One summary per conversation, newest first |
 | `GET` | `/sessions/:sessionId/messages` | Full transcript of one conversation |
@@ -135,10 +147,15 @@ Every route except `/` and the three public `/auth` routes needs `Authorization:
 
 | Event | Payload | When |
 |---|---|---|
-| `meta` | `{ sessionId, sources }` | first, before any text |
+| `meta` | `{ sessionId, sources, route }` (`sources` is `[]` there now: the agent's come later) | first, before any text |
+| `status` | `{ text }`, e.g. `Searching for "who founded the Lantern Festival"…` | before each tool the agent runs |
+| `sources` | `{ sources }` (every chunk found so far; replaces the previous list) | after each search |
 | *(default)* | `{ text }` | once per piece of the answer |
+| `action` | `{ type: 'quiz', documentId, filename }` or `{ type: 'quiz_picker' }` | after a quiz offer's text: the button to show |
 | `done` | `{}` | after the full answer is saved |
 | `error` | `{ error }` | if anything fails mid-stream |
+
+`status`, `sources` and `action` were added later and are optional to read: an older client that only knows the original four events still works (it just shows no progress line and no button).
 
 ---
 
@@ -160,18 +177,22 @@ src/
     auth.service.ts       sign/verify tokens, guest, register, login
     ingestion.service.ts  parse + chunk (request), embed + store (worker), queue the job
     documents.service.ts  "is this document ready?" (404 / 409) for chat and quiz
-    chat.service.ts       the shared chat pipeline + prompt
+    chat.service.ts       the shared chat pipeline (validate → embed → history → route) + the smalltalk prompt
+    router.service.ts     the intent router: example-phrase vectors first, the LLM on close calls
+    agent.service.ts      the agent loop (streamed), the system instruction, history as real turns
+    quizOffer.service.ts  the "Create quiz" offer (a template, no model call)
     quiz.service.ts       generate → validate → retry → shuffle
-    llm.service.ts        Gemini calls (normal + streaming)
-    embeddings.service.ts Gemini embeddings
+    llm.service.ts        Gemini calls (normal, streaming, and streamed turns with tools)
+    embeddings.service.ts Gemini embeddings (one, or a batch)
+  tools/              the agent's toolbox: searchDocuments, listDocuments, a fixed name → tool map
   queue/              Redis connections, the ingest queue, graceful shutdown
   workers/            the ingest worker (embed + store, retries, status)
   worker.ts           the worker on its own (`npm run worker`)
   repositories/       the only place SQL lives; every query takes the user's id
   db/                 Drizzle schema + connection
-  schemas/            Zod schemas (the quiz, register/login bodies)
+  schemas/            Zod schemas (the quiz, the router's intent, register/login bodies)
   utils/              error handling, chunking, colored pipeline logs
-  step1-5 *.ts        standalone learning scripts from each phase (step5 = BullMQ)
+  step1-7 *.ts        standalone learning scripts from each phase (step5 = BullMQ, step6 = raw tool calling, step7 = router eval)
 
 frontend/src/
   api/                fetch calls only
@@ -320,6 +341,11 @@ A few things that aren't obvious from the code alone:
 - **Upload answers before the work is done.** The request only does what someone is waiting for (parse, chunk, save a `processing` row, queue a job) and returns `202`. The embedding happens in a worker, and the document is searchable once it's `ready`. Until then, chat and quiz on it answer `409` (it's yours, it just isn't usable yet), and "all documents" search simply skips it.
 - **Jobs are safe to run twice.** BullMQ retries a failed job and re-runs one whose worker died, so a job starts by deleting the chunks its document already has, then stores all of them. Tested with a forced failure halfway through, and with the server killed mid-job.
 - **An idle queue worker isn't free.** A BullMQ worker keeps polling Redis even with nothing to do. Measured over 5 idle minutes: 118 Redis commands with default settings (about 1M a month if it never sleeps, double Upstash's free 500K) vs 19 with `drainDelay: 30` and `stalledInterval: 300000` (about 164K). The tuned values are in `src/config.ts`; `npm run step5` repeats the measurement.
+- **Route first, and make the cheap check do most of the work.** The question is embedded anyway (for search), so comparing it with a few example phrases per intent costs nothing. The LLM classifier only runs when that's a close call, or when the vectors say "quiz" (in testing they confused "compare the two pdfs" and "what is a quiz?" with quiz requests, because vectors match shared words, not intent). Every unsure path ends at "document question", never at smalltalk: a real question answered as small talk gets no search behind it. Measured on 52 labelled messages (`npm run step7`): no harmful mistakes and one harmless miss, with the LLM asked on 17.
+- **The model writes the search, code decides the scope.** The agent's tools take only what the model is good at (a search query). Who is asking and which documents can be searched are closed over by code from the verified token, so a sentence inside a PDF telling the model to "search another user's files" has nowhere to go. Tool names are looked up in a fixed map, the arguments are checked with Zod, and a bad call or a failing tool becomes `{ error }` data the model can react to.
+- **A hard step limit, enforced by leaving the tools out.** At most 3 model calls per answer. The last one is sent *without* tools, because the "don't call tools" mode was ignored by this model in testing. Every model turn is sent back exactly as received: Gemini attaches a signature to each one, and dropping it is a 400.
+- **Stream every step.** Each agent call uses Gemini's streaming endpoint; text is forwarded the moment it arrives and the turn is rebuilt from the pieces for the next call. The user sees what the agent is searching for, then the answer typing out, instead of dots for 5 seconds.
+- **The model never starts a quiz.** "Quiz me" gets an offer written by code and a button; the click calls the existing `POST /quiz`. A typed "yes" would need the server to remember a pending offer between two requests, which is a workflow problem (suspend/resume) for a later phase.
 - **A token in a header, not a cookie.** The frontend and API live on different sites, where cookies are third-party and increasingly blocked. The tradeoff is that the token sits in `localStorage`, so answers are rendered as markdown *without* raw HTML.
 
 ---
@@ -330,9 +356,11 @@ A few things that aren't obvious from the code alone:
 - If the server crashes in the middle of a job, the job resumes after the restart, but can take up to ~10 minutes to be noticed (the tuned stalled-job check runs every 5 minutes). Normal deploys aren't affected: the worker finishes its job first.
 - Embedding is still one Gemini call per chunk, one document at a time.
 - Chunking is a simple 500-word split, no overlap and no respect for paragraphs.
-- "Search all documents" shares the top 3 results across every PDF, so a vague question can end up answered from one file. It also can't answer questions *about* your collection, like "which documents do you have?"
+- Each search returns the 3 closest chunks. In "all documents" mode those 3 are shared across every PDF, so a vague question can still be answered from one file (the agent can search again with a better query, up to its step limit).
+- A document question costs 2 model calls (search, then answer), plus a classifier call when the router isn't sure. On Gemini's free tier (15 requests a minute for the chat model) that's the real limit, and on a slow day the classifier alone took 25–50 s.
+- Sources, the agent's tool calls and the quiz button aren't saved with the messages, so a reopened conversation shows answers without them.
 - Memory is the last 8 messages. Older messages are dropped, not summarized.
-- When Gemini is overloaded it returns `503`, and the chat currently just shows "Streaming failed."
+- When Gemini is overloaded it returns `503`, and the chat currently just shows "Streaming failed." There's no retry or timeout on Gemini calls yet.
 - No automated tests yet.
 - Auth is deliberately simple: no refresh tokens or server-side logout (a token stays valid until it expires), no email verification or password reset, and the token lives in `localStorage`. A guest's files are tied to one browser: clearing its storage loses them.
 - Logging in to an existing account doesn't merge the files you uploaded as a guest (signing up does keep them).
@@ -350,7 +378,9 @@ This repo doubles as a learning log:
 - [CODE_EXPLAINED.md](CODE_EXPLAINED.md): every file explained, with links to the exact lines
 - [topics/](topics/README.md): notes per concept, in my own words
 - [ai-backend-roadmap.md](ai-backend-roadmap.md): the original plan
+- [agents-plan.md](agents-plan.md), [background-jobs-plan.md](background-jobs-plan.md), [auth-jwt-plan.md](auth-jwt-plan.md): how each bigger feature was planned, with a results log of what was measured and what went wrong
+- [ISSUES.md](ISSUES.md): every known bug and issue, open and fixed
 
 ## What's next
 
-Better answers (the prompt-quality plan in [prompt-improvement.md](prompt-improvement.md)), then agents and tool calling, multi-step workflows, and tests.
+Multi-step workflows that can pause and wait for the user (a typed "yes" to the quiz offer instead of a button), then tests and observability. The open bugs and gaps are tracked in [ISSUES.md](ISSUES.md).

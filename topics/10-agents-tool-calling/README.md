@@ -1,5 +1,7 @@
 # 10 — Agents & Tool Calling
 
+> **Status: ✅ built and live (2026-10-22 → 11-04).** This page was written before the build, so "today" below means the old fixed pipeline. What was built and measured: [More_on Part 3](More_on_Agents_Tool_Calling.md#part-3--what-actually-happened-in-docmind), the code walkthrough in [CODE_EXPLAINED.md](../../CODE_EXPLAINED.md#phase-7--agents--tool-calling), and the full log in [agents-plan.md](../../agents-plan.md) §9.
+
 Every message DocMind gets today goes down the same road: embed it, search the top 3 chunks, load history, build one big prompt, generate. That road is right for "what does section 2 say?" and wrong for almost everything else. "hi" triggers a vector search. "and the second one?" is searched as-is, so it finds junk. "Which documents do I have?" can't be answered by chunk search at all. "Quiz me" gets a chat answer *about* quizzes. This topic is how real AI backends fix that: **decide what to do before doing it**, and when the right action needs information, let the model *ask* for it through a tool that your code runs.
 
 ---
@@ -109,6 +111,8 @@ Full detail, tests and decisions in [agents-plan.md](../../agents-plan.md). In s
 **AG.3 + AG.4 (roadmap 7.3)** — the agent for document questions with `searchDocuments` + `listDocuments`; history as real turns; streamed, with `status` and `sources` events in the UI.
 
 **AG.5 (roadmap 7.4)** — "quiz me" → a code-written proposal + a "Create quiz" button → the existing `POST /quiz`.
+
+*(All built: AG.0 → AG.6 done, AG.7 = these docs. The router eval grew to 52 messages.)*
 
 ## Resources
 

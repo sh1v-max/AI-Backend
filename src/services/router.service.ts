@@ -20,8 +20,8 @@ import { summarizeError } from '../utils/errors'
 //                     broken or unsure, document_question (today's behaviour).
 //
 // Nothing here touches req/res or the database, and nothing logs: it returns
-// the decision with its scores (and any errors), and the caller logs it (the chat route in
-// AG.2, the eval script `npm run step7` now). Not wired into /chat yet.
+// the decision with its scores (and any errors), and the caller logs it
+// (prepareChat in chat.service.ts since AG.2, and the eval `npm run step7`).
 
 // ── The vector router ───────────────────────────────────────────────────────
 

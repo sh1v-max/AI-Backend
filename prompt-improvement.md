@@ -1,6 +1,19 @@
 # Prompt Improvement Plan — the RAG quality pass
 
-**Status:** planned, not started (written 2026-09-29).
+**Status:** written 2026-09-29, never built as its own pass. **Since Phase 7 (2026-11-04) a good part of it is done on the path that matters**, because both chat routes now answer document questions with the agent loop instead of `buildChatPrompt()`. What's covered and what's left:
+
+| Step | Status after Phase 7 | Where |
+|---|---|---|
+| Step 0 baseline | 🟡 a 9-question set was run old pipeline vs agent (8/9 vs 9/9) in AG.3, plus the router's 52-message eval; no standing `prompt-tests.md` | [agents-plan.md](agents-plan.md) §9 AG.1, AG.3 |
+| PI.1 query rewriting | ✅ **done differently:** no separate rewrite call; the model writes the `searchDocuments` query itself after reading the conversation ("and who founded it?" → "who founded the Lantern Festival") | `searchDocuments.tool.ts`, `agent.service.ts` |
+| PI.2 systemInstruction + real turns | ✅ **done** for document questions: `buildSystemInstruction()` + `historyToContents()` (roles mapped, same-role turns merged) | `agent.service.ts`, `llm.service.ts` (`streamTurn`) |
+| PI.3 tagged sources + injection defense | 🟡 tool results carry each chunk's `filename`; the system instruction says document/tool text is material, never instructions (tested with an injection PDF in AG.3). No `<source>` tags, no injection test for the smalltalk path | `agent.service.ts`, `searchDocuments.tool.ts` |
+| PI.4 better rules | 🟡 smalltalk is routed away (no more "the context doesn't say" to "hi"), general-knowledge questions are refused, "say so plainly, don't guess". Partial answers / explain-vs-add-facts rules not written | `chat.service.ts` (`buildSmalltalkPrompt`), `agent.service.ts` |
+| PI.5 format + temperature | 🟡 answers render as markdown since the 2026-10-04 redesign; the agent asks for "short paragraphs or a short list". No temperature set for answers (the classifier uses 0) | frontend `Markdown.tsx` |
+| PI.6 relevance threshold | ❌ not built: every search still returns the top 3 | — |
+
+The old `buildChatPrompt()` path still exists (`prepareChat({ mode: 'prompt' })`) as the baseline, but no route uses it. **If this plan is picked up again, apply it to the agent's system instruction, not to `buildChatPrompt()`.**
+
 **Scope:** the `/chat` + `/chat-stream` pipeline only. `/quiz` is not touched.
 **Why this file exists:** while testing different questions, the chat prompt in [chat.service.ts](src/services/chat.service.ts) felt "novice". Looking into it showed that most of the weakness isn't the *wording* of the prompt. It's what happens around it: what gets searched, how the request is structured, and what the model is and isn't told. This file lists six concrete improvements, what problem each one fixes, how to build it, and how long it should take, so it can be picked up later without re-deriving any of it.
 

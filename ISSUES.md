@@ -11,8 +11,8 @@ When an open item gets fixed, move it to "Fixed" with the date and the commit.
 
 | | Count |
 |---|---|
-| **Open** | **34**: bugs 7 · robustness 8 · known gaps 8 · slowness 3 · hygiene 8 |
-| **Fixed** | **42** app bugs and design problems, plus 12 testing/tooling traps and 4 environment problems |
+| **Open** | **33**: bugs 7 · robustness 8 · known gaps 8 · slowness 3 · hygiene 7 |
+| **Fixed** | **43** app bugs, design problems and doc fixes, plus 12 testing/tooling traps and 4 environment problems |
 
 ---
 
@@ -74,7 +74,6 @@ When an open item gets fixed, move it to "Fixed" with the date and the commit.
 | 30 | 2 oxlint warnings (`set-state-in-effect`) | `frontend/src/hooks/useChat.ts:30`, `frontend/src/components/quiz/QuizModal.tsx:36` |
 | 31 | `sendChatMessage` in `frontend/src/api/chat.ts` is unused | Delete it, or keep it as the non-streaming example |
 | 32 | The roadmap and walkthrough still say `text-embedding-004` / 768 dims | The code uses `gemini-embedding-001` / 3072 |
-| 33 | CODE_EXPLAINED still links `UploadDropzone.tsx` (removed in the UI.1–UI.6 redesign) and `step4-quiz-zod.ts#L54` (that code moved to `quiz.service.ts`). Its Step 2.x frontend text describes the old UI | Found in BG.6; AG.7 is a good time to fix it |
 | 34 | CLAUDE.md has no work-log entry for the UI.1–UI.6 frontend redesign (2026-10-06 → 10-09) | Found in BG.6 |
 
 ---
@@ -127,6 +126,7 @@ When an open item gets fixed, move it to "Fixed" with the date and the commit.
 | F40 | 2026-11-02 | "Quiz me" with no ready documents → a 404 error | A sentence instead ("Upload a PDF first…") (AG.5) |
 | F41 | 2026-11-02 | A quiz request was answered as a document question (a search + an answer, no quiz) | A code-written offer + a Create quiz button; the quiz only runs on the click (AG.5) |
 | F42 | 2026-10-14 | Uploads made the user wait for every chunk's embedding inside the HTTP request | Parse in the request, embed on a BullMQ worker, 202 + `processing` → `ready` (Phase 6) |
+| F43 | 2026-11-04 | CODE_EXPLAINED linked `UploadDropzone.tsx` (removed in the redesign), Step 4.1 code that had moved to `quiz.service.ts`, and dozens of line ranges in the chat files that Phase 7 rewrote (was open item #33) | Re-mapped by reading the code each link points at; steps whose code no longer exists say so instead of linking (AG.7) |
 
 ## Testing and tooling traps (not app bugs, but they cost time)
 
@@ -140,7 +140,7 @@ When an open item gets fixed, move it to "Fixed" with the date and the commit.
 | T6 | 2026-10-06 | Two measurements on the same queue name → "Cannot obliterate non-paused queue" | One queue per run |
 | T7 | 2026-10-06 | Upstash setup: copied the `redis-cli` command instead of the URL; then `redis://` without TLS; a `verify-fulle` typo `pg` silently accepted | Use the `rediss://` URL from the ioredis tab |
 | T8 | 2026-10-14 | A long bash heredoc failed to parse on Windows; later a heredoc turned a written `\n` into a real line break in TS | Use the editor tool for files and anything with backslash escapes |
-| T9 | 2026-10-14 | Playwright wanted a Chromium build that wasn't installed | Launch with `executablePath` to the installed one |
+| T9 | 2026-10-14, 11-04 | Playwright wanted a Chromium build that wasn't installed (again on 11-04: the browser skill's patchright updated to want build 1248, only 1243 is installed) | Launch with `executablePath` to the installed one (a small runner script did it in AG.6) |
 | T10 | 2026-10-14 | The live queue check asserted "job hash gone", which passes under any prefix | Assert the specific thing (the job's events under `docmind:`) |
 | T11 | 2026-10-26 | Batch embeddings count per text against the 100/min limit → 429 on back-to-back eval runs | Wait a minute between `npm run step7` runs |
 | T12 | 2026-11-02 | A fake-stream helper with unsorted cut points looked like a parser bug; "thinking row gone" was taken as "answer finished" | Finished = a new Copy button |

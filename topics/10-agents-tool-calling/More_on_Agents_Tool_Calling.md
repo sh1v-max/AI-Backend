@@ -1,8 +1,8 @@
 # 10 — Agents & Tool Calling
 
-**Roadmap: Phase 7** · **Status in DocMind: not built yet, planned in [agents-plan.md](../../agents-plan.md)** (AG.0–AG.7). Concept + how it would land in this codebase. **Part 1 (§1–§23)** is the concepts. **Part 2 (§24–§32, added 2026-10-20)** is the building blocks the plan actually uses, and corrects a few Part 1 details that the plan settled differently. Gemini's function-calling fields change between API versions: Google's [function calling guide](https://ai.google.dev/gemini-api/docs/function-calling) now shows the newer Interactions API, while DocMind uses `generateContent`, so take field names from the [API reference](https://ai.google.dev/api/generate-content) (summarised in agents-plan.md §13).
+**Roadmap: Phase 7** · **Status in DocMind: ✅ built and live (2026-10-22 → 11-04)**, from [agents-plan.md](../../agents-plan.md) (AG.0–AG.7; its §9 is the full test log). Part 1 was written before the build ("would", "will bite you"): Part 2 already corrected the details the plan settled differently, a few more spots are marked **In DocMind**, §22 marks which predictions bit, and **[Part 3](#part-3--what-actually-happened-in-docmind)** at the end lists what was built, what was measured and what bit. Line-linked code walkthrough: [CODE_EXPLAINED.md, Phase 7](../../CODE_EXPLAINED.md#phase-7--agents--tool-calling). **Part 1 (§1–§23)** is the concepts. **Part 2 (§24–§32, added 2026-10-20)** is the building blocks the plan actually uses, and corrects a few Part 1 details that the plan settled differently. Gemini's function-calling fields change between API versions: Google's [function calling guide](https://ai.google.dev/gemini-api/docs/function-calling) now shows the newer Interactions API, while DocMind uses `generateContent`, so take field names from the [API reference](https://ai.google.dev/api/generate-content) (summarised in agents-plan.md §13).
 
-Code this file talks about: [chat.service.ts](../../src/services/chat.service.ts) (`prepareChat`), [llm.service.ts](../../src/services/llm.service.ts), [chunks.repository.ts](../../src/repositories/chunks.repository.ts) (`searchSimilar`), [quiz.service.ts](../../src/services/quiz.service.ts)
+Code this file talks about: [chat.service.ts](../../src/services/chat.service.ts) (`prepareChat`), [llm.service.ts](../../src/services/llm.service.ts) (`streamTurn`), [router.service.ts](../../src/services/router.service.ts), [agent.service.ts](../../src/services/agent.service.ts), [src/tools/](../../src/tools), [quizOffer.service.ts](../../src/services/quizOffer.service.ts), [chunks.repository.ts](../../src/repositories/chunks.repository.ts) (`searchSimilar`), [quiz.service.ts](../../src/services/quiz.service.ts)
 
 ---
 
@@ -269,7 +269,7 @@ Things to know:
 
 * The API is **stateless**. You resend the whole conversation, including the model's own function call, every time.
 * Send the model's turn back **exactly as you received it**. Newer Gemini models attach extra fields to those parts (thought signatures) that must be returned unchanged or the call is rejected.
-* `toolConfig.functionCallingConfig.mode` controls choice: `AUTO` (model decides), `ANY` (must call some function), `NONE` (may not).
+* `toolConfig.functionCallingConfig.mode` controls choice: `AUTO` (model decides), `ANY` (must call some function), `NONE` (may not). **In DocMind (AG.0):** `ANY` on "thanks!" forced a pointless search, and `NONE` was *ignored* on a fresh question (the model still called a tool). Leaving `tools` out of the request is what reliably means "answer now", so that's how the loop's last step is sent.
 * A model can return **several** function calls in one turn (parallel calling). Run them all and send all the responses back.
 
 ---
@@ -557,6 +557,8 @@ That's the same change PI.2 in [prompt-improvement.md](../../prompt-improvement.
 
 `prepareChat()` would split: validation + history loading stay, and "embed → search" becomes the body of the `searchDocument` tool.
 
+**In DocMind:** exactly these files, plus [quizOffer.service.ts](../../src/services/quizOffer.service.ts) (AG.5) and a `tools/types.ts` with the `ToolContext`. `llm.service.ts` got `generateTurn()` (AG.3) and then `streamTurn()` (AG.4, what both routes use). `prepareChat()` didn't split: it kept validate → embed → history → **route**, and for a document question returns `kind: 'agent'` with the loop's input instead of a prompt. The tool is `searchDocuments({ query })` with no `documentId` (scope comes from code, §10).
+
 ---
 
 # 20. Testing Agents
@@ -612,15 +614,18 @@ If asked **"What can go wrong?"**:
 
 ---
 
-# 22. Things That Will Bite You
+# 22. Things That Will Bite You (and what happened)
 
-* `llm.service.ts` only takes one prompt string; tool calling needs multi-turn `contents`.
-* Forgetting to send the model's function-call turn back (or modifying it).
-* Classifying a follow-up without history.
-* Letting the model pass `documentId`.
-* `sources` no longer known at `meta` time.
-* Twice the API calls on a free tier.
-* A router that's wrong silently: log the chosen intent with `pipelineLogger` on every request.
+Written before the build. ✓ = planned for and didn't bite; ⚡ = bit anyway, or bit in a way the list didn't predict.
+
+* ✓ `llm.service.ts` only takes one prompt string; tool calling needs multi-turn `contents`. → `generateTurn()` / `streamTurn()`.
+* ⚡ Forgetting to send the model's function-call turn back (or modifying it). → Not forgotten, but AG.0 found *how* strict it is: every turn carries a `thoughtSignature`, dropping it is a 400, and a streamed turn has to be rebuilt by a rule (§25, §26).
+* ✓ Classifying a follow-up without history. → History is loaded *before* routing now; the classifier sees the last Q+A.
+* ✓ Letting the model pass `documentId`. → The tool has no such parameter; scope is in the `ToolContext`.
+* ✓ `sources` no longer known at `meta` time. → `meta.sources` is `[]`; a new `sources` event follows each search.
+* ⚡ Twice the API calls on a free tier. → True (a document question = 2 calls + sometimes a classifier call), and the bigger surprise was *latency*: the same classifier call took 1–3 s one day and 25–53 s another.
+* ✓ A router that's wrong silently. → One log line per request (intent, who decided, margin, best example, runner-up) and `route` in every response.
+* ⚡ Not on the list: vector routing matches **words, not intent** ("compare the two pdfs" ≈ "quiz me about the pdf"), and `mode: 'NONE'` was ignored. Both only showed up by measuring.
 
 ---
 
@@ -1058,7 +1063,7 @@ ONE AGENT STEP = ONE REQUEST
 │                       (model functionCall + thoughtSignature,        │
 │                        your functionResponse in a "user" turn)       │
 │ tools               searchDocuments, listDocuments (Kind A only)     │
-│ toolConfig          AUTO, or NONE on the last allowed step           │
+│ tools on the last   LEFT OUT (NONE was ignored by this model, AG.0)  │
 └──────────────────────────────────────────────────────────────────────┘
         │ streamed
         ▼
@@ -1079,3 +1084,23 @@ ONE AGENT STEP = ONE REQUEST
 **You can't stop injected text from being read. You can stop it from doing harm.**
 
 **Kind B in Phase 7 = a button. Kind B in Phase 8 = a typed "yes" that survives between requests.**
+
+---
+
+# Part 3 — What Actually Happened in DocMind
+
+Built 2026-10-22 → 11-04, one step at a time; every number below is from [agents-plan.md](../../agents-plan.md) §9.
+
+| Step | What was built | What it showed |
+|---|---|---|
+| AG.0 probe (`npm run step6`) | raw Gemini function calling, a fake document, no DB | `thoughtSignature` on every model turn (dropping it → 400); a streamed `functionCall` arrives whole; `ANY` forced a search on "thanks!"; `NONE` ignored → the last step is sent without tools |
+| AG.1 router (`npm run step7`) | `router.service.ts`: example phrases, `routeByVector`, `classifyIntent`, the hybrid | vectors alone 36/41, every mistake a "quiz" by shared words (one at margin 0.141); LLM alone 41/41 but 1–22 s; hybrid rule: quiz always checked by the LLM, smalltalk needs margin ≥ 0.03, document accepted at any margin → on 52 messages no harmful mistakes, LLM on 17 |
+| AG.2 router live | 8-step `prepareChat` (history before routing), smalltalk prompt, `route` in responses | a zero-document guest's "hi" → a reply instead of a 404; real specific questions score low against *every* phrase (~0.5), so their margins are tiny and they often pay a classifier call |
+| AG.3 the agent | `src/tools/`, `agent.service.ts`, `generateTurn()`, history as real turns | old pipeline 8/9 vs agent 9/9 on the same questions: "and who founded it?" searched as "who founded the Lantern Festival", "which documents?" → `listDocuments`, a two-part question → two searches in one step, "capital of France?" refused; every document question = 2 model calls |
+| AG.4 streamed | `streamTurn()`, `streamAgent()` (`yield*`), SSE `status` + `sources`, the frontend status line | 26/26 with a fake Gemini stream (bytes cut mid-`\r\n`, mid-UTF-8, mid-JSON); the user now sees the model's own query; an old frontend still works (no `default` in its switch) |
+| AG.5 quiz offer | `quizOffer.service.ts` (template, no LLM), SSE `action`, **Create quiz** / **Choose a document** | the quiz only happens on the click; a typed "yes" is pointed at the button (Phase 8 does "yes" properly) |
+| AG.6 live | pushed backend + frontend together | 16/16 over HTTP + the real UI on Vercel; replies 1.7–3.4 s that day |
+
+**What it cost:** a document question went from 1 model call to 2 (search, answer), plus one classifier call on close calls; smalltalk and quiz requests got cheaper (no search; the quiz offer has no model call at all). On the free tier (Flash-Lite 15 requests a minute, 500 a day) that's the limit that matters.
+
+**Still open** (tracked in [ISSUES.md](../../ISSUES.md)): sources, tool calls and offers aren't saved with messages; every vector "quiz" waits on a classifier call even on an exact phrase match; no retry/timeout on Gemini calls; no relevance threshold on searches.

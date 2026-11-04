@@ -151,7 +151,7 @@ Building **DocMind**: upload a PDF → chat with it (with memory) → stream the
 - **No schema change:** an all-documents session stores the sentinel `'all'` in the existing `NOT NULL` `chat_messages.document_id` column (`ALL_DOCUMENTS` in `config.ts`) instead of making it nullable — avoids altering the live table. `listSessions()` labels such a session "All documents"
 - **Prompt:** `buildChatPrompt(..., multiDocument)` — in all-mode each chunk is prefixed `[Source: filename]` and the model is told to name the document it used; the single-document prompt is unchanged
 - **Frontend:** an "All documents (N)" chip on the New Chat screen (only when there's more than one document) and a **"Searching in [All documents ▾]"** dropdown in the chat header; source cards show their filename. A conversation's scope is fixed when it starts, so switching the dropdown starts a *new* chat (the old one stays in history)
-- **Known tradeoff:** the top 3 chunks are shared across all PDFs, and "meta" questions like "which documents do you have?" can't be answered by chunk search — the model only sees the nearest 3 chunks, often from one file. Routing (Phase 7) is the real fix
+- **Known tradeoff:** the top 3 chunks are shared across all PDFs, and "meta" questions like "which documents do you have?" can't be answered by chunk search — the model only sees the nearest 3 chunks, often from one file. Routing (Phase 7) is the real fix *(fixed in Phase 7: the `listDocuments` tool answers collection questions, and the agent can search again with a better query)*
 
 **Milestone:** the chat reply streams instead of arriving all at once, visibly in the browser, and history still works on the next turn. *(Reached — Steps 3.1, 3.2, 3.2F and 3.3 all done; Phase 3 is complete.)*
 
@@ -245,24 +245,29 @@ Built from [background-jobs-plan.md](background-jobs-plan.md) (steps BG.0–BG.6
 
 *Topic: [10-agents-tool-calling](topics/10-agents-tool-calling)*
 
-**Step 7.1 — Structured output as a routing decision**
-- Before `/chat` runs RAG, have the LLM classify the message into `document_question` / `smalltalk` / `quiz_request` (Zod-forced)
-- Route based on that — smalltalk skips vector search entirely
+Built from [agents-plan.md](agents-plan.md) (steps AG.0–AG.7; its §9 results log has every test, number and everything that bit). Line-linked explanation in [CODE_EXPLAINED.md](CODE_EXPLAINED.md#phase-7--agents--tool-calling). The steps below are the original plan, each with how it turned out.
 
-**Step 7.2 — Vector-based intent routing**
-- Embed each intent's description once at startup, store the 3 vectors
-- On each message, embed it and cosine-match against those 3 instead of calling the LLM every time
-- Output: "intent routing IS vector search" — same math as Phase 1, applied to routing
+**Step 7.0 — Probe raw tool calling first** *(added — AG.0, `npm run step6`)*
+- 17 real Gemini calls with a fake in-file document, no DB. Found: every model turn carries a `thoughtSignature` that must be sent back (dropping it → 400); a streamed `functionCall` arrives whole in one event; **`mode: 'NONE'` is ignored** on this model, so the loop's last step is sent without `tools`
 
-**Step 7.3 — Tool calling**
-- Give the `document_question` path a real tool: `searchDocument(documentId, query)` that the LLM can choose to call instead of you always running RAG manually
-- Understand the Kind A (LLM may call, read-only) vs Kind B (LLM never calls, code-only) distinction
+**Step 7.1 — Structured output as a routing decision** *(done — AG.1/AG.2, `classifyIntent()`)*
+- The LLM classifier is JSON mode + temperature 0 + Zod over `{ intent }`, the quiz's technique with a tiny schema. Alone it got 41/41, but took 1–22 s per call, so it's the *second* opinion, not the first
+- Smalltalk skips the search entirely (a zero-document guest's "hi" used to be a 404) and gets its own small prompt, which also refuses general-knowledge questions
 
-**Step 7.4 — Kind-B tool: confirmed quiz creation**
-- Split `/quiz`: the agent proposes scope ("5 questions covering chapters 1-2, sound good?"), only after user confirmation does code call the real `createQuiz()` function
-- Output: "AI decides, code acts," made literal
+**Step 7.2 — Vector-based intent routing** *(done — AG.1, `routeByVector()`, measured with `npm run step7`)*
+- **Not exactly as first written:** several short *example phrases* per intent instead of one description each (an intent is scored by its best-matching phrase), embedded **lazily on the first message, in one batch call**, not at startup (Render restarts on every wake). Kept in memory, not in a table
+- "Intent routing IS vector search" held, with a catch the eval showed: vectors match shared **words**, not intent ("compare the two pdfs" ≈ "quiz me about the pdf"). So the live router is a **hybrid**: vectors decide when clearly ahead; a close call, or any vector "quiz", goes to the LLM; anything unsure ends at `document_question`. On 52 labelled messages: no harmful mistakes, LLM on 17
 
-**Milestone:** the chatbot routes intelligently and can call tools instead of always following one fixed path.
+**Step 7.3 — Tool calling** *(done — AG.3 + AG.4)*
+- **Not exactly as first written:** the tool is `searchDocuments({ query })` with **no `documentId` parameter**: the scope (user + document) is closed over by code from the token and the session, so the model can't widen it. A second tool, `listDocuments()`, answers "which documents do I have?"
+- An agent loop (max 3 model calls, the last without tools), history sent as real turns + a `systemInstruction`. Old pipeline vs agent on the same questions: 8/9 vs 9/9 (the follow-up "and who founded it?" is now searched as "who founded the Lantern Festival")
+- Every step streamed, with new SSE events `status` ("Searching for …") and `sources`; this is where the chat's progress messages came from (decided 2026-10-15)
+
+**Step 7.4 — Kind-B tool: confirmed quiz creation** *(done — AG.5)*
+- **Not exactly as first written:** no agent-proposed scope and no `createQuiz()` tool. A `quiz_request` gets an offer **written by code** (no LLM call) + an SSE `action`; the frontend shows **Create quiz** (or **Choose a document** in "All documents" with several ready), and the click calls the existing `POST /quiz`. The confirmation is a click, not a typed "yes": a typed "yes" needs the pending offer stored between two requests, which is Phase 8's topic
+- Output: "AI decides, code acts," made literal — the router labels, code proposes, the human confirms, code acts
+
+**Milestone:** the chatbot routes intelligently and can call tools instead of always following one fixed path. *(Reached — live 2026-11-04, checked 16/16 over HTTP + the real UI.)*
 
 ---
 
