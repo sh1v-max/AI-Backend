@@ -12,7 +12,7 @@ When an open item gets fixed, move it to "Fixed" with the date and the commit.
 | | Count |
 |---|---|
 | **Open** | **33**: bugs 7 · robustness 8 · known gaps 8 · slowness 3 · hygiene 7 |
-| **Fixed** | **43** app bugs, design problems and doc fixes, plus 12 testing/tooling traps and 4 environment problems |
+| **Fixed** | **43** app bugs, design problems and doc fixes, plus 12 testing/tooling traps and 5 environment problems |
 
 ---
 
@@ -153,3 +153,4 @@ When an open item gets fixed, move it to "Fixed" with the date and the commit.
 | E2 | 2026-09-27 → 11-02 | Gemini 503 "high demand" on every Flash model at times | External; retry/timeout is open item #8, a model switch is #10 |
 | E3 | 2026-09-27 | The 2.5 Flash models are closed to new users | Stay on `gemini-flash-lite-latest` |
 | E4 | 2026-10-14 → 10-15 | Render cold starts: 21 s, ~140 s after an env-change redeploy | Free tier; expect it on the first live request |
+| E5 | 2026-11-06 | Every file showed `A` in VS Code and git said "No commits yet": the `main` ref file (and `COMMIT_EDITMSG`) was 41 zero bytes, written during the 00:37 commit `cf495e5` (likely a crash/sleep mid-write). Objects were fine (`git fsck`) | Rewrote `.git/refs/heads/main` with `cf495e5` (last entry in `.git/logs/HEAD`). Check: `od -c .git/refs/heads/main` |
